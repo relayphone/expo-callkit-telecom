@@ -84,7 +84,10 @@ class CallManager: NSObject {
     configuration.maximumCallGroups = 1
     configuration.maximumCallsPerCallGroup = 1
     configuration.supportedHandleTypes = [.phoneNumber, .generic]
-    configuration.includesCallsInRecents = true
+    configuration.includesCallsInRecents =
+      Bundle.main.object(
+        forInfoDictionaryKey: "ExpoCallKitTelecomIncludesCallsInRecents"
+      ) as? Bool ?? true
 
     if let ringtone = Bundle.main.object(
       forInfoDictionaryKey: "ExpoCallKitTelecomDefaultRingtone"
@@ -92,6 +95,21 @@ class CallManager: NSObject {
       ringtone != "default"
     {
       configuration.ringtoneSound = ringtone
+    }
+
+    // App-icon template shown on the CallKit call screen. Configured via the
+    // `iconTemplateIos` plugin option, which bundles the file and records its
+    // name here. CallKit uses only the image's alpha channel (template).
+    if let iconTemplate = Bundle.main.object(
+      forInfoDictionaryKey: "ExpoCallKitTelecomIconTemplate"
+    ) as? String,
+      let iconURL = Bundle.main.url(
+        forResource: iconTemplate,
+        withExtension: nil
+      ),
+      let iconData = try? Data(contentsOf: iconURL)
+    {
+      configuration.iconTemplateImageData = iconData
     }
 
     provider = CXProvider(configuration: configuration)

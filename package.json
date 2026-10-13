@@ -1,6 +1,6 @@
 {
   "name": "expo-callkit-telecom",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "CallKit + Jetpack Core-Telecom for Expo / React Native — native call UI, VoIP push, LiveKit-friendly audio. A modern react-native-callkeep alternative.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -18,7 +18,7 @@
     "build:plugin": "expo-module build plugin",
     "clean": "expo-module clean",
     "lint": "expo-module lint",
-    "test": "expo-module test",
+    "test": "expo-module test plugin",
     "typecheck": "tsc --noEmit && tsc --noEmit -p plugin",
     "prepare": "expo-module prepare",
     "prepublishOnly": "expo-module prepublishOnly",
@@ -60,21 +60,22 @@
   "homepage": "https://expo-callkit-telecom.mfairley.com/",
   "dependencies": {},
   "devDependencies": {
+    "@types/node": "^26.6.2",
     "@types/react": "~19.2.14",
-    "expo": "^55.0.24",
-    "expo-module-scripts": "^55.0.2",
-    "react": "19.2.0",
-    "react-native": "0.83.6",
+    "eslint": "^9",
+    "expo": "^57.0.24",
+    "expo-module-scripts": "^56.0.3",
+    "react": "19.2.3",
+    "react-native": "0.86.3",
     "typedoc": "^0.28.19",
     "typedoc-plugin-markdown": "^4.11.0",
     "vitepress": "^1.6.4",
     "wrangler": "^4.92.0"
   },
   "peerDependencies": {
-    "expo": "*",
+    "expo": ">=55.0.0",
     "react": "*",
     "react-native": "*",
-    "expo-notifications": "*",
-    "@livekit/react-native-webrtc": ">=144.0.0"
+    "expo-notifications": "*"
   }
 }

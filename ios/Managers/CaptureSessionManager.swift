@@ -1,5 +1,5 @@
 import AVFoundation
-import livekit_react_native_webrtc
+internal import ExpoCallKitTelecomWebRTC
 
 private func permissionStatusString(_ status: AVAuthorizationStatus) -> String {
   switch status {
@@ -43,11 +43,8 @@ final class CaptureSessionManager {
       "cameraPermission": cameraPermission
     ]
 
-    // Check multitasking camera access support (iOS 16+)
-    if #available(iOS 16.0, *) {
-      let session = AVCaptureSession()
-      state["isMultitaskingCameraAccessSupported"] = session.isMultitaskingCameraAccessSupported
-    }
+    state["isMultitaskingCameraAccessSupported"] =
+      AVCaptureSession().isMultitaskingCameraAccessSupported
 
     return state
   }

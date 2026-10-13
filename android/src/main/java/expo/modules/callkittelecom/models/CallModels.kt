@@ -31,6 +31,10 @@ data class CallParticipant(
     val displayName: String? = null,
     val avatarUrl: String? = null,
 ) {
+    /** Text shown on call surfaces: [displayName], else [phoneNumber], else [email]. */
+    val displayNameOrHandle: String?
+        get() = displayName ?: phoneNumber ?: email
+
     /** Serializes participant data into the JS-facing event/session shape. */
     fun toMap(): Map<String, Any?> =
         mapOf(
@@ -84,6 +88,10 @@ data class IncomingCallEvent(
         val email: String? = null,
         val avatarUrl: String? = null,
     ) {
+        /** Text shown on call surfaces: [displayName], else [phoneNumber], else [email]. */
+        val displayNameOrHandle: String?
+            get() = displayName ?: phoneNumber ?: email
+
         /** Serializes caller data into JS-facing payload shape. */
         fun toMap(): Map<String, Any?> =
             mapOf(
@@ -257,7 +265,11 @@ enum class CallEndedReason(val value: String) {
 
     companion object {
         /** Safely maps a reason string to enum, defaulting to `UNKNOWN`. */
-        fun fromValue(value: String): CallEndedReason =
-            entries.firstOrNull { it.value == value } ?: UNKNOWN
+        fun fromValue(value: String): CallEndedReason = fromValueOrNull(value) ?: UNKNOWN
+
+        /** Maps a reason string to enum, or null when it isn't a known reason. */
+        fun fromValueOrNull(value: String): CallEndedReason? = entries.firstOrNull {
+            it.value == value
+        }
     }
 }

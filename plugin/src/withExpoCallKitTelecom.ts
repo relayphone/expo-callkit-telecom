@@ -37,6 +37,13 @@ export type ExpoCallKitTelecomPluginProps = {
    */
   fulfillAnswerCallTimeout?: number;
   /**
+   * Whether completed calls appear in the phone's call history (Recents).
+   * Maps to CallKit's `CXProviderConfiguration.includesCallsInRecents`.
+   * @default true
+   * @platform ios
+   */
+  includesCallsInRecents?: boolean;
+  /**
    * Array of sound file paths (relative to project root) to include in the app.
    * These files will be copied into the iOS bundle and Android raw resources.
    * .wav recommended
@@ -67,6 +74,16 @@ export type ExpoCallKitTelecomPluginProps = {
    * @platform android
    */
   defaultDialtone?: string;
+  /**
+   * Path (relative to project root) to a PNG shown as the app's icon on the
+   * iOS CallKit call screen (`CXProviderConfiguration.iconTemplateImageData`).
+   * CallKit renders it as a *template*: only the alpha channel is used (RGB is
+   * ignored) and the system tints it. A ~40x40pt square PNG whose alpha
+   * describes the glyph is recommended. When omitted, CallKit derives a mask
+   * from the app icon, which renders as a solid square for opaque icons.
+   * @platform ios
+   */
+  iconTemplateIos?: string;
   /**
    * Class name of a `BroadcastReceiver` to register for the module's call-event
    * broadcast, fired when a call event can't reach a live JS observer (e.g. the

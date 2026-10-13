@@ -1,5 +1,5 @@
 ---
-description: Platform requirements for expo-callkit-telecom — iOS 15.1+ (CallKit + PushKit), Android API 26+ (Jetpack androidx.core-telecom). Keep-alive notes for background WebSocket signalling.
+description: Platform requirements for expo-callkit-telecom — iOS 16.0+ (CallKit + PushKit), Android API 26+ (Jetpack androidx.core-telecom). Keep-alive notes for background WebSocket signalling.
 ---
 
 # Platform notes
@@ -8,7 +8,11 @@ description: Platform requirements for expo-callkit-telecom — iOS 15.1+ (CallK
 
 - Requires the `voip` background mode and a VoIP push certificate.
 - Uses [CallKit](https://developer.apple.com/documentation/callkit) + [PushKit](https://developer.apple.com/documentation/pushkit) + [WebRTC](https://webrtc.org/)'s `RTCAudioSession` for manual audio control.
-- Minimum iOS version: **15.1**.
+- Minimum iOS version: **16.0**.
+
+## Expo
+
+- Supports Expo SDK **55** and later.
 
 ## Android
 
@@ -16,6 +20,7 @@ description: Platform requirements for expo-callkit-telecom — iOS 15.1+ (CallK
 - Minimum SDK: **26** (Android 8.0).
 - Uses [`androidx.core:core-telecom`](https://developer.android.com/develop/connectivity/telecom/voip-app/telecom).
 - Incoming calls come via [FCM](https://firebase.google.com/docs/cloud-messaging) data messages — the config plugin registers `ExpoCallKitTelecomMessagingService` automatically.
+- Muting a call (from `setMuted` or the system call UI) also mutes the device microphone via [`AudioManager.setMicrophoneMute`](https://developer.android.com/reference/android/media/AudioManager#setMicrophoneMute(boolean)). The mute is device-wide, so the module applies it only while call audio is active and clears it when the last call ends. This adds the [`MODIFY_AUDIO_SETTINGS`](https://developer.android.com/reference/android/Manifest.permission#MODIFY_AUDIO_SETTINGS) permission to your app's manifest; it's granted at install, with no runtime prompt.
 
 ### Call ended while the app is killed
 
@@ -48,6 +53,27 @@ class CallEndedReceiver : BroadcastReceiver() {
 The broadcast carries two extras: `eventName` (the call event that couldn't reach JS) and `payload`, a JSON string of the exact body JS would have received. Events that can't reach a live JS observer **and** aren't queued for cold-start replay (e.g. `onCallEnded`, `onCallReportedEnded`) are broadcast — filter on `eventName` for the ones you care about (the example above handles only `onCallEnded`). For these terminal events the payload embeds the full `session`, so your backend ids (`serverCallId`) and any push `metadata` (auth tokens, routing ids) are available without app-side state. The broadcast fires **only** when the event would otherwise be lost; an alive app with a mounted listener keeps receiving the normal JS event, and events that flush to JS on the next launch are never broadcast (so there's no double-delivery).
 
 A complete working setup ships in the example app: `example/client/` sets `androidEventReceiver` in `app.config.ts` and copies `plugins/CallEndedReceiver.kt` into the generated android project — see "Testing system → app paths" in the example README for how to exercise it.
+
+### Ending a call from the server
+
+The reverse direction has the same problem. If the caller hangs up while the callee's phone is still ringing, a killed app has no way to act on it: the ring was reported natively, so there is no JS observer to call `reportCallEnded`, and the phone rings on until `incomingCallTimeout`.
+
+Send a second FCM data message and the module ends the call natively:
+
+```json
+{
+  "messageType": "callEnded",
+  "callEnded": "{\"eventId\":\"7c1e...\",\"serverCallId\":\"call-123\",\"reason\":\"answeredElsewhere\"}"
+}
+```
+
+`eventId` is required and must be unique per push, like the `eventId` on `IncomingCallEvent`: the module drops a repeat delivery of the same `eventId`, so a redelivered `callEnded` can't end a later ring for the same call. `serverCallId` is the one you set on the `IncomingCallEvent` when you started the call. `reason` is optional and takes any `CallEndedReason` (`remoteEnded`, `answeredElsewhere`, `declinedElsewhere`, `unanswered`, `failed`, `unknown`); it defaults to `remoteEnded`, and an unrecognized value falls back to `remoteEnded` with a warning in logcat.
+
+The module looks up the session reported for that `serverCallId` and ends it through the same path as `reportCallEnded` from JS: the system call UI is dismissed and JS (if it's running) receives `onCallReportedEnded` with the `reason`. It does **not** check the call's state, so a `callEnded` for a call this device has already answered hangs it up — only send it for calls the device should stop. A `serverCallId` with no session on the device (already ended, or never delivered) is ignored.
+
+These messages are consumed by the module and are never passed on to `expo-notifications`, so they don't reach notification listeners or background notification tasks; react to `onCallReportedEnded` instead. On a killed app that event is delivered through the call-event broadcast above.
+
+The example server sends it with `bun send-test-push.ts --end --serverCallId call-123 [--reason answeredElsewhere]`.
 
 ## VoIP push token types
 

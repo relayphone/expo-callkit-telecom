@@ -8,11 +8,6 @@ const config: ExpoConfig = {
   version: "1.0.0",
   orientation: "portrait",
   icon: "./assets/icon.png",
-  splash: {
-    image: "./assets/splash-icon.png",
-    resizeMode: "contain",
-    backgroundColor: "#ffffff",
-  },
   ios: {
     supportsTablet: true,
     bundleIdentifier: BUNDLE_ID,
@@ -33,9 +28,17 @@ const config: ExpoConfig = {
   },
   plugins: [
     [
+      "expo-splash-screen",
+      {
+        image: "./assets/splash-icon.png",
+        resizeMode: "contain",
+        backgroundColor: "#ffffff",
+      },
+    ],
+    [
       "expo-build-properties",
       {
-        ios: { deploymentTarget: "16.0" },
+        ios: { deploymentTarget: "16.4", enableSceneSupport: true },
         android: { minSdkVersion: 26 },
       },
     ],
@@ -49,6 +52,7 @@ const config: ExpoConfig = {
         defaultRingtoneIos: "ringtone.wav",
         defaultRingtoneAndroid: "ringtone.wav",
         defaultDialtone: "dialtone.wav",
+        iconTemplateIos: "./assets/callkit-icon.png",
         androidEventReceiver: ".CallEndedReceiver",
       },
     ],

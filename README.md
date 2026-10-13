@@ -2,8 +2,6 @@
 
 > An Expo module — written in Swift and Kotlin — that wraps **CallKit** on iOS and **Jetpack Core-Telecom** on Android with API parity. It owns the system call UI, the audio session, and VoIP push — your app owns the media (LiveKit, plain WebRTC, etc.).
 
-The module is opinionated about *system integration* and unopinionated about *media*. You wire your media library to the events it emits.
-
 📖 **Full documentation:** [expo-callkit-telecom.mfairley.com](https://expo-callkit-telecom.mfairley.com/)
 
 <p>
@@ -53,6 +51,7 @@ The module is opinionated about *system integration* and unopinionated about *me
 - 🔔 **VoIP notifications** — APNs VoIP on iOS (PushKit), FCM data messages on Android, parsed natively so calls can be reported from a terminated state
 - 🎵 **Ringtones** — system ringtone for incoming calls, configurable via the config plugin
 - ☎️ **Dialtone** — looped dialtone with fade-in for outgoing calls, configurable
+- 🖼️ **Branded CallKit icon** — show your app's icon on the iOS call screen via `iconTemplateIos`
 - 🎧 **Audio session management** — cross-platform port types (`builtInReceiver`, `builtInSpeaker`, `headphones`, `bluetoothA2DP`, `bluetoothHFP`, `bluetoothLE`, `airPlay`, `hdmi`, `carAudio`, `usbAudio`, `lineOut`)
 - 🔊 **Speaker override** and live route-change events
 - 🎚️ **Mute, hold, video, DTMF** — both directions: app → system and system → app (e.g. native mute button → your media)
@@ -69,6 +68,15 @@ Tested end-to-end on real devices via the runnable `example/` app. Full compatib
 bun add expo-callkit-telecom
 ```
 
+Your app also needs `expo-notifications` and a `react-native-webrtc` build:
+
+```sh
+bun add @livekit/react-native-webrtc expo-notifications
+```
+
+- A `react-native-webrtc` build. [`@livekit/react-native-webrtc`](https://github.com/livekit/react-native-webrtc) `>= 144` is the one the maintainers test against. The module doesn't depend on a specific WebRTC pod: on iOS it links against whichever WebRTC framework your app ships, so upstream [`react-native-webrtc`](https://github.com/react-native-webrtc/react-native-webrtc) `>= 124.0.5` and other forks also work (community-verified). Install only one of them.
+- [`expo-notifications`](https://docs.expo.dev/versions/latest/sdk/notifications/) — required on Android, where the module's FCM service builds on it.
+
 Add the config plugin to `app.json` / `app.config.ts`. Minimal form:
 
 ```jsonc
@@ -79,7 +87,7 @@ Add the config plugin to `app.json` / `app.config.ts`. Minimal form:
 }
 ```
 
-With custom ringtone and dialtone:
+With custom sounds and options:
 
 ```jsonc
 {
@@ -95,9 +103,11 @@ With custom ringtone and dialtone:
           "defaultRingtoneIos": "ringtone.wav",
           "defaultRingtoneAndroid": "ringtone.wav",
           "defaultDialtone": "dialtone.wav",
+          "iconTemplateIos": "./assets/callkit-icon.png",
           "incomingCallTimeout": 45,
           "outgoingCallTimeout": 60,
           "fulfillAnswerCallTimeout": 30,
+          "includesCallsInRecents": true,
           "microphonePermission": "$(PRODUCT_NAME) needs the microphone to make calls."
         }
       ]
@@ -108,6 +118,7 @@ With custom ringtone and dialtone:
 
 Files in `sounds` are copied into the iOS bundle and Android raw resources at prebuild time. The full prop type is `ExpoCallKitTelecomPluginProps` in `plugin/src/`.
 
+`iconTemplateIos` is the app's icon on the iOS CallKit call screen (`CXProviderConfiguration.iconTemplateImageData`). CallKit renders it as a **template** — only the image's alpha channel is used (RGB is ignored) and the system tints it — so provide a ~40×40pt square PNG whose alpha describes the glyph. Android brands the incoming-call UI from the launcher icon automatically, so this option is iOS-only.
 
 ## 🧠 Concepts
 
@@ -184,7 +195,7 @@ FCM data values must be strings, so JSON-encode the inner event and put it under
 }
 ```
 
-Non-`incomingCall` data messages are forwarded to `expo-notifications`'s service for normal handling.
+The module also handles `callEnded` pushes for ending a call from the server (see [platform notes](docs/platform-notes.md#ending-a-call-from-the-server)); every call push carries a unique `eventId`, and repeat deliveries are dropped. Other data messages are forwarded to `expo-notifications`'s service for normal handling.
 
 ## 🧪 Example
 
@@ -227,8 +238,8 @@ See `src/Calls.ts` for full JSDoc. Main areas:
 
 ## 📝 Platform notes
 
-- 🍎 **iOS** — requires the `voip` background mode and a VoIP push certificate. Uses CallKit + PushKit + WebRTC's `RTCAudioSession` for manual audio control. Min iOS 15.1.
-- 🤖 **Android** — requires `MANAGE_OWN_CALLS` permission, min SDK 26. Uses `androidx.core:core-telecom`. Incoming calls come via FCM data messages — the config plugin registers `ExpoCallKitTelecomMessagingService` automatically.
+- 🍎 **iOS** — requires the `voip` background mode and a VoIP push certificate. Uses CallKit + PushKit + WebRTC's `RTCAudioSession` for manual audio control. Min iOS 16.0.
+- 🤖 **Android** — requires `MANAGE_OWN_CALLS` permission, min SDK 26. Uses `androidx.core:core-telecom`. Incoming calls come via FCM data messages — the config plugin registers `ExpoCallKitTelecomMessagingService` automatically. Firebase is optional: without a `google-services.json`, VoIP push registration is skipped with a warning and calls reported from JS still work.
 - 🎟️ VoIP push token type is reported as `"APNS_VOIP"` on iOS and `"FCM"` on Android — send both to your backend so it knows which transport to use.
 
 ## ⏰ Keeping connections alive in the background
