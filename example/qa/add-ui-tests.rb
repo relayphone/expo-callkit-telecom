@@ -30,7 +30,7 @@ scheme = Xcodeproj::XCScheme.new(scheme_path)
 unless scheme.test_action.testables.any? { |reference|
   reference.xml_element.elements['BuildableReference']&.attributes&.[]('BlueprintIdentifier') == target.uuid
 }
-  scheme.test_action.add_testable(Xcodeproj::XCScheme::TestableReference.new(target))
+  scheme.add_test_target(target)
 end
 variables = scheme.test_action.environment_variables
 variables.assign_variable(key: 'CKSIM_QA_RUNTIME_LIBRARIES', value: libraries, enabled: true)

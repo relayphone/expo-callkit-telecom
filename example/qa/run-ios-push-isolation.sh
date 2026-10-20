@@ -25,7 +25,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 echo "Private QA evidence: $OUT"
-git -C "$SIM_RUNTIME" diff --quiet -- discovery || { echo "Commit runtime fixture changes first" >&2; exit 1; }
+[[ -z "$(git -C "$SIM_RUNTIME" status --porcelain -- discovery)" ]] || { echo "Commit runtime fixture changes first" >&2; exit 1; }
 [[ -z "$(git -C "$ROOT" status --porcelain -- ios src plugin example/client example/qa)" ]] || { echo "Commit library source changes first" >&2; exit 1; }
 { git -C "$ROOT" rev-parse HEAD; git -C "$SIM_RUNTIME" rev-parse HEAD; xcodebuild -version; } > "$OUT/environment.txt"
 SDK=$(xcrun -sdk iphonesimulator --show-sdk-path)
