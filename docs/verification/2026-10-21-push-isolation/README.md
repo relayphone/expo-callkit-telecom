@@ -40,6 +40,20 @@ The Xcode 26.3 / SDK 26.2 lane in this run exits 65 during native build before
 XCTest; no compiler error was retained. It remains unclassified. The next harness
 revision records its failure phase and bounded pre-launch compiler diagnostics.
 
+The follow-up [run 39513498744](https://github.com/ziahamza/expo-callkit-telecom/actions/runs/39513498744)
+classified that native-build failure: Xcode 26.3 rejects `SWIFT_RETURNS_RETAINED` /
+`SWIFT_RETURNS_UNRETAINED` annotations in Expo's `RuntimeScheduler.h`. The
+[bounded diagnostics and stage receipt](hosted-39513498744-legacy-build/) retain
+the actual error. This is a dependency compilation failure before XCTest, not a
+CallKit or PushKit runtime result. We did not patch third-party headers to make
+the lane green.
+
+The workflow now separates actual SDK 26.2 / 26.5 adapter compilation from full
+Expo metadata and forced-legacy callback tests on Xcode 26.6. A forced-legacy run
+must disable the metadata path in **both** fixture and library, and require a
+legacy-specific completion receipt. It qualifies fallback behavior with that
+compiler/runtime; it does not qualify the entire Expo stack on Xcode 26.3.
+
 ## Negative control catches the original failure
 
 The same XCTest was run against an isolated checkout that deliberately restores

@@ -54,6 +54,10 @@ PUSH_API=legacy
 [[ ! -f "$SDK/System/Library/Frameworks/PushKit.framework/Headers/PKVoIPPushMetadata.h" ]] || METADATA=1
 [[ "$FORCE_LEGACY" -ne 1 ]] || METADATA=0
 [[ "$METADATA" -ne 1 ]] || PUSH_API=metadata
+EXPECTED_PUSH_API=${QA_EXPECT_PUSH_API:-auto}
+[[ "$EXPECTED_PUSH_API" == auto || "$EXPECTED_PUSH_API" == metadata || "$EXPECTED_PUSH_API" == legacy ]] || { echo "QA_EXPECT_PUSH_API must be metadata or legacy" >&2; exit 1; }
+echo "pushAPI=$PUSH_API expectedPushAPI=$EXPECTED_PUSH_API" >> "$OUT/environment.txt"
+[[ "$EXPECTED_PUSH_API" == auto || "$EXPECTED_PUSH_API" == "$PUSH_API" ]] || { echo "Expected $EXPECTED_PUSH_API callback, SDK/config selected $PUSH_API" >&2; exit 1; }
 PHASE=fixture-build
 for lib in CKSimRuntime CKSimPush; do
   xcrun -sdk iphonesimulator clang -target "$(uname -m)-apple-ios18.0-simulator" -DCKSIM_HAS_VOIP_METADATA="$METADATA" \
