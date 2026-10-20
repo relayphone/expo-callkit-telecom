@@ -91,6 +91,7 @@ jobs:
       - name: Connected call survives malformed ${{ matrix.push_api }} push
         env:
           OUT: ${{ runner.temp }}/push-qa
+          QA_EXPECT_PUSH_API: ${{ matrix.push_api }}
           QA_FORCE_LEGACY_PUSH: ${{ matrix.push_api == 'legacy' && '1' || '0' }}
         run: |
           GEM_HOME="$(brew --prefix cocoapods)/libexec" \
