@@ -1,0 +1,47 @@
+diff --git a/ios/Managers/CallManager.swift b/ios/Managers/CallManager.swift
+index 1de53ca..973af69 100644
+--- a/ios/Managers/CallManager.swift
++++ b/ios/Managers/CallManager.swift
+@@ -479,30 +479,19 @@ class CallManager: NSObject {
+   /// needs no session lookup to dismiss the CallKit UI.
+   ///
+   /// - Parameter completion: Called after CallKit has processed the report.
++  // NEGATIVE CONTROL ONLY: reproduce the legacy wrong-session fallback.
+   func reportAndEndInvalidCall(completion: @escaping () -> Void) {
+-    let id = UUID()
+-    Log.call.debug("Reporting invalid-payload placeholder call - id: \(id)")
+-
+-    // Marked BEFORE the report so an answer/decline delivered in the window
+-    // between display and the .failed report below is recognized and rejected
+-    // by the action handlers instead of touching real-call state.
+-    markInvalidCallId(id)
+-
+-    let update = CXCallUpdate()
+-    update.hasVideo = false
+-    update.remoteHandle = CXHandle(type: .generic, value: "invalid")
+-    update.localizedCallerName = "Invalid Call"
+-
+-    provider.reportNewIncomingCall(with: id, update: update) { [weak self] error in
+-      if let error = error {
+-        // CallKit disallowed the call: it was never displayed, so per the
+-        // CXProvider contract we must not proceed with it — nothing to end.
+-        Log.call.error(
+-          "Failed to report invalid-payload call - id: \(id), error: \(error.localizedDescription)"
+-        )
+-        self?.removeInvalidCallId(id)
+-      } else {
+-        self?.provider.reportCall(with: id, endedAt: Date(), reason: .failed)
++    let event = IncomingCallEvent(
++      eventId: UUID().uuidString, serverCallId: UUID().uuidString,
++      caller: IncomingCallEvent.Caller(
++        id: UUID().uuidString, displayName: "Invalid Call",
++        avatarUrl: nil, phoneNumber: nil, email: nil),
++      hasVideo: false, startedAt: Date(), metadata: nil)
++    reportIncomingCall(event: event) { _ in
++      Task {
++        if let session = await self.store.firstSession {
++          await self.reportCallEnded(for: session.id, reason: .failed)
++        }
+       }
+       completion()
+     }

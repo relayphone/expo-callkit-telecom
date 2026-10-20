@@ -1,0 +1,11 @@
+56cbe6f25ce61a6a36ae6a48f7bef238da80ce37
+b7a33ab82785bf3d3862528f68f4a2cc689fbba6
+Xcode 26.6
+Build version 17F113
+v26.4.0
+1.4.0
+1.17.0
+ruby 3.4.11 (2026-09-23 revision 592f1ffdb3) +PRISM [arm64-darwin25]
+26.5
+simulatorRuntime=com.apple.CoreSimulator.SimRuntime.iOS-26-5 pushAPI=metadata
+runOwnedSimulator=0056A0B1-8414-45D0-A7FF-00F57EE99BDF

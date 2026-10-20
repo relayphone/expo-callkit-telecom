@@ -23,6 +23,46 @@ remains Connected and Muted with the audio session active. No token appears in
 this screenshot. The compact [result](result.json) excludes raw application logs;
 the example currently logs its VoIP token, so raw `.xcresult` stays private.
 
+## Hosted result
+
+[GitHub run 39511821416](https://github.com/ziahamza/expo-callkit-telecom/actions/runs/39511821416)
+also passes this real Expo/native/JS regression with **Xcode 26.6 / SDK 26.5 /
+iOS 26.5** on macOS 26.6.2. The synthetic merge checkout is
+`56cbe6f25ce61a6a36ae6a48f7bef238da80ce37`; the pinned runtime is `b7a33ab`.
+The public [summary and environment](hosted-39511821416/) contain no raw app logs.
+
+This proves application/native connected state and genuine CallKit transaction
+delivery under the simulator runtime. It does not exercise a network peer,
+provider signaling or two-party media. Xcode Cloud and third-party simulator
+provider bootstrap environments remain unqualified.
+
+The Xcode 26.3 / SDK 26.2 lane in this run exits 65 during native build before
+XCTest; no compiler error was retained. It remains unclassified. The next harness
+revision records its failure phase and bounded pre-launch compiler diagnostics.
+
+## Negative control catches the original failure
+
+The same XCTest was run against an isolated checkout that deliberately restores
+ordinary invalid-call session creation followed by `store.firstSession` teardown.
+A connected successfully, the explicitly triggered metadata push B completed,
+then `XCTAssertTrue(connected.exists)` at line 70 **failed**: A was gone. The
+runner exited **65**, with exactly one failed test. This is an application
+assertion failure, not a failed build, absent fixture, or startup timeout.
+
+The original [failure screenshot](negative-control/call-a-lost.png) was inspected:
+Call Session is Inactive, Call ID is none, and call controls are disabled. The
+[structured result](negative-control/result.json), environment, stage receipt
+and [reproduction patch](negative-control/restore-wrong-first-session.patch) are
+retained. Apply the patch to `35dc7ca` in a disposable checkout and commit it
+before running the same QA script; tracked QA/native sources otherwise match.
+The intentionally broken commit was local only, not a feature-branch change.
+
+The first failed-control attempt also exposed Xcode's automatic failure
+sysdiagnose exceeding the runner deadline. The final run disables that verbose
+collection, preserves the test's explicit screenshot/hierarchy attachments and
+finishes normally with the expected assertion failure. Earlier dependency/startup
+failures and the incomplete result are not counted as negative-control proof.
+
 ## Implemented
 
 - Carried upstream [PR #29](https://github.com/mfairley/expo-callkit-telecom/pull/29),
