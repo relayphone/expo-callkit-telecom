@@ -2,6 +2,25 @@ import Darwin
 import XCTest
 
 final class PushIsolationUITests: XCTestCase {
+  private var application: XCUIApplication?
+
+  override func tearDownWithError() throws {
+    if let application {
+      if (testRun?.failureCount ?? 0) > 0 {
+        let screenshot = XCTAttachment(screenshot: application.screenshot())
+        screenshot.name = "Failure screen"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let hierarchy = XCTAttachment(string: application.debugDescription)
+        hierarchy.name = "Failure accessibility hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+      }
+      application.terminate()
+    }
+    application = nil
+    try super.tearDownWithError()
+  }
   @MainActor
   func testMalformedPushPreservesConnectedCall() throws {
     continueAfterFailure = false
@@ -22,6 +41,7 @@ final class PushIsolationUITests: XCTestCase {
     defer { notify_cancel(notification) }
 
     let app = XCUIApplication(bundleIdentifier: "com.example.expocallkittelecom")
+    application = app
     app.launchEnvironment = [
       "DYLD_INSERT_LIBRARIES": libraries,
       "CKSIM_ENABLED": "1",
@@ -29,7 +49,6 @@ final class PushIsolationUITests: XCTestCase {
       "CKSIM_PUSH_COMPLETION_NOTIFICATION": receipt,
     ]
     app.launch()
-    defer { app.terminate() }
     let start = app.buttons["Start outgoing call"]
     XCTAssertTrue(start.waitForExistence(timeout: 15))
     start.tap()

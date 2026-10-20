@@ -26,8 +26,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 echo "Private QA evidence: $OUT"
 [[ -z "$(git -C "$SIM_RUNTIME" status --porcelain -- discovery)" ]] || { echo "Commit runtime fixture changes first" >&2; exit 1; }
-[[ -z "$(git -C "$ROOT" status --porcelain -- ios src plugin example/client example/qa)" ]] || { echo "Commit library source changes first" >&2; exit 1; }
-{ git -C "$ROOT" rev-parse HEAD; git -C "$SIM_RUNTIME" rev-parse HEAD; xcodebuild -version; } > "$OUT/environment.txt"
+[[ -z "$(git -C "$ROOT" status --porcelain -- ios src plugin example/client example/qa package.json bun.lock app.plugin.js expo-module.config.json)" ]] || { echo "Commit library source changes first" >&2; exit 1; }
+{ git -C "$ROOT" rev-parse HEAD; git -C "$SIM_RUNTIME" rev-parse HEAD; xcodebuild -version; node --version; bun --version; pod --version; ruby --version; xcrun -sdk iphonesimulator --show-sdk-version; } > "$OUT/environment.txt"
 SDK=$(xcrun -sdk iphonesimulator --show-sdk-path)
 METADATA=0
 PUSH_API=legacy
@@ -40,6 +40,7 @@ for lib in CKSimRuntime CKSimPush; do
   codesign -s - --force "$BUILD/$lib.dylib" >> "$OUT/build.log" 2>&1
 done
 RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x.get("platform")=="iOS" and x["isAvailable"]]; print(sorted(r,key=lambda x:[int(p) for p in x["version"].split(".")])[-1]["identifier"])')
+echo "simulatorRuntime=$RUNTIME pushAPI=$PUSH_API" >> "$OUT/environment.txt"
 UDID=$(xcrun simctl create "callkit-library-qa-$$" com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro "$RUNTIME")
 echo "runOwnedSimulator=$UDID" >> "$OUT/environment.txt"
 limit 30 xcrun simctl boot "$UDID"
