@@ -2,7 +2,9 @@
 # Adds the regression target only to the locally generated Expo Xcode project.
 require 'xcodeproj'
 
-project_path, libraries = ARGV
+project_path, libraries, api = ARGV
+api ||= 'metadata'
+abort 'push API must be metadata or legacy' unless %w[metadata legacy].include?(api)
 abort 'usage: add-ui-tests.rb <generated .xcodeproj> <runtime libraries>' unless libraries && project_path
 project = Xcodeproj::Project.open(project_path)
 app = project.targets.find { |target| target.name == 'CallKitTel' }
@@ -35,6 +37,7 @@ unless scheme.test_action.testables.any? { |reference|
 end
 variables = scheme.test_action.environment_variables
 variables.assign_variable(key: 'CKSIM_QA_RUNTIME_LIBRARIES', value: libraries, enabled: true)
+variables.assign_variable(key: 'CKSIM_QA_PUSH_API', value: api, enabled: true)
 scheme.test_action.environment_variables = variables
 scheme.test_action.should_use_launch_scheme_args_env = false
 scheme.save_as(project_path, 'CallKitTel')

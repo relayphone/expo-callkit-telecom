@@ -30,7 +30,9 @@ echo "Private QA evidence: $OUT"
 { git -C "$ROOT" rev-parse HEAD; git -C "$SIM_RUNTIME" rev-parse HEAD; xcodebuild -version; } > "$OUT/environment.txt"
 SDK=$(xcrun -sdk iphonesimulator --show-sdk-path)
 METADATA=0
+PUSH_API=legacy
 [[ ! -f "$SDK/System/Library/Frameworks/PushKit.framework/Headers/PKVoIPPushMetadata.h" ]] || METADATA=1
+[[ "$METADATA" -ne 1 ]] || PUSH_API=metadata
 for lib in CKSimRuntime CKSimPush; do
   xcrun -sdk iphonesimulator clang -target "$(uname -m)-apple-ios18.0-simulator" -DCKSIM_HAS_VOIP_METADATA="$METADATA" \
     -fobjc-arc -dynamiclib -framework Foundation -framework CallKit -framework AVFoundation -framework PushKit \
@@ -44,7 +46,7 @@ limit 30 xcrun simctl boot "$UDID"
 limit 180 xcrun simctl bootstatus "$UDID" -b >> "$OUT/build.log" 2>&1
 INHERITED=${SIMCTL_CHILD_DYLD_INSERT_LIBRARIES-$(xcrun simctl spawn "$UDID" launchctl getenv DYLD_INSERT_LIBRARIES 2>/dev/null || true)}
 LIBS="${INHERITED:+$INHERITED:}$BUILD/CKSimRuntime.dylib:$BUILD/CKSimPush.dylib"
-ruby "$ROOT/example/qa/add-ui-tests.rb" "$ROOT/example/client/ios/CallKitTel.xcodeproj" "$LIBS"
+ruby "$ROOT/example/qa/add-ui-tests.rb" "$ROOT/example/client/ios/CallKitTel.xcodeproj" "$LIBS" "$PUSH_API"
 cd "$ROOT/example/client/ios"
 COMMON=(-workspace CallKitTel.xcworkspace -scheme CallKitTel -configuration Release -sdk iphonesimulator -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES)
 limit 900 xcodebuild "${COMMON[@]}" -destination 'generic/platform=iOS Simulator' build-for-testing >> "$OUT/build.log" 2>&1

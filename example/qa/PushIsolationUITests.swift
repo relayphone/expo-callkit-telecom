@@ -7,13 +7,15 @@ final class PushIsolationUITests: XCTestCase {
     continueAfterFailure = false
     let environment = ProcessInfo.processInfo.environment
     let libraries = try XCTUnwrap(environment["CKSIM_QA_RUNTIME_LIBRARIES"])
+    let api = try XCTUnwrap(environment["CKSIM_QA_PUSH_API"])
+    XCTAssertTrue(["metadata", "legacy"].contains(api))
     let receipt = "dev.callkitsim.push.\(UUID().uuidString)"
     let delivered = expectation(description: "malformed PushKit callback completed")
     delivered.assertForOverFulfill = true
     var notification: Int32 = 0
     var connectedBeforePush = false
     XCTAssertEqual(
-      notify_register_dispatch(receipt, &notification, .main) { _ in
+      notify_register_dispatch(receipt + "." + api, &notification, .main) { _ in
         XCTAssertTrue(connectedBeforePush, "fixture arrived before call A was connected")
         delivered.fulfill()
       }, NOTIFY_STATUS_OK)
