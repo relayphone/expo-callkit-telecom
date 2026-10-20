@@ -76,7 +76,7 @@ PHASE=install
 limit 60 xcrun simctl install "$UDID" "$DERIVED/Build/Products/Release-iphonesimulator/CallKitTel.app"
 limit 20 xcrun simctl privacy "$UDID" grant microphone com.example.expocallkittelecom
 PHASE=ui-test
-limit 180 xcodebuild "${COMMON[@]}" -destination "id=$UDID" -parallel-testing-enabled NO \
+limit 180 xcodebuild "${COMMON[@]}" -destination "id=$UDID" -parallel-testing-enabled NO -collect-test-diagnostics never \
   -only-testing:PushIsolationUITests -resultBundlePath "$OUT/PushIsolation.xcresult" test-without-building > "$OUT/test.log" 2>&1
 PHASE=passed
 echo "XCTest passed; private result bundle: $OUT/PushIsolation.xcresult"
