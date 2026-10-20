@@ -22,9 +22,7 @@ export function SessionCard({ session }: SessionCardProps) {
         {active && session && (
           <>
             <Pill
-              label={
-                session.status[0].toUpperCase() + session.status.slice(1)
-              }
+              label={session.status[0].toUpperCase() + session.status.slice(1)}
               color={STATUS_COLOR[session.status]}
             />
             <Pill
@@ -38,11 +36,21 @@ export function SessionCard({ session }: SessionCardProps) {
           </>
         )}
       </View>
+      <Text testID="call-session-id" style={styles.identifier}>
+        Call ID: {session?.id ?? "none"}
+      </Text>
     </Card>
   );
 }
 
-type PillColor = "green" | "gray" | "blue" | "purple" | "orange" | "yellow" | "red";
+type PillColor =
+  | "green"
+  | "gray"
+  | "blue"
+  | "purple"
+  | "orange"
+  | "yellow"
+  | "red";
 
 const STATUS_COLOR: Record<CallSessionStatus, PillColor> = {
   requesting: "yellow",
@@ -73,6 +81,7 @@ function Pill({ label, color }: { label: string; color: PillColor }) {
 }
 
 const styles = StyleSheet.create({
+  identifier: { fontSize: 11, color: "#666", marginTop: 8 },
   row: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   pill: {
     flexDirection: "row",
