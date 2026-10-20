@@ -13,13 +13,13 @@ limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 cleanup() {
   local status=$?
   trap - EXIT
-  printf 'phase=%s exitStatus=%s\n' "$PHASE" "$status" > "$OUT/completion.txt"
+  printf 'phase=%s exitStatus=%s\n' "$PHASE" "$status" > "$OUT/completion.txt" || true
   if [[ "$status" -ne 0 ]]; then
-    cat "$OUT/completion.txt" >&2
+    cat "$OUT/completion.txt" >&2 || true
     # This log ends before app launch. Select compiler/linker diagnostics only;
     # never print the app test log, which can contain its PushKit token.
     if [[ "$PHASE" == native-build ]]; then
-      python3 - "$OUT/build.log" "$OUT/build-failures.txt" <<'PYDIAGNOSTICS'
+      python3 - "$OUT/build.log" "$OUT/build-failures.txt" <<'PYDIAGNOSTICS' || true
 import pathlib, re, sys
 source, target = map(pathlib.Path, sys.argv[1:])
 pattern = re.compile(r"(?:^|\s)(?:fatal )?error:|^ld:|^Undefined symbols|^\*\* .*FAILED \*\*")
