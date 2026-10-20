@@ -10,6 +10,16 @@ DERIVED=${QA_DERIVED_DATA:-$BUILD/DerivedData}
 UDID=""
 PHASE=preflight
 limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+run_stage() {
+  PHASE=$1
+  local budget=$2
+  shift 2
+  local started status
+  started=$(date +%s)
+  if limit "$budget" "$@" > "$OUT/$PHASE.log" 2>&1; then status=0; else status=$?; fi
+  printf 'phase=%s elapsedSeconds=%s exitStatus=%s\n' "$PHASE" "$(( $(date +%s) - started ))" "$status" >> "$OUT/stages.txt" || true
+  return "$status"
+}
 cleanup() {
   local scenario_status=$?
   local status=$scenario_status
@@ -86,9 +96,8 @@ if [[ "$FORCE_LEGACY" == 1 ]]; then
 fi
 PHASE=native-build
 limit 900 xcodebuild "${COMMON[@]}" -destination 'generic/platform=iOS Simulator' build-for-testing >> "$OUT/build.log" 2>&1
-PHASE=install
-limit 60 xcrun simctl install "$UDID" "$DERIVED/Build/Products/Release-iphonesimulator/CallKitTel.app"
-limit 20 xcrun simctl privacy "$UDID" grant microphone com.example.expocallkittelecom
+run_stage app-install 180 xcrun simctl install "$UDID" "$DERIVED/Build/Products/Release-iphonesimulator/CallKitTel.app"
+run_stage permissions 60 xcrun simctl privacy "$UDID" grant microphone com.example.expocallkittelecom
 PHASE=ui-test
 limit 180 xcodebuild "${COMMON[@]}" -destination "id=$UDID" -parallel-testing-enabled NO -collect-test-diagnostics never \
   -only-testing:PushIsolationUITests -resultBundlePath "$OUT/PushIsolation.xcresult" test-without-building > "$OUT/test.log" 2>&1
