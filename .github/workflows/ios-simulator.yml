@@ -1,0 +1,92 @@
+name: iOS simulator integration
+
+on:
+  pull_request:
+    paths:
+      - "ios/**"
+      - "src/**"
+      - "plugin/**"
+      - "example/client/**"
+      - "example/qa/**"
+      - "package.json"
+      - "app.plugin.js"
+      - "expo-module.config.json"
+      - "bun.lock"
+      - ".github/workflows/ios-simulator.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-simulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  push-isolation:
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        xcode: ["26.6", "26.3"]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout immutable simulator discovery fixture
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ziahamza/callkit-simulator
+          ref: b7a33ab82785bf3d3862528f68f4a2cc689fbba6
+          path: .ci/callkit-simulator
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "26.4.0"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.0"
+      - name: Select measured Xcode toolchain
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_${{ matrix.xcode }}.app"
+          xcodebuild -version
+          pod --version
+      - name: Install and check the library
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run typecheck
+          bun run build
+          bun run test -- --runInBand
+      - name: Prepare the real Expo example
+        working-directory: example/client
+        env:
+          CI: "1"
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bunx expo prebuild --platform ios --no-install
+          cd ios
+          pod install
+      - name: Connected call survives malformed metadata push
+        env:
+          OUT: ${{ runner.temp }}/push-qa
+        run: |
+          GEM_HOME="$(brew --prefix cocoapods)/libexec" \
+            bash example/qa/run-ios-push-isolation.sh "$GITHUB_WORKSPACE/.ci/callkit-simulator"
+      - name: Extract public result summary
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/public-evidence"
+          if [[ -f "$RUNNER_TEMP/push-qa/environment.txt" ]]; then
+            cp "$RUNNER_TEMP/push-qa/environment.txt" "$RUNNER_TEMP/public-evidence/"
+          fi
+          if [[ -d "$RUNNER_TEMP/push-qa/PushIsolation.xcresult" ]]; then
+            xcrun xcresulttool get test-results summary \
+              --path "$RUNNER_TEMP/push-qa/PushIsolation.xcresult" \
+              > "$RUNNER_TEMP/public-evidence/test-summary.json"
+          fi
+      # Raw app logs/xcresult can contain the example's VoIP token. Publish only
+      # the structured test summary and tool/source provenance.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ios-push-isolation-${{ matrix.xcode }}-summary
+          path: ${{ runner.temp }}/public-evidence
