@@ -54,6 +54,34 @@ must disable the metadata path in **both** fixture and library, and require a
 legacy-specific completion receipt. It qualifies fallback behavior with that
 compiler/runtime; it does not qualify the entire Expo stack on Xcode 26.3.
 
+## Metadata and legacy gate
+
+[Run 39514972142](https://github.com/ziahamza/expo-callkit-telecom/actions/runs/39514972142)
+passes **all four jobs**: actual SDK 26.2 and 26.5 native adapter checks, plus
+full Release Expo metadata and forced-legacy XCTest runs on Xcode 26.6 / iOS
+26.5. Each UI lane passes one test with zero failures. Its actual synthetic
+merge source is `1adbab17c00ec2e3457d68bb865a2d88cae828ce`.
+The [public evidence](hosted-39514972142/) records the selected/expected API and
+forced-legacy setting, so a lane cannot silently qualify the wrong callback.
+
+The initial [integration run 39515108673](https://github.com/ziahamza/expo-callkit-telecom/actions/runs/39515108673)
+passes both SDK checks and legacy XCTest, but metadata times out in the
+installation/permission stage **before XCTest**. That source tree is identical
+to the passing feature-branch tree. The [retained receipts](integration-39515108673/)
+keep the failed integration qualification explicit. The old stage covered both
+commands, so this evidence cannot identify which one stalled. The runner now
+records separate stage durations and allows 180 seconds for installation and
+60 seconds for permission setup, without automatic retries.
+
+Final standards review also caught a receipt written before cleanup. It now
+records the original scenario status separately and the final process status
+**after** cleanup. [Controlled CLI evidence](harness-controls/) executes the
+actual shell helpers: deletion failure turns a pass into exit 1, an existing
+exit 65 survives deletion failure, successful cleanup stays zero, and external
+command failure/deadline statuses remain 17/142. These are harness checks, not
+additional calling-library unit tests. Subsequent native runs carry their own
+results; the earlier pass does not prequalify a changed runner.
+
 ## Negative control catches the original failure
 
 The same XCTest was run against an isolated checkout that deliberately restores

@@ -10,12 +10,22 @@ DERIVED=${QA_DERIVED_DATA:-$BUILD/DerivedData}
 UDID=""
 PHASE=preflight
 limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+run_stage() {
+  PHASE=$1
+  local budget=$2
+  shift 2
+  local started status
+  started=$(date +%s)
+  if limit "$budget" "$@" > "$OUT/$PHASE.log" 2>&1; then status=0; else status=$?; fi
+  printf 'phase=%s elapsedSeconds=%s exitStatus=%s\n' "$PHASE" "$(( $(date +%s) - started ))" "$status" >> "$OUT/stages.txt" || true
+  return "$status"
+}
 cleanup() {
-  local status=$?
+  local scenario_status=$?
+  local status=$scenario_status
   trap - EXIT
-  printf 'phase=%s exitStatus=%s\n' "$PHASE" "$status" > "$OUT/completion.txt" || true
   if [[ "$status" -ne 0 ]]; then
-    cat "$OUT/completion.txt" >&2 || true
+    printf 'phase=%s scenarioExitStatus=%s\n' "$PHASE" "$scenario_status" >&2 || true
     # This log ends before app launch. Select compiler/linker diagnostics only;
     # never print the app test log, which can contain its PushKit token.
     if [[ "$PHASE" == native-build ]]; then
@@ -35,7 +45,10 @@ PYDIAGNOSTICS
       [[ "$status" -ne 0 ]] || status=1
     fi
   fi
-  rm -rf "$BUILD"
+  if ! rm -rf "$BUILD"; then
+    [[ "$status" -ne 0 ]] || status=1
+  fi
+  printf 'phase=%s scenarioExitStatus=%s exitStatus=%s\n' "$PHASE" "$scenario_status" "$status" > "$OUT/completion.txt" || true
   exit "$status"
 }
 trap cleanup EXIT
@@ -83,9 +96,8 @@ if [[ "$FORCE_LEGACY" == 1 ]]; then
 fi
 PHASE=native-build
 limit 900 xcodebuild "${COMMON[@]}" -destination 'generic/platform=iOS Simulator' build-for-testing >> "$OUT/build.log" 2>&1
-PHASE=install
-limit 60 xcrun simctl install "$UDID" "$DERIVED/Build/Products/Release-iphonesimulator/CallKitTel.app"
-limit 20 xcrun simctl privacy "$UDID" grant microphone com.example.expocallkittelecom
+run_stage app-install 180 xcrun simctl install "$UDID" "$DERIVED/Build/Products/Release-iphonesimulator/CallKitTel.app"
+run_stage permissions 60 xcrun simctl privacy "$UDID" grant microphone com.example.expocallkittelecom
 PHASE=ui-test
 limit 180 xcodebuild "${COMMON[@]}" -destination "id=$UDID" -parallel-testing-enabled NO -collect-test-diagnostics never \
   -only-testing:PushIsolationUITests -resultBundlePath "$OUT/PushIsolation.xcresult" test-without-building > "$OUT/test.log" 2>&1
