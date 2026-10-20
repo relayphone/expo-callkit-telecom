@@ -1,17 +1,11 @@
 import Foundation
 import PushKit
 
-extension VoIPPushManager: PKPushRegistryDelegate {
+extension VoIPPushManager: CallKitVoIPPushReceiver {
   /// Called when push credentials are updated.
   ///
   /// Converts the token data to a hex string and stores it for JS access.
-  nonisolated func pushRegistry(
-    _ registry: PKPushRegistry,
-    didUpdate pushCredentials: PKPushCredentials,
-    for type: PKPushType
-  ) {
-    guard type == .voIP else { return }
-
+  nonisolated func handleVoIPCredentials(_ pushCredentials: PKPushCredentials) {
     let tokenData = pushCredentials.token
     let tokenString = tokenData.map { String(format: "%02x", $0) }.joined()
 
@@ -23,12 +17,7 @@ extension VoIPPushManager: PKPushRegistryDelegate {
   /// Called when push credentials are invalidated.
   ///
   /// Clears the stored token and notifies JS.
-  nonisolated func pushRegistry(
-    _ registry: PKPushRegistry,
-    didInvalidatePushTokenFor type: PKPushType
-  ) {
-    guard type == .voIP else { return }
-
+  nonisolated func invalidateVoIPCredentials() {
     Log.voipPush.debug("VoIP push token invalidated")
 
     Task { @MainActor in
@@ -38,31 +27,30 @@ extension VoIPPushManager: PKPushRegistryDelegate {
 
   /// Called when a VoIP push notification is received.
   ///
-  /// This method MUST report a call to CallKit before returning, per Apple's requirements.
+  /// Required pushes report immediately, before calling completion. On optional
+  /// pushes, only malformed payloads may be skipped by the configured policy.
   /// The payload is expected to wrap an `IncomingCallEvent` under the top-level
   /// key `"incomingCall"`, matching `IncomingCallEventParser`.
   ///
   /// - Parameters:
-  ///   - registry: The push registry.
   ///   - payload: The push payload containing the incoming call event.
-  ///   - type: The push type (should be .voIP).
+  ///   - mustReport: Apple's reporting obligation; legacy delivery supplies true.
   ///   - completion: Completion handler that must be called after processing.
-  nonisolated func pushRegistry(
-    _ registry: PKPushRegistry,
-    didReceiveIncomingPushWith payload: PKPushPayload,
-    for type: PKPushType,
+  nonisolated func handleVoIPPayload(
+    _ payload: PKPushPayload,
+    mustReport: Bool,
     completion: @escaping () -> Void
   ) {
-    guard type == .voIP else {
-      completion()
-      return
-    }
-
     let dictionaryPayload = payload.dictionaryPayload
 
     Log.voipPush.debug("Received VoIP push - payload keys: \(dictionaryPayload.keys)")
 
     guard let event = IncomingCallEventParser.parse(from: dictionaryPayload) else {
+      if !mustReport && optionalPushPolicy == .ignoreInvalidPayloads {
+        Log.voipPush.debug("Ignoring optional VoIP push with invalid payload")
+        completion()
+        return
+      }
       // The parser logs which guard rejected the payload. We must still report
       // a call to CallKit even on parse failure, or the app will be terminated.
       Log.voipPush.error("Failed to parse VoIP push payload as IncomingCallEvent")

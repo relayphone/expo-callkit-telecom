@@ -78,6 +78,12 @@ class CallManager: NSObject {
     return invalidCallIds.contains(id)
   }
 
+  private func removeInvalidCallId(_ id: UUID) {
+    invalidCallIdsLock.lock()
+    defer { invalidCallIdsLock.unlock() }
+    invalidCallIds.remove(id)
+  }
+
   private override init() {
     let configuration = CXProviderConfiguration()
     configuration.supportsVideo = true
@@ -494,6 +500,7 @@ class CallManager: NSObject {
         Log.call.error(
           "Failed to report invalid-payload call - id: \(id), error: \(error.localizedDescription)"
         )
+        self?.removeInvalidCallId(id)
       } else {
         self?.provider.reportCall(with: id, endedAt: Date(), reason: .failed)
       }

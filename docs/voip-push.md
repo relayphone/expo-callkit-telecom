@@ -44,6 +44,19 @@ Both transports wrap the event under an `incomingCall` key, just at different la
 
 ## iOS — APNs VoIP push
 
+On iOS 26.4 and later, the native PushKit adapter uses the metadata callback and
+honors `mustReport`. Older SDKs compile the legacy callback without referring to
+the newer metadata type. A required malformed push reports and ends its own
+placeholder UUID, without adding an application session or preparing audio.
+
+The config plugin accepts `optionalVoIPPushPolicy: "reportAll"` (the default) or
+`"ignoreInvalidPayloads"`. The latter skips only malformed payloads when iOS says
+reporting is optional. A valid invitation still reports in either mode; a false
+`mustReport` value alone does not mean the invitation is stale. Legacy callbacks
+always follow the required-report path. Changing this option requires a native
+rebuild. For native integration, use the equivalent Info.plist string key
+`ExpoCallKitTelecomOptionalVoIPPushPolicy`.
+
 Send a [VoIP push through APNs](https://developer.apple.com/documentation/usernotifications/sending-voip-pushes) (`apns-push-type: voip`) whose dictionary payload nests the event under `incomingCall`:
 
 ```jsonc
@@ -71,10 +84,10 @@ Other data messages are forwarded to [`expo-notifications`](https://docs.expo.de
 
 ## When the payload doesn't parse (iOS)
 
-Apple requires reporting a call to CallKit for **every** VoIP push, so a payload that fails
-validation still produces a brief system call UI ("Invalid Call") that the module ends
-immediately. No session is created and **no JS events are emitted** for it — from your app's
-perspective the push is silent.
+When reporting is required, a payload that fails validation still produces a brief
+system call UI ("Invalid Call") that the module ends immediately. Optional malformed
+pushes follow `optionalVoIPPushPolicy`, described above. No application session is
+created and **no JS events are emitted** for a placeholder.
 
 To find out why a payload was rejected, check the device log: the parser logs which guard
 failed (missing envelope, envelope of the wrong type — e.g. the FCM JSON-string form sent to

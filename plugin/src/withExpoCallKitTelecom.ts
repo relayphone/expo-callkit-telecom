@@ -44,6 +44,13 @@ export type ExpoCallKitTelecomPluginProps = {
    */
   includesCallsInRecents?: boolean;
   /**
+   * Handling for malformed VoIP pushes when iOS explicitly permits no report.
+   * Valid invitations and pushes that require a report always report to CallKit.
+   * @default 'reportAll'
+   * @platform ios
+   */
+  optionalVoIPPushPolicy?: "reportAll" | "ignoreInvalidPayloads";
+  /**
    * Array of sound file paths (relative to project root) to include in the app.
    * These files will be copied into the iOS bundle and Android raw resources.
    * .wav recommended
@@ -99,10 +106,9 @@ export type ExpoCallKitTelecomPluginProps = {
   androidEventReceiver?: string;
 };
 
-const withExpoCallKitTelecom: ConfigPlugin<ExpoCallKitTelecomPluginProps | void> = (
-  config,
-  props,
-) => {
+const withExpoCallKitTelecom: ConfigPlugin<
+  ExpoCallKitTelecomPluginProps | void
+> = (config, props) => {
   const opts: ExpoCallKitTelecomPluginProps = props ?? {};
   config = withExpoCallKitTelecomAndroid(config, opts);
   config = withExpoCallKitTelecomIos(config, opts);
@@ -110,4 +116,8 @@ const withExpoCallKitTelecom: ConfigPlugin<ExpoCallKitTelecomPluginProps | void>
   return config;
 };
 
-export default createRunOncePlugin(withExpoCallKitTelecom, pkg.name, pkg.version);
+export default createRunOncePlugin(
+  withExpoCallKitTelecom,
+  pkg.name,
+  pkg.version
+);
