@@ -22,6 +22,11 @@ CocoaPods, prefix the command with
 not delete that directory. The default build and run-owned simulator are deleted
 on exit. `OUT` must be fresh if explicitly supplied.
 
+`QA_FORCE_LEGACY_PUSH=1` compiles both the fixture and native delegate on their
+legacy callback paths, even with a newer SDK. The expected legacy completion
+receipt is still required. This exercises fallback behavior; it does not claim
+that the whole Expo dependency stack builds with an older Xcode.
+
 Only the generated, ignored Xcode project is modified to add the test target;
 authored Swift/Ruby/shell sources stay in git. The simulator launch environment
 is preserved, with fixture libraries appended for the app under test. No device

@@ -46,9 +46,13 @@ echo "Private QA evidence: $OUT"
 [[ -z "$(git -C "$ROOT" status --porcelain -- ios src plugin example/client example/qa package.json bun.lock app.plugin.js expo-module.config.json)" ]] || { echo "Commit library source changes first" >&2; exit 1; }
 { git -C "$ROOT" rev-parse HEAD; git -C "$SIM_RUNTIME" rev-parse HEAD; xcodebuild -version; node --version; bun --version; pod --version; ruby --version; xcrun -sdk iphonesimulator --show-sdk-version; } > "$OUT/environment.txt"
 SDK=$(xcrun -sdk iphonesimulator --show-sdk-path)
+FORCE_LEGACY=${QA_FORCE_LEGACY_PUSH:-0}
+[[ "$FORCE_LEGACY" == 0 || "$FORCE_LEGACY" == 1 ]] || { echo "QA_FORCE_LEGACY_PUSH must be 0 or 1" >&2; exit 1; }
+echo "forceLegacyPush=$FORCE_LEGACY" >> "$OUT/environment.txt"
 METADATA=0
 PUSH_API=legacy
 [[ ! -f "$SDK/System/Library/Frameworks/PushKit.framework/Headers/PKVoIPPushMetadata.h" ]] || METADATA=1
+[[ "$FORCE_LEGACY" -ne 1 ]] || METADATA=0
 [[ "$METADATA" -ne 1 ]] || PUSH_API=metadata
 PHASE=fixture-build
 for lib in CKSimRuntime CKSimPush; do
@@ -70,6 +74,9 @@ PHASE=target-generation
 ruby "$ROOT/example/qa/add-ui-tests.rb" "$ROOT/example/client/ios/CallKitTel.xcodeproj" "$LIBS" "$PUSH_API"
 cd "$ROOT/example/client/ios"
 COMMON=(-workspace CallKitTel.xcworkspace -scheme CallKitTel -configuration Release -sdk iphonesimulator -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES)
+if [[ "$FORCE_LEGACY" == 1 ]]; then
+  COMMON+=('OTHER_CFLAGS=$(inherited) -DCALLKIT_TELECOM_LEGACY_PUSH_ONLY=1')
+fi
 PHASE=native-build
 limit 900 xcodebuild "${COMMON[@]}" -destination 'generic/platform=iOS Simulator' build-for-testing >> "$OUT/build.log" 2>&1
 PHASE=install
