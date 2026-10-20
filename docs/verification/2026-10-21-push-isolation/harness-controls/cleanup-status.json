@@ -1,0 +1,35 @@
+{
+  "success": true,
+  "cases": [
+    {
+      "scenarioStatus": 0,
+      "deleteStatus": 0,
+      "processStatus": 0,
+      "receipt": {
+        "phase": "ui-test",
+        "scenarioExitStatus": "0",
+        "exitStatus": "0"
+      }
+    },
+    {
+      "scenarioStatus": 0,
+      "deleteStatus": 9,
+      "processStatus": 1,
+      "receipt": {
+        "phase": "ui-test",
+        "scenarioExitStatus": "0",
+        "exitStatus": "1"
+      }
+    },
+    {
+      "scenarioStatus": 65,
+      "deleteStatus": 9,
+      "processStatus": 65,
+      "receipt": {
+        "phase": "ui-test",
+        "scenarioExitStatus": "65",
+        "exitStatus": "65"
+      }
+    }
+  ]
+}
