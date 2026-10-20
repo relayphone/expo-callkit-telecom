@@ -17,6 +17,7 @@ end
 target.build_configurations.each do |configuration|
   configuration.build_settings.merge!(
     'PRODUCT_BUNDLE_IDENTIFIER' => 'com.example.expocallkittelecom.push-qa',
+    'PRODUCT_NAME' => 'PushIsolationUITests',
     'GENERATE_INFOPLIST_FILE' => 'YES',
     'TEST_TARGET_NAME' => 'CallKitTel',
     'SWIFT_VERSION' => '5.0',
