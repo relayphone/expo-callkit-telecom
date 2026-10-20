@@ -11,11 +11,11 @@ UDID=""
 PHASE=preflight
 limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 cleanup() {
-  local status=$?
+  local scenario_status=$?
+  local status=$scenario_status
   trap - EXIT
-  printf 'phase=%s exitStatus=%s\n' "$PHASE" "$status" > "$OUT/completion.txt" || true
   if [[ "$status" -ne 0 ]]; then
-    cat "$OUT/completion.txt" >&2 || true
+    printf 'phase=%s scenarioExitStatus=%s\n' "$PHASE" "$scenario_status" >&2 || true
     # This log ends before app launch. Select compiler/linker diagnostics only;
     # never print the app test log, which can contain its PushKit token.
     if [[ "$PHASE" == native-build ]]; then
@@ -35,7 +35,10 @@ PYDIAGNOSTICS
       [[ "$status" -ne 0 ]] || status=1
     fi
   fi
-  rm -rf "$BUILD"
+  if ! rm -rf "$BUILD"; then
+    [[ "$status" -ne 0 ]] || status=1
+  fi
+  printf 'phase=%s scenarioExitStatus=%s exitStatus=%s\n' "$PHASE" "$scenario_status" "$status" > "$OUT/completion.txt" || true
   exit "$status"
 }
 trap cleanup EXIT
