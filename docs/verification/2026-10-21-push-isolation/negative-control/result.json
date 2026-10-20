@@ -1,0 +1,62 @@
+{
+  "devicesAndConfigurations": [
+    {
+      "device": {
+        "architecture": "arm64",
+        "deviceId": "6D18F191-4808-4AFA-9919-92AF7AFAE9D8",
+        "deviceName": "callkit-library-qa-3598",
+        "modelName": "iPhone 17 Pro",
+        "osBuildNumber": "24A434",
+        "osVersion": "27.0",
+        "platform": "iOS Simulator"
+      },
+      "expectedFailures": 0,
+      "failedTests": 1,
+      "passedTests": 0,
+      "skippedTests": 0,
+      "testPlanConfiguration": {
+        "configurationId": "1",
+        "configurationName": "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription": "CallKitTel \u00b7 Built with macOS 27.0.1",
+  "expectedFailures": 0,
+  "failedTests": 1,
+  "finishTime": 1792538418.312,
+  "passedTests": 0,
+  "result": "Failed",
+  "runtimeWarnings": [
+    {
+      "issueType": "Runtime Warning",
+      "message": "    AVAudioSession_iOS.mm:978   This method can lead to UI unresponsiveness if called on the main thread. Consider using the asynchronous activate/deactivate API instead for calls from the main thread."
+    }
+  ],
+  "skippedTests": 0,
+  "startTime": 1792538378.424,
+  "statistics": [],
+  "testFailures": [
+    {
+      "failureText": "XCTAssertTrue failed",
+      "targetName": "PushIsolationUITests",
+      "testIdentifier": 1,
+      "testIdentifierString": "PushIsolationUITests/testMalformedPushPreservesConnectedCall()",
+      "testIdentifierURL": "test://com.apple.xcode/CallKitTel/PushIsolationUITests/PushIsolationUITests/testMalformedPushPreservesConnectedCall",
+      "testName": "testMalformedPushPreservesConnectedCall()"
+    }
+  ],
+  "title": "Test - CallKitTel",
+  "topInsights": [],
+  "totalTestCount": 1,
+  "libraryCommit": "1ada9b954d5e5e4a598aed21dd248aaa35ec6100",
+  "reproductionBase": "35dc7ca",
+  "runtimeCommit": "f24d606645191563dfb49d612e74e6affc12eb71",
+  "intentionalNegativeControl": true,
+  "expectedFailure": {
+    "file": "example/qa/PushIsolationUITests.swift",
+    "line": 70,
+    "assertion": "XCTAssertTrue(connected.exists)",
+    "after": "connected A and completed metadata push B"
+  },
+  "processExitStatus": 65
+}

@@ -1,0 +1,4 @@
+/Users/runner/work/expo-callkit-telecom/expo-callkit-telecom/example/client/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI-Cxx/include/RuntimeScheduler.h:53:26: error: 'RuntimeScheduler' cannot be annotated with either SWIFT_RETURNS_RETAINED or SWIFT_RETURNS_UNRETAINED because it is not returning a SWIFT_SHARED_REFERENCE type
+/Users/runner/work/expo-callkit-telecom/expo-callkit-telecom/example/client/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI-Cxx/include/RuntimeScheduler.h:61:26: error: 'RuntimeScheduler' cannot be annotated with either SWIFT_RETURNS_RETAINED or SWIFT_RETURNS_UNRETAINED because it is not returning a SWIFT_SHARED_REFERENCE type
+** BUILD FAILED **
+** TEST BUILD FAILED **
