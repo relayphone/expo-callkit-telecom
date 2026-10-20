@@ -18,7 +18,7 @@ final class PushIsolationUITests: XCTestCase {
       notify_register_dispatch(receipt + "." + api, &notification, .main) { _ in
         XCTAssertTrue(connectedBeforePush, "fixture arrived before call A was connected")
         delivered.fulfill()
-      }, NOTIFY_STATUS_OK)
+      }, UInt32(NOTIFY_STATUS_OK))
     defer { notify_cancel(notification) }
 
     let app = XCUIApplication(bundleIdentifier: "com.example.expocallkittelecom")
@@ -43,7 +43,7 @@ final class PushIsolationUITests: XCTestCase {
     let callID = app.staticTexts["call-session-id"].label
     XCTAssertNotEqual(callID, "Call ID: none")
     connectedBeforePush = true
-    XCTAssertEqual(notify_post(receipt + ".trigger"), NOTIFY_STATUS_OK)
+    XCTAssertEqual(notify_post(receipt + ".trigger"), UInt32(NOTIFY_STATUS_OK))
     wait(for: [delivered], timeout: 40)
 
     // Exercise a genuine SDK round trip after malformed push B has completed.

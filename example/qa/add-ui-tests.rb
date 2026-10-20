@@ -23,6 +23,7 @@ target.build_configurations.each do |configuration|
     'GENERATE_INFOPLIST_FILE' => 'YES',
     'TEST_TARGET_NAME' => 'CallKitTel',
     'SWIFT_VERSION' => '5.0',
+    'SWIFT_OBJC_BRIDGING_HEADER' => File.expand_path('PushIsolation-Bridging-Header.h', __dir__),
     'TARGETED_DEVICE_FAMILY' => '1'
   )
 end
