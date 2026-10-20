@@ -2,24 +2,46 @@ import Darwin
 import XCTest
 
 final class PushIsolationUITests: XCTestCase {
+  private var application: XCUIApplication?
+
+  override func tearDownWithError() throws {
+    if let application {
+      if (testRun?.failureCount ?? 0) > 0 {
+        let screenshot = XCTAttachment(screenshot: application.screenshot())
+        screenshot.name = "Failure screen"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let hierarchy = XCTAttachment(string: application.debugDescription)
+        hierarchy.name = "Failure accessibility hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+      }
+      application.terminate()
+    }
+    application = nil
+    try super.tearDownWithError()
+  }
   @MainActor
   func testMalformedPushPreservesConnectedCall() throws {
     continueAfterFailure = false
     let environment = ProcessInfo.processInfo.environment
     let libraries = try XCTUnwrap(environment["CKSIM_QA_RUNTIME_LIBRARIES"])
+    let api = try XCTUnwrap(environment["CKSIM_QA_PUSH_API"])
+    XCTAssertTrue(["metadata", "legacy"].contains(api))
     let receipt = "dev.callkitsim.push.\(UUID().uuidString)"
     let delivered = expectation(description: "malformed PushKit callback completed")
     delivered.assertForOverFulfill = true
     var notification: Int32 = 0
     var connectedBeforePush = false
     XCTAssertEqual(
-      notify_register_dispatch(receipt, &notification, .main) { _ in
+      notify_register_dispatch(receipt + "." + api, &notification, .main) { _ in
         XCTAssertTrue(connectedBeforePush, "fixture arrived before call A was connected")
         delivered.fulfill()
-      }, NOTIFY_STATUS_OK)
+      }, UInt32(NOTIFY_STATUS_OK))
     defer { notify_cancel(notification) }
 
     let app = XCUIApplication(bundleIdentifier: "com.example.expocallkittelecom")
+    application = app
     app.launchEnvironment = [
       "DYLD_INSERT_LIBRARIES": libraries,
       "CKSIM_ENABLED": "1",
@@ -27,7 +49,6 @@ final class PushIsolationUITests: XCTestCase {
       "CKSIM_PUSH_COMPLETION_NOTIFICATION": receipt,
     ]
     app.launch()
-    defer { app.terminate() }
     let start = app.buttons["Start outgoing call"]
     XCTAssertTrue(start.waitForExistence(timeout: 15))
     start.tap()
@@ -41,7 +62,7 @@ final class PushIsolationUITests: XCTestCase {
     let callID = app.staticTexts["call-session-id"].label
     XCTAssertNotEqual(callID, "Call ID: none")
     connectedBeforePush = true
-    XCTAssertEqual(notify_post(receipt + ".trigger"), NOTIFY_STATUS_OK)
+    XCTAssertEqual(notify_post(receipt + ".trigger"), UInt32(NOTIFY_STATUS_OK))
     wait(for: [delivered], timeout: 40)
 
     // Exercise a genuine SDK round trip after malformed push B has completed.

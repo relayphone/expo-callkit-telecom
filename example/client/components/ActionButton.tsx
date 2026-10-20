@@ -23,6 +23,9 @@ export function ActionButton({
   const c = COLOR[variant];
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityState={{ disabled }}
       onPress={onPress}
       disabled={disabled}
       style={({ pressed }) => [
@@ -31,7 +34,13 @@ export function ActionButton({
         disabled && styles.disabled,
       ]}
     >
-      <Text style={[styles.label, { color: c.fg }, disabled && styles.disabledLabel]}>
+      <Text
+        style={[
+          styles.label,
+          { color: c.fg },
+          disabled && styles.disabledLabel,
+        ]}
+      >
         {title}
       </Text>
     </Pressable>
