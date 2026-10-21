@@ -119,9 +119,8 @@ else
   UDID=$(xcrun simctl create "callkit-library-qa-$$" "$DEVICE_TYPE" "$RUNTIME")
 fi
 echo "runOwnedSimulator=$UDID" >> "$OUT/environment.txt"
-PHASE=simulator-boot
-if [[ -z "${QA_REUSE_FROM:-}" ]]; then limit 30 xcrun simctl boot "$UDID"; fi
-limit 300 xcrun simctl bootstatus "$UDID" -b >> "$OUT/build.log" 2>&1
+if [[ -z "${QA_REUSE_FROM:-}" ]]; then run_stage simulator-start 30 xcrun simctl boot "$UDID"; fi
+run_stage simulator-boot 300 xcrun simctl bootstatus "$UDID" -b
 INHERITED=${SIMCTL_CHILD_DYLD_INSERT_LIBRARIES-$(xcrun simctl spawn "$UDID" launchctl getenv DYLD_INSERT_LIBRARIES 2>/dev/null || true)}
 LIBS="${INHERITED:+$INHERITED:}$RUNTIME_DIST/CKSimRuntime.dylib"
 PHASE=target-generation
