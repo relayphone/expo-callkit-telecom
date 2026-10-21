@@ -241,7 +241,7 @@ Most apps need only state and the handler. Lifecycle signals that aren't state g
 
 ## Native architecture
 
-### iOS: `ios-voip-sdk` (to be created at `ziahamza/ios-voip-sdk`)
+### iOS: [`ios-voip-sdk`](https://github.com/ziahamza/ios-voip-sdk)
 
 One repository, one Swift source tree, two products that are versioned and tested together:
 
@@ -250,7 +250,7 @@ One repository, one Swift source tree, two products that are versioned and teste
 | **Swift package** (SwiftPM; Swift 6, with no Expo, React Native or WebRTC dependency) | Native Swift apps, and later watchOS and Mac Catalyst | Owns the process's only `ConversationManager`, projects state, registers app metadata synchronously before reporting, enforces handler deadlines. Also holds the PushKit metadata shim (a separate Objective-C target), the media adapter protocols and the activation watchdog. |
 | **iOS-only Expo module** (npm; `expo-module.config.json` lists `apple` as its only platform) | Expo and bare React Native apps (bare apps need `expo-modules-core`) | A thin bridge that exposes this RFC's API: the state hooks, the handler, commands, reports, audio routes, push token and events. It also ships a config plugin for entitlements, `voip`, push, default calling and media adapters. Its podspec compiles the same Swift sources, so CocoaPods consumers need no separately published pod. |
 
-**Simulator support built in.** Genuine LiveCommunicationKit doesn't work in the iOS simulator: the call is torn down about 100 ms after the report. `ios-voip-sdk` therefore ships optional simulator support built on the [CallKit Simulator](https://github.com/ziahamza/callkit-simulator) runtime:
+**Simulator support built in.** Genuine LiveCommunicationKit doesn't work in the iOS simulator: the call is torn down about 100 ms after the report. `ios-voip-sdk` therefore ships optional simulator support built on the simulator runtime in [ios-voip-sdk](https://github.com/ziahamza/ios-voip-sdk):
 
 - **Activation:** in simulator builds the SDK activates the runtime in-process, before it creates its `ConversationManager`. This needs no `DYLD_INSERT_LIBRARIES` and no global simulator setup.
 - **Packaging:** the runtime arrives as an XCFramework. Its simulator slice is the runtime; its device slice is an empty stub. Device and App Store builds therefore contain no simulator code, and no build setting has to remember to exclude it.
