@@ -31,12 +31,21 @@ cleanup() {
     # This log ends before app launch. Select compiler/linker diagnostics only;
     # never print the app test log, which can contain its PushKit token.
     if [[ "$PHASE" == native-build ]]; then
-      python3 - "$OUT/build.log" "$OUT/build-failures.txt" <<'PYDIAGNOSTICS' || true
+      python3 - "$OUT/native-build.log" "$OUT/build-failures.txt" "$OUT/native-build-progress.txt" <<'PYDIAGNOSTICS' || true
 import pathlib, re, sys
-source, target = map(pathlib.Path, sys.argv[1:])
+source, target, progress = map(pathlib.Path, sys.argv[1:])
 pattern = re.compile(r"(?:^|\s)(?:fatal )?error:|^ld:|^Undefined symbols|^\*\* .*FAILED \*\*")
-lines = [line for line in source.read_text(errors="replace").splitlines() if pattern.search(line)]
+contents = source.read_text(errors="replace").splitlines()
+lines = [line for line in contents if pattern.search(line)]
 target.write_text("\n".join(lines[-100:]) + "\n")
+commands = []
+for line in contents:
+    action = re.match(r"^(CompileC|SwiftCompile|SwiftEmitModule|SwiftDriver|Ld|ScanDependencies|PhaseScriptExecution|CompileAssetCatalog|ProcessPCH)\b", line)
+    owner = re.search(r"\(in target '([^']+)' from project '([^']+)'\)", line)
+    if action and owner:
+        # Keep only build phase/target identities, never compiler argv or env.
+        commands.append(f"{action[1]} target={owner[1]} project={owner[2]}")
+progress.write_text("\n".join(commands[-40:]) + "\n")
 print(target.read_text(), file=sys.stderr)
 PYDIAGNOSTICS
     fi
@@ -110,9 +119,8 @@ else
   UDID=$(xcrun simctl create "callkit-library-qa-$$" "$DEVICE_TYPE" "$RUNTIME")
 fi
 echo "runOwnedSimulator=$UDID" >> "$OUT/environment.txt"
-PHASE=simulator-boot
-if [[ -z "${QA_REUSE_FROM:-}" ]]; then limit 30 xcrun simctl boot "$UDID"; fi
-limit 300 xcrun simctl bootstatus "$UDID" -b >> "$OUT/build.log" 2>&1
+if [[ -z "${QA_REUSE_FROM:-}" ]]; then run_stage simulator-start 30 xcrun simctl boot "$UDID"; fi
+run_stage simulator-boot 300 xcrun simctl bootstatus "$UDID" -b
 INHERITED=${SIMCTL_CHILD_DYLD_INSERT_LIBRARIES-$(xcrun simctl spawn "$UDID" launchctl getenv DYLD_INSERT_LIBRARIES 2>/dev/null || true)}
 LIBS="${INHERITED:+$INHERITED:}$RUNTIME_DIST/CKSimRuntime.dylib"
 PHASE=target-generation
@@ -125,8 +133,7 @@ fi
 if [[ "${QA_TEST_PUBLICATION:-0}" == 1 ]]; then
   /usr/libexec/PlistBuddy -c 'Set :ExpoCallKitTelecomIncomingCallTimeout 3' "$ROOT/example/client/ios/CallKitTel/Info.plist"
 fi
-PHASE=native-build
-limit 900 xcodebuild "${COMMON[@]}" -destination 'generic/platform=iOS Simulator' build-for-testing >> "$OUT/build.log" 2>&1
+run_stage native-build 900 xcodebuild "${COMMON[@]}" -destination 'generic/platform=iOS Simulator' -showBuildTimingSummary build-for-testing
 run_stage app-install 180 xcrun simctl install "$UDID" "$DERIVED/Build/Products/Release-iphonesimulator/CallKitTel.app"
 run_stage permissions 60 xcrun simctl privacy "$UDID" grant microphone com.example.expocallkittelecom
 xcrun simctl get_app_container "$UDID" com.example.expocallkittelecom data > "$OUT/aut-container.txt"

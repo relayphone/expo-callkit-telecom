@@ -115,7 +115,8 @@ jobs:
           if [[ -f "$RUNNER_TEMP/push-qa/environment.txt" ]]; then
             cp "$RUNNER_TEMP/push-qa/environment.txt" "$RUNNER_TEMP/public-evidence/"
           fi
-          for evidence in completion.txt stages.txt build-failures.txt; do
+          # Boot logs precede app installation and contain no VoIP payload/token.
+          for evidence in completion.txt stages.txt build-failures.txt native-build-progress.txt simulator-start.log simulator-boot.log; do
             if [[ -f "$RUNNER_TEMP/push-qa/$evidence" ]]; then
               cp "$RUNNER_TEMP/push-qa/$evidence" "$RUNNER_TEMP/public-evidence/"
             fi
