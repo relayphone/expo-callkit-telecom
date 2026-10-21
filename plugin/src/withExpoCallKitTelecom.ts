@@ -46,7 +46,7 @@ export type ExpoCallKitTelecomPluginProps = {
   /**
    * Handling for malformed VoIP pushes when iOS explicitly permits no report.
    * Valid invitations and pushes that require a report always report to CallKit.
-   * @default 'reportAll'
+   * @default 'ignoreInvalidPayloads'
    * @platform ios
    */
   optionalVoIPPushPolicy?: "reportAll" | "ignoreInvalidPayloads";

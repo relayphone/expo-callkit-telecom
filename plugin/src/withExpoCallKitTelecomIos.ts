@@ -346,7 +346,7 @@ export const withExpoCallKitTelecomIos: ConfigPlugin<
     outgoingCallTimeout,
     fulfillAnswerCallTimeout,
     includesCallsInRecents,
-    optionalVoIPPushPolicy = "reportAll",
+    optionalVoIPPushPolicy = "ignoreInvalidPayloads",
     sounds,
     defaultRingtoneIos,
     defaultDialtone,
