@@ -4,6 +4,7 @@ import Foundation
 /// Thread-safe store for active call sessions.
 actor CallStore {
   private var sessions: OrderedDictionary<UUID, CallSession> = [:]
+  nonisolated let incomingReports = IncomingCallReports()
 
   private struct SessionObserver: Sendable {
     let continuation: AsyncStream<CallSession>.Continuation
@@ -13,17 +14,35 @@ actor CallStore {
 
   /// The first session, if any.
   var firstSession: CallSession? {
-    sessions.values.first
+    allSessions.first
   }
 
   /// All sessions in insertion order.
   var allSessions: [CallSession] {
-    Array(sessions.values)
+    var result = Array(sessions.values)
+    for report in incomingReports.all {
+      let value = report.withSession { $0 }
+      if let index = result.firstIndex(where: { $0.id == report.id }) {
+        if let value { result[index] = value } else { result.remove(at: index) }
+      } else if let value { result.append(value) }
+    }
+    return result
   }
 
   /// Get a session by its system call ID.
   func session(for id: UUID) -> CallSession? {
-    sessions[id]
+    if let report = incomingReports.report(for: id) { return report.withSession { $0 } }
+    return sessions[id]
+  }
+
+  /// Commit under the same lock used by synchronous answer/end transitions.
+  @discardableResult
+  func publishIncoming(_ report: IncomingCallReport) -> Bool {
+    report.withSession { session in
+      guard let session else { return false }
+      add(session)
+      return true
+    }
   }
 
   /// Add a new session. No-op if session with same ID already exists.
@@ -37,6 +56,14 @@ actor CallStore {
 
   /// Remove a session by its system call ID. No-op if session doesn't exist.
   func remove(for id: UUID) {
+    let report = incomingReports.report(for: id)
+    report?.ended()
+    defer {
+      if let report {
+        report.removedFromStore()
+        incomingReports.discardEnded(report)
+      }
+    }
     guard sessions.removeValue(forKey: id) != nil else { return }
     Task { @MainActor in
       CallEventEmitter.shared.send(CallSessionRemovedEvent(id: id))
@@ -45,8 +72,13 @@ actor CallStore {
 
   /// Remove all sessions.
   func removeAll() {
+    incomingReports.endAll()
     let ids = Array(sessions.keys)
     sessions.removeAll()
+    for report in incomingReports.all {
+      report.removedFromStore()
+      incomingReports.discardEnded(report)
+    }
     Task { @MainActor in
       for id in ids {
         CallEventEmitter.shared.send(CallSessionRemovedEvent(id: id))
@@ -59,12 +91,25 @@ actor CallStore {
   /// Update a session using a closure.
   /// Only sends update events if the session actually changed.
   func update(for id: UUID, _ transform: (inout CallSession) -> Void) {
-    guard var session = sessions[id] else { return }
-    let previousSession = session
+    if let report = incomingReports.report(for: id) {
+      report.withSession { value in
+        guard let session = value else { return }
+        if sessions[id] == nil { add(session) }
+        value = applyUpdate(session, transform)
+      }
+    } else if let session = sessions[id] {
+      _ = applyUpdate(session, transform)
+    }
+  }
+
+  private func applyUpdate(_ current: CallSession, _ transform: (inout CallSession) -> Void) -> CallSession {
+    var session = current
+    let id = session.id
+    let previousSession = sessions[id] ?? current
     transform(&session)
 
     // Skip if nothing changed
-    guard session != previousSession else { return }
+    guard session != previousSession else { return session }
 
     sessions[id] = session
 
@@ -78,6 +123,7 @@ actor CallStore {
     Task { @MainActor in
       CallEventEmitter.shared.send(CallSessionUpdatedEvent(session: session))
     }
+    return session
   }
 
   /// Update the status of a session.
@@ -120,7 +166,7 @@ actor CallStore {
       let observerId = UUID()
 
       // Emit current session if it matches
-      if let session = sessions[callId], filter(session) {
+      if let session = session(for: callId), filter(session) {
         continuation.yield(session)
       }
 
