@@ -92,10 +92,26 @@ RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for 
 echo "simulatorRuntime=$RUNTIME pushAPI=$PUSH_API" >> "$OUT/environment.txt"
 DEVICE_TYPE=${QA_DEVICE_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro}
 echo "deviceType=$DEVICE_TYPE" >> "$OUT/environment.txt"
-UDID=$(xcrun simctl create "callkit-library-qa-$$" "$DEVICE_TYPE" "$RUNTIME")
+if [[ -n "${QA_REUSE_FROM:-}" ]]; then
+  # Local diagnosis may transfer a simulator preserved by an earlier failed
+  # run. Require its ownership receipt and exact harness-generated name.
+  UDID=$(python3 - "$QA_REUSE_FROM" <<'PYOWNED'
+import json,pathlib,subprocess,sys
+receipt=pathlib.Path(sys.argv[1])/'environment.txt'
+device=next(row.split('=',1)[1] for row in receipt.read_text().splitlines() if row.startswith('runOwnedSimulator='))
+inventory=json.loads(subprocess.check_output(['xcrun','simctl','list','devices','-j'],text=True))
+match=next(d for values in inventory['devices'].values() for d in values if d['udid']==device)
+assert match['name'].startswith('callkit-library-qa-') and match['state']=='Booted', 'Not a preserved, booted QA simulator'
+print(device)
+PYOWNED
+  )
+  echo "reusedOwnershipReceipt=$QA_REUSE_FROM" >> "$OUT/environment.txt"
+else
+  UDID=$(xcrun simctl create "callkit-library-qa-$$" "$DEVICE_TYPE" "$RUNTIME")
+fi
 echo "runOwnedSimulator=$UDID" >> "$OUT/environment.txt"
 PHASE=simulator-boot
-limit 30 xcrun simctl boot "$UDID"
+if [[ -z "${QA_REUSE_FROM:-}" ]]; then limit 30 xcrun simctl boot "$UDID"; fi
 limit 300 xcrun simctl bootstatus "$UDID" -b >> "$OUT/build.log" 2>&1
 INHERITED=${SIMCTL_CHILD_DYLD_INSERT_LIBRARIES-$(xcrun simctl spawn "$UDID" launchctl getenv DYLD_INSERT_LIBRARIES 2>/dev/null || true)}
 LIBS="${INHERITED:+$INHERITED:}$RUNTIME_DIST/CKSimRuntime.dylib"
