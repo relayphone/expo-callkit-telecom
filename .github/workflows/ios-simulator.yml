@@ -24,7 +24,8 @@ concurrency:
 
 jobs:
   adapter-sdk-compatibility:
-    runs-on: macos-26
+    # Keep the same lanes usable during Apple Silicon capacity incidents.
+    runs-on: ${{ vars.CKSIM_MACOS_RUNNER == 'macos-26-intel' && 'macos-26-intel' || 'macos-26' }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +48,7 @@ jobs:
             -DCALLKIT_TELECOM_LEGACY_PUSH_ONLY=1 ios/PushKit/CallKitVoIPPushDelegate.m
 
   push-isolation:
-    runs-on: macos-26
+    runs-on: ${{ vars.CKSIM_MACOS_RUNNER == 'macos-26-intel' && 'macos-26-intel' || 'macos-26' }}
     strategy:
       fail-fast: false
       matrix:
