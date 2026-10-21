@@ -85,6 +85,110 @@ final class PushIsolationUITests: XCTestCase {
   }
 
   @MainActor
+  func testEarlyAnswerBeforePushReportCompletion() throws {
+    try incomingPublication(viaPush: true, decline: false)
+  }
+
+  @MainActor
+  func testEarlyDeclineBeforePushReportCompletion() throws {
+    try incomingPublication(viaPush: true, decline: true)
+  }
+
+  @MainActor
+  func testEarlyAnswerBeforeAsyncReportCompletion() throws {
+    try incomingPublication(viaPush: false, decline: false)
+  }
+
+  @MainActor
+  private func incomingPublication(viaPush: Bool, decline: Bool) throws {
+    continueAfterFailure = false
+    let environment = ProcessInfo.processInfo.environment
+    let libraries = try XCTUnwrap(environment["CKSIM_QA_RUNTIME_LIBRARIES"])
+    let appInfo = try XCTUnwrap(environment["CKSIM_QA_APP_INFO"])
+    let info = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: URL(fileURLWithPath: appInfo)), format: nil) as? [String: Any])
+    XCTAssertEqual(info["ExpoCallKitTelecomIncomingCallTimeout"] as? Int, 3,
+      "Regression must outlast the actual binary's configured ringing deadline")
+    runID = UUID().uuidString
+    let app = XCUIApplication(bundleIdentifier: "com.example.expocallkittelecom")
+    application = app
+    app.launchEnvironment = ["DYLD_INSERT_LIBRARIES": libraries, "CKSIM_ENABLED": "1", "CKSIM_RUN_ID": runID,
+      "CKSIM_PUSH_AFTER": "", "CKSIM_PUSH_TRIGGER_NOTIFICATION": ""]
+    app.launch()
+    XCTAssertTrue(app.buttons["Start outgoing call"].waitForExistence(timeout: 15))
+    _ = try control("faults", ["faults": ["staleAudio": false, "reportCallbackDelayMS": 30000]])
+    let barrier = events().compactMap { $0["sequence"] as? Int }.max() ?? 0
+    var pushID: String?
+    if viaPush {
+      let receipt = try control("push", ["mustReport": true, "payload": ["incomingCall": [
+        "eventId": UUID().uuidString, "serverCallId": UUID().uuidString, "hasVideo": false,
+        "caller": ["id": "publication-qa", "displayName": "Publication QA"]]]])
+      pushID = try XCTUnwrap(receipt["pushID"] as? String)
+    } else {
+      app.buttons["Simulate incoming call"].tap()
+      app.alerts.buttons["Audio"].tap()
+    }
+    let reported = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      self.events().contains { $0["event"] as? String == "report.incoming" && ($0["sequence"] as? Int ?? 0) > barrier }
+    }, object: nil)
+    wait(for: [reported], timeout: 10)
+    let report = try XCTUnwrap(events().first { $0["event"] as? String == "report.incoming" && ($0["sequence"] as? Int ?? 0) > barrier })
+    if let pushID { XCTAssertEqual(report["pushID"] as? String, pushID) }
+    let uuid = try XCTUnwrap(report["callUUID"] as? String)
+    func callbackCompleted() -> Bool {
+      events().contains { $0["event"] as? String == "report.completed" && $0["callUUID"] as? String == uuid }
+    }
+    XCTAssertFalse(callbackCompleted(), "Action must precede delayed report completion")
+    let action = try control(decline ? "decline" : "answer", ["callUUID": uuid])
+    let actionID = try XCTUnwrap((action["actionIDs"] as? [String])?.first)
+    let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      self.events().contains { $0["event"] as? String == "action.settled" && $0["actionID"] as? String == actionID && $0["fulfilled"] as? Bool == true }
+    }, object: nil)
+    let identifier = app.staticTexts["call-session-id"]
+    if !decline {
+      XCTAssertTrue(app.staticTexts["Connecting"].waitForExistence(timeout: 5))
+      XCTAssertEqual(identifier.label, "Call ID: \(uuid)")
+      let connect = app.buttons["Connect Call"]
+      let enabled = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: connect)
+      wait(for: [enabled], timeout: 5)
+      connect.tap()
+      XCTAssertTrue(app.staticTexts["Connected"].waitForExistence(timeout: 5))
+      XCTAssertFalse(callbackCompleted(), "Connection must be established before callback delivery")
+    }
+    wait(for: [settled], timeout: 10)
+    let callback = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in callbackCompleted() }, object: nil)
+    wait(for: [callback], timeout: 40)
+    let completed = try XCTUnwrap(events().first { $0["event"] as? String == "report.completed" && $0["callUUID"] as? String == uuid })
+    let fulfilled = try XCTUnwrap(events().first { $0["event"] as? String == "action.settled" && $0["actionID"] as? String == actionID })
+    XCTAssertLessThan(try XCTUnwrap(fulfilled["sequence"] as? Int), try XCTUnwrap(completed["sequence"] as? Int),
+      "Delegate must actually settle the action before the delayed report callback")
+    if let pushID {
+      let published = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+        self.events().contains { $0["event"] as? String == "push.completed" && $0["pushID"] as? String == pushID }
+      }, object: nil)
+      wait(for: [published], timeout: 10)
+    } else {
+      // IncomingCallReported is emitted by the library's publication task,
+      // after CallKit's callback has returned to it.
+      let published = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "IncomingCallReported")).firstMatch
+      XCTAssertTrue(published.waitForExistence(timeout: 10))
+    }
+    let expected = decline ? "Call ID: none" : "Call ID: \(uuid)"
+    XCTAssertEqual(identifier.label, expected)
+    let changed = expectation(for: NSPredicate(format: "label != %@", expected), evaluatedWith: identifier)
+    changed.isInverted = true
+    wait(for: [changed], timeout: 4)
+    if !decline {
+      XCTAssertTrue(app.staticTexts["Connected"].exists, "Late completion must not recreate ringing or arm its 3s timeout")
+      _ = try control("end", ["callUUID": uuid])
+      let cleared = expectation(for: NSPredicate(format: "label == %@", "Call ID: none"), evaluatedWith: identifier)
+      wait(for: [cleared], timeout: 5)
+    }
+    let calls = try XCTUnwrap(control("status")["calls"] as? [[String: Any]])
+    XCTAssertTrue(calls.isEmpty)
+    XCTAssertTrue(app.buttons["Start outgoing call"].isEnabled)
+  }
+
+  @MainActor
   private func malformedPush(mustReport: Bool, expectedPlaceholder: Bool, api: String) throws {
     continueAfterFailure = false
     let environment = ProcessInfo.processInfo.environment

@@ -85,11 +85,14 @@ limit 300 xcrun simctl bootstatus "$UDID" -b >> "$OUT/build.log" 2>&1
 INHERITED=${SIMCTL_CHILD_DYLD_INSERT_LIBRARIES-$(xcrun simctl spawn "$UDID" launchctl getenv DYLD_INSERT_LIBRARIES 2>/dev/null || true)}
 LIBS="${INHERITED:+$INHERITED:}$RUNTIME_DIST/CKSimRuntime.dylib"
 PHASE=target-generation
-ruby "$ROOT/example/qa/add-ui-tests.rb" "$ROOT/example/client/ios/CallKitTel.xcodeproj" "$LIBS" "$PUSH_API" "$OUT/aut-container.txt"
+ruby "$ROOT/example/qa/add-ui-tests.rb" "$ROOT/example/client/ios/CallKitTel.xcodeproj" "$LIBS" "$PUSH_API" "$OUT/aut-container.txt" "$DERIVED/Build/Products/Release-iphonesimulator/CallKitTel.app/Info.plist"
 cd "$ROOT/example/client/ios"
 COMMON=(-workspace CallKitTel.xcworkspace -scheme CallKitTel -configuration Release -sdk iphonesimulator -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES)
 if [[ "$FORCE_LEGACY" == 1 ]]; then
   COMMON+=('OTHER_CFLAGS=$(inherited) -DCALLKIT_TELECOM_LEGACY_PUSH_ONLY=1')
+fi
+if [[ "${QA_TEST_PUBLICATION:-0}" == 1 ]]; then
+  /usr/libexec/PlistBuddy -c 'Set :ExpoCallKitTelecomIncomingCallTimeout 3' "$ROOT/example/client/ios/CallKitTel/Info.plist"
 fi
 PHASE=native-build
 limit 900 xcodebuild "${COMMON[@]}" -destination 'generic/platform=iOS Simulator' build-for-testing >> "$OUT/build.log" 2>&1
@@ -105,8 +108,14 @@ if [[ "$PUSH_API" == metadata ]]; then
 else
   TESTS+=(-only-testing:PushIsolationUITests/PushIsolationUITests/testLegacyMalformedPushPreservesConnectedCall)
 fi
+if [[ "${QA_TEST_PUBLICATION:-0}" == 1 ]]; then
+  TESTS+=(-only-testing:PushIsolationUITests/PushIsolationUITests/testEarlyAnswerBeforePushReportCompletion)
+  TESTS+=(-only-testing:PushIsolationUITests/PushIsolationUITests/testEarlyDeclineBeforePushReportCompletion)
+  TESTS+=(-only-testing:PushIsolationUITests/PushIsolationUITests/testEarlyAnswerBeforeAsyncReportCompletion)
+  EXPECTED_TESTS=$((EXPECTED_TESTS + 3))
+fi
 PHASE=ui-test
-limit 180 xcodebuild "${COMMON[@]}" -destination "id=$UDID" -parallel-testing-enabled NO -collect-test-diagnostics never \
+limit 420 xcodebuild "${COMMON[@]}" -destination "id=$UDID" -parallel-testing-enabled NO -collect-test-diagnostics never \
   "${TESTS[@]}" -resultBundlePath "$OUT/PushIsolation.xcresult" test-without-building > "$OUT/test.log" 2>&1
 xcrun xcresulttool get test-results summary --path "$OUT/PushIsolation.xcresult" > "$OUT/test-summary.json"
 python3 - "$OUT/test-summary.json" "$EXPECTED_TESTS" <<'PYRESULT'
