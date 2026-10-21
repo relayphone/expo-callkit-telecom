@@ -1,0 +1,135 @@
+name: iOS simulator integration
+
+on:
+  pull_request:
+    paths:
+      - "ios/**"
+      - "src/**"
+      - "plugin/**"
+      - "example/client/**"
+      - "example/qa/**"
+      - "package.json"
+      - "app.plugin.js"
+      - "expo-module.config.json"
+      - "bun.lock"
+      - ".github/workflows/ios-simulator.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-simulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  adapter-sdk-compatibility:
+    # Keep the same lanes usable during Apple Silicon capacity incidents.
+    runs-on: ${{ vars.CKSIM_MACOS_RUNNER == 'macos-26-intel' && 'macos-26-intel' || 'macos-26' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        xcode: ["26.3", "26.6"]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Compile the native adapter with the actual SDK
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
+        run: |
+          xcodebuild -version
+          SDK=$(xcrun -sdk iphonesimulator --show-sdk-path)
+          xcrun -sdk iphonesimulator --show-sdk-version
+          xcrun -sdk iphonesimulator clang -target arm64-apple-ios18.0-simulator \
+            -isysroot "$SDK" -fobjc-arc -fmodules -Werror -fsyntax-only \
+            ios/PushKit/CallKitVoIPPushDelegate.m
+          xcrun -sdk iphonesimulator clang -target arm64-apple-ios18.0-simulator \
+            -isysroot "$SDK" -fobjc-arc -fmodules -Werror -fsyntax-only \
+            -DCALLKIT_TELECOM_LEGACY_PUSH_ONLY=1 ios/PushKit/CallKitVoIPPushDelegate.m
+
+  push-isolation:
+    runs-on: ${{ vars.CKSIM_MACOS_RUNNER == 'macos-26-intel' && 'macos-26-intel' || 'macos-26' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        push_api: ["metadata", "legacy"]
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Download checksummed CallKit Simulator v0.1
+        run: |
+          ARCHIVE="$RUNNER_TEMP/callkit-simulator-v0.1-macos.tar.gz"
+          curl --fail --silent --show-error --location --retry 2 \
+            https://github.com/ziahamza/callkit-simulator/releases/download/v0.1/callkit-simulator-v0.1-macos.tar.gz \
+            --output "$ARCHIVE"
+          printf '%s  %s\n' '98f8a32d75741b3132b20c2544d42c2ed64fceb339df82400cfdbbd69e0184f9' "$ARCHIVE" | shasum -a 256 --check --status
+          mkdir "$RUNNER_TEMP/callkit-runtime"
+          tar -xzf "$ARCHIVE" -C "$RUNNER_TEMP/callkit-runtime"
+          printf 'CKSIM_RUNTIME_DIST=%s\n' "$RUNNER_TEMP/callkit-runtime" >> "$GITHUB_ENV"
+          printf 'release=v0.1\narchiveSHA256=98f8a32d75741b3132b20c2544d42c2ed64fceb339df82400cfdbbd69e0184f9\n' > "$RUNNER_TEMP/runtime-release.txt"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "26.4.0"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.0"
+      - name: Select full Expo test toolchain
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_26.6.app"
+          xcodebuild -version
+          pod --version
+      - name: Install and check the library
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run typecheck
+          bun run build
+          bun run test -- --runInBand
+      - name: Prepare the real Expo example
+        working-directory: example/client
+        env:
+          CI: "1"
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bunx expo prebuild --platform ios --no-install
+          cd ios
+          pod install
+      - name: Call and publication regressions (${{ matrix.push_api }})
+        env:
+          OUT: ${{ runner.temp }}/push-qa
+          QA_EXPECT_PUSH_API: ${{ matrix.push_api }}
+          QA_FORCE_LEGACY_PUSH: ${{ matrix.push_api == 'legacy' && '1' || '0' }}
+          QA_TEST_PUBLICATION: "1"
+        run: |
+          GEM_HOME="$(brew --prefix cocoapods)/libexec" \
+            bash example/qa/run-ios-push-isolation.sh "$CKSIM_RUNTIME_DIST"
+      - name: Extract public result summary
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/public-evidence"
+          if [[ -f "$RUNNER_TEMP/runtime-release.txt" ]]; then
+            cp "$RUNNER_TEMP/runtime-release.txt" "$RUNNER_TEMP/public-evidence/"
+          fi
+          if [[ -f "${CKSIM_RUNTIME_DIST:-}/build-info.json" ]]; then
+            cp "$CKSIM_RUNTIME_DIST/build-info.json" "$RUNNER_TEMP/public-evidence/runtime-build-info.json"
+          fi
+          if [[ -f "$RUNNER_TEMP/push-qa/environment.txt" ]]; then
+            cp "$RUNNER_TEMP/push-qa/environment.txt" "$RUNNER_TEMP/public-evidence/"
+          fi
+          # Boot logs precede app installation and contain no VoIP payload/token.
+          for evidence in completion.txt stages.txt build-failures.txt native-build-progress.txt simulator-start.log simulator-boot.log; do
+            if [[ -f "$RUNNER_TEMP/push-qa/$evidence" ]]; then
+              cp "$RUNNER_TEMP/push-qa/$evidence" "$RUNNER_TEMP/public-evidence/"
+            fi
+          done
+          if [[ -d "$RUNNER_TEMP/push-qa/PushIsolation.xcresult" ]]; then
+            xcrun xcresulttool get test-results summary \
+              --path "$RUNNER_TEMP/push-qa/PushIsolation.xcresult" \
+              > "$RUNNER_TEMP/public-evidence/test-summary.json"
+          fi
+      # Raw app logs/xcresult can contain the example's VoIP token. Publish only
+      # the structured test summary and tool/source provenance.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ios-push-isolation-${{ matrix.push_api }}-summary
+          path: ${{ runner.temp }}/public-evidence

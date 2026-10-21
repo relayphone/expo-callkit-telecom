@@ -8,6 +8,7 @@ OUT=$(cd "$OUT" && pwd)
 BUILD=$(mktemp -d "${TMPDIR:-/tmp}/callkit-push-build.XXXXXX")
 DERIVED=${QA_DERIVED_DATA:-$BUILD/DerivedData}
 UDID=""
+INDEX_WATCHER=""
 PHASE=preflight
 limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 run_stage() {
@@ -24,25 +25,48 @@ cleanup() {
   local scenario_status=$?
   local status=$scenario_status
   trap - EXIT
+  if [[ -n "$INDEX_WATCHER" ]]; then kill "$INDEX_WATCHER" 2>/dev/null || true; wait "$INDEX_WATCHER" 2>/dev/null || true; fi
   if [[ "$status" -ne 0 ]]; then
     printf 'phase=%s scenarioExitStatus=%s\n' "$PHASE" "$scenario_status" >&2 || true
     # This log ends before app launch. Select compiler/linker diagnostics only;
     # never print the app test log, which can contain its PushKit token.
     if [[ "$PHASE" == native-build ]]; then
-      python3 - "$OUT/build.log" "$OUT/build-failures.txt" <<'PYDIAGNOSTICS' || true
+      python3 - "$OUT/native-build.log" "$OUT/build-failures.txt" "$OUT/native-build-progress.txt" <<'PYDIAGNOSTICS' || true
 import pathlib, re, sys
-source, target = map(pathlib.Path, sys.argv[1:])
+source, target, progress = map(pathlib.Path, sys.argv[1:])
 pattern = re.compile(r"(?:^|\s)(?:fatal )?error:|^ld:|^Undefined symbols|^\*\* .*FAILED \*\*")
-lines = [line for line in source.read_text(errors="replace").splitlines() if pattern.search(line)]
+contents = source.read_text(errors="replace").splitlines()
+lines = [line for line in contents if pattern.search(line)]
 target.write_text("\n".join(lines[-100:]) + "\n")
+commands = []
+for line in contents:
+    action = re.match(r"^(CompileC|SwiftCompile|SwiftEmitModule|SwiftDriver|Ld|ScanDependencies|PhaseScriptExecution|CompileAssetCatalog|ProcessPCH)\b", line)
+    owner = re.search(r"\(in target '([^']+)' from project '([^']+)'\)", line)
+    if action and owner:
+        # Keep only build phase/target identities, never compiler argv or env.
+        commands.append(f"{action[1]} target={owner[1]} project={owner[2]}")
+progress.write_text("\n".join(commands[-40:]) + "\n")
 print(target.read_text(), file=sys.stderr)
 PYDIAGNOSTICS
     fi
   fi
   if [[ -n "$UDID" ]]; then
+    if [[ "$scenario_status" -ne 0 ]]; then
+      local container
+      container=$(limit 10 xcrun simctl get_app_container "$UDID" com.example.expocallkittelecom data 2>/dev/null) || container=""
+      printf '%s\n' "$container" > "$OUT/app-container.after-test.txt"
+      if [[ -d "$container/Documents/.callkit-simulator" ]]; then
+        cp -R "$container/Documents/.callkit-simulator" "$OUT/runtime-mailbox" || true
+      fi
+      limit 10 xcrun simctl io "$UDID" screenshot "$OUT/failure.png" >> "$OUT/cleanup.log" 2>&1 || true
+    fi
+    if [[ "$scenario_status" -ne 0 && "${QA_PRESERVE_FAILURE:-0}" == 1 ]]; then
+      echo "Preserved run-owned simulator for diagnosis: $UDID" >> "$OUT/cleanup.log"
+    else
     limit 20 xcrun simctl shutdown "$UDID" >> "$OUT/cleanup.log" 2>&1 || true
     if ! limit 20 xcrun simctl delete "$UDID" >> "$OUT/cleanup.log" 2>&1; then
       [[ "$status" -ne 0 ]] || status=1
+    fi
     fi
   fi
   if ! rm -rf "$BUILD"; then
@@ -77,22 +101,39 @@ RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for 
 echo "simulatorRuntime=$RUNTIME pushAPI=$PUSH_API" >> "$OUT/environment.txt"
 DEVICE_TYPE=${QA_DEVICE_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro}
 echo "deviceType=$DEVICE_TYPE" >> "$OUT/environment.txt"
-UDID=$(xcrun simctl create "callkit-library-qa-$$" "$DEVICE_TYPE" "$RUNTIME")
+if [[ -n "${QA_REUSE_FROM:-}" ]]; then
+  # Local diagnosis may transfer a simulator preserved by an earlier failed
+  # run. Require its ownership receipt and exact harness-generated name.
+  UDID=$(python3 - "$QA_REUSE_FROM" <<'PYOWNED'
+import json,pathlib,subprocess,sys
+receipt=pathlib.Path(sys.argv[1])/'environment.txt'
+device=next(row.split('=',1)[1] for row in receipt.read_text().splitlines() if row.startswith('runOwnedSimulator='))
+inventory=json.loads(subprocess.check_output(['xcrun','simctl','list','devices','-j'],text=True))
+match=next(d for values in inventory['devices'].values() for d in values if d['udid']==device)
+assert match['name'].startswith('callkit-library-qa-') and match['state']=='Booted', 'Not a preserved, booted QA simulator'
+print(device)
+PYOWNED
+  )
+  echo "reusedOwnershipReceipt=$QA_REUSE_FROM" >> "$OUT/environment.txt"
+else
+  UDID=$(xcrun simctl create "callkit-library-qa-$$" "$DEVICE_TYPE" "$RUNTIME")
+fi
 echo "runOwnedSimulator=$UDID" >> "$OUT/environment.txt"
-PHASE=simulator-boot
-limit 30 xcrun simctl boot "$UDID"
-limit 300 xcrun simctl bootstatus "$UDID" -b >> "$OUT/build.log" 2>&1
+if [[ -z "${QA_REUSE_FROM:-}" ]]; then run_stage simulator-start 30 xcrun simctl boot "$UDID"; fi
+run_stage simulator-boot 300 xcrun simctl bootstatus "$UDID" -b
 INHERITED=${SIMCTL_CHILD_DYLD_INSERT_LIBRARIES-$(xcrun simctl spawn "$UDID" launchctl getenv DYLD_INSERT_LIBRARIES 2>/dev/null || true)}
 LIBS="${INHERITED:+$INHERITED:}$RUNTIME_DIST/CKSimRuntime.dylib"
 PHASE=target-generation
-ruby "$ROOT/example/qa/add-ui-tests.rb" "$ROOT/example/client/ios/CallKitTel.xcodeproj" "$LIBS" "$PUSH_API" "$OUT/aut-container.txt"
+ruby "$ROOT/example/qa/add-ui-tests.rb" "$ROOT/example/client/ios/CallKitTel.xcodeproj" "$LIBS" "$PUSH_API" "$OUT/aut-container.txt" "$DERIVED/Build/Products/Release-iphonesimulator/CallKitTel.app/Info.plist"
 cd "$ROOT/example/client/ios"
 COMMON=(-workspace CallKitTel.xcworkspace -scheme CallKitTel -configuration Release -sdk iphonesimulator -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=YES)
 if [[ "$FORCE_LEGACY" == 1 ]]; then
   COMMON+=('OTHER_CFLAGS=$(inherited) -DCALLKIT_TELECOM_LEGACY_PUSH_ONLY=1')
 fi
-PHASE=native-build
-limit 900 xcodebuild "${COMMON[@]}" -destination 'generic/platform=iOS Simulator' build-for-testing >> "$OUT/build.log" 2>&1
+if [[ "${QA_TEST_PUBLICATION:-0}" == 1 ]]; then
+  /usr/libexec/PlistBuddy -c 'Set :ExpoCallKitTelecomIncomingCallTimeout 3' "$ROOT/example/client/ios/CallKitTel/Info.plist"
+fi
+run_stage native-build 900 xcodebuild "${COMMON[@]}" -destination 'generic/platform=iOS Simulator' -showBuildTimingSummary build-for-testing
 run_stage app-install 180 xcrun simctl install "$UDID" "$DERIVED/Build/Products/Release-iphonesimulator/CallKitTel.app"
 run_stage permissions 60 xcrun simctl privacy "$UDID" grant microphone com.example.expocallkittelecom
 xcrun simctl get_app_container "$UDID" com.example.expocallkittelecom data > "$OUT/aut-container.txt"
@@ -105,8 +146,24 @@ if [[ "$PUSH_API" == metadata ]]; then
 else
   TESTS+=(-only-testing:PushIsolationUITests/PushIsolationUITests/testLegacyMalformedPushPreservesConnectedCall)
 fi
+if [[ "${QA_TEST_PUBLICATION:-0}" == 1 ]]; then
+  TESTS+=(-only-testing:PushIsolationUITests/PushIsolationUITests/testEarlyAnswerBeforePushReportCompletion)
+  TESTS+=(-only-testing:PushIsolationUITests/PushIsolationUITests/testEarlyDeclineBeforePushReportCompletion)
+  TESTS+=(-only-testing:PushIsolationUITests/PushIsolationUITests/testEarlyAnswerBeforeAsyncReportCompletion)
+  EXPECTED_TESTS=$((EXPECTED_TESTS + 3))
+fi
+if [[ -n "${QA_ONLY_TEST:-}" ]]; then
+  case "$QA_ONLY_TEST" in
+    testOptionalMalformedPushPreservesConnectedCall|testRequiredMalformedPushPreservesConnectedCall|testLegacyMalformedPushPreservesConnectedCall|testEarlyAnswerBeforePushReportCompletion|testEarlyDeclineBeforePushReportCompletion|testEarlyAnswerBeforeAsyncReportCompletion) ;;
+    *) echo "Unsupported QA_ONLY_TEST" >&2; exit 1;;
+  esac
+  TESTS=("-only-testing:PushIsolationUITests/PushIsolationUITests/$QA_ONLY_TEST")
+  EXPECTED_TESTS=1
+fi
 PHASE=ui-test
-limit 180 xcodebuild "${COMMON[@]}" -destination "id=$UDID" -parallel-testing-enabled NO -collect-test-diagnostics never \
+python3 "$ROOT/example/qa/watch-aut-container.py" "$UDID" com.example.expocallkittelecom "$OUT/aut-container.txt" > "$OUT/container-index.log" 2>&1 &
+INDEX_WATCHER=$!
+limit 420 xcodebuild "${COMMON[@]}" -destination "id=$UDID" -parallel-testing-enabled NO -collect-test-diagnostics never \
   "${TESTS[@]}" -resultBundlePath "$OUT/PushIsolation.xcresult" test-without-building > "$OUT/test.log" 2>&1
 xcrun xcresulttool get test-results summary --path "$OUT/PushIsolation.xcresult" > "$OUT/test-summary.json"
 python3 - "$OUT/test-summary.json" "$EXPECTED_TESTS" <<'PYRESULT'
