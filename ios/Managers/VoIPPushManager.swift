@@ -23,13 +23,13 @@ final class VoIPPushManager: NSObject {
     case ignoreInvalidPayloads
   }
 
-  /// A non-reportable push can still be a fresh invitation. The default keeps
-  /// reporting valid and invalid payloads; opt in only to ignoring invalid ones.
+  /// Valid invitations always report. Malformed optional pushes are ignored;
+  /// reportAll retains the previous placeholder behavior as an explicit opt-in.
   private(set) var optionalPushPolicy: OptionalPushPolicy = {
     let value =
       Bundle.main.object(forInfoDictionaryKey: "ExpoCallKitTelecomOptionalVoIPPushPolicy")
       as? String
-    return value.flatMap(OptionalPushPolicy.init(rawValue:)) ?? .reportAll
+    return value.flatMap(OptionalPushPolicy.init(rawValue:)) ?? .ignoreInvalidPayloads
   }()
 
   /// The current VoIP push token, if available.

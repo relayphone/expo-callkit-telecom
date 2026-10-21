@@ -55,13 +55,17 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Checkout immutable simulator discovery fixture
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ziahamza/callkit-simulator
-          ref: b7a33ab82785bf3d3862528f68f4a2cc689fbba6
-          path: .ci/callkit-simulator
-          persist-credentials: false
+      - name: Download checksummed CallKit Simulator v0.1
+        run: |
+          ARCHIVE="$RUNNER_TEMP/callkit-simulator-v0.1-macos.tar.gz"
+          curl --fail --silent --show-error --location --retry 2 \
+            https://github.com/ziahamza/callkit-simulator/releases/download/v0.1/callkit-simulator-v0.1-macos.tar.gz \
+            --output "$ARCHIVE"
+          printf '%s  %s\n' '98f8a32d75741b3132b20c2544d42c2ed64fceb339df82400cfdbbd69e0184f9' "$ARCHIVE" | shasum -a 256 --check --status
+          mkdir "$RUNNER_TEMP/callkit-runtime"
+          tar -xzf "$ARCHIVE" -C "$RUNNER_TEMP/callkit-runtime"
+          printf 'CKSIM_RUNTIME_DIST=%s\n' "$RUNNER_TEMP/callkit-runtime" >> "$GITHUB_ENV"
+          printf 'release=v0.1\narchiveSHA256=98f8a32d75741b3132b20c2544d42c2ed64fceb339df82400cfdbbd69e0184f9\n' > "$RUNNER_TEMP/runtime-release.txt"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "26.4.0"
@@ -88,18 +92,25 @@ jobs:
           bunx expo prebuild --platform ios --no-install
           cd ios
           pod install
-      - name: Connected call survives malformed ${{ matrix.push_api }} push
+      - name: Call and publication regressions (${{ matrix.push_api }})
         env:
           OUT: ${{ runner.temp }}/push-qa
           QA_EXPECT_PUSH_API: ${{ matrix.push_api }}
           QA_FORCE_LEGACY_PUSH: ${{ matrix.push_api == 'legacy' && '1' || '0' }}
+          QA_TEST_PUBLICATION: "1"
         run: |
           GEM_HOME="$(brew --prefix cocoapods)/libexec" \
-            bash example/qa/run-ios-push-isolation.sh "$GITHUB_WORKSPACE/.ci/callkit-simulator"
+            bash example/qa/run-ios-push-isolation.sh "$CKSIM_RUNTIME_DIST"
       - name: Extract public result summary
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/public-evidence"
+          if [[ -f "$RUNNER_TEMP/runtime-release.txt" ]]; then
+            cp "$RUNNER_TEMP/runtime-release.txt" "$RUNNER_TEMP/public-evidence/"
+          fi
+          if [[ -f "${CKSIM_RUNTIME_DIST:-}/build-info.json" ]]; then
+            cp "$CKSIM_RUNTIME_DIST/build-info.json" "$RUNNER_TEMP/public-evidence/runtime-build-info.json"
+          fi
           if [[ -f "$RUNNER_TEMP/push-qa/environment.txt" ]]; then
             cp "$RUNNER_TEMP/push-qa/environment.txt" "$RUNNER_TEMP/public-evidence/"
           fi

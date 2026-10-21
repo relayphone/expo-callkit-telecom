@@ -49,9 +49,10 @@ honors `mustReport`. Older SDKs compile the legacy callback without referring to
 the newer metadata type. A required malformed push reports and ends its own
 placeholder UUID, without adding an application session or preparing audio.
 
-The config plugin accepts `optionalVoIPPushPolicy: "reportAll"` (the default) or
-`"ignoreInvalidPayloads"`. The latter skips only malformed payloads when iOS says
-reporting is optional. A valid invitation still reports in either mode; a false
+The config plugin defaults to `optionalVoIPPushPolicy: "ignoreInvalidPayloads"`,
+which skips malformed payloads when iOS says reporting is optional.
+`"reportAll"` explicitly opts into reporting placeholders for those payloads.
+A valid invitation still reports in either mode; a false
 `mustReport` value alone does not mean the invitation is stale. Legacy callbacks
 always follow the required-report path. Changing this option requires a native
 rebuild. For native integration, use the equivalent Info.plist string key
