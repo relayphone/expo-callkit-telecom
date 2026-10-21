@@ -79,7 +79,7 @@ UDID=$(xcrun simctl create "callkit-library-qa-$$" com.apple.CoreSimulator.SimDe
 echo "runOwnedSimulator=$UDID" >> "$OUT/environment.txt"
 PHASE=simulator-boot
 limit 30 xcrun simctl boot "$UDID"
-limit 180 xcrun simctl bootstatus "$UDID" -b >> "$OUT/build.log" 2>&1
+limit 300 xcrun simctl bootstatus "$UDID" -b >> "$OUT/build.log" 2>&1
 INHERITED=${SIMCTL_CHILD_DYLD_INSERT_LIBRARIES-$(xcrun simctl spawn "$UDID" launchctl getenv DYLD_INSERT_LIBRARIES 2>/dev/null || true)}
 LIBS="${INHERITED:+$INHERITED:}$RUNTIME_DIST/CKSimRuntime.dylib"
 PHASE=target-generation
