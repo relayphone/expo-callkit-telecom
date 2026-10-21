@@ -22,6 +22,9 @@ export interface NativeEventMeta {
   flushed: boolean;
   /** ISO8601 timestamp of when the event was created */
   timestamp: string;
+  /** iOS ordered-stream process identity and monotonic revision, when present. */
+  epoch?: string;
+  revision?: number;
 }
 
 /**
@@ -380,6 +383,68 @@ export interface IncomingCallReportedEvent extends CallActionEvent {}
  */
 export interface CallAnsweredEvent extends CallActionEvent {
   requestId: string;
+  /** iOS native answer deadline, milliseconds since Unix epoch. */
+  deadlineUnixMS?: number;
+}
+
+/** Payloads for the iOS ordered event stream, discriminated by native name. */
+export interface CallEventPayloadMap {
+  onCallSessionAdded: CallSessionAddedEvent;
+  onCallSessionUpdated: CallSessionUpdatedEvent;
+  onCallSessionRemoved: CallSessionRemovedEvent;
+  onAudioSessionActivated: AudioSessionActivatedEvent;
+  onAudioSessionDeactivated: AudioSessionDeactivatedEvent;
+  onAudioRouteChanged: AudioRouteChangedEvent;
+  onIncomingCallReported: IncomingCallReportedEvent;
+  onOutgoingCallStarted: OutgoingCallStartedEvent;
+  onCallAnswered: CallAnsweredEvent;
+  onCallEnded: CallEndedEvent;
+  onCallReportedEnded: CallReportedEnded;
+  onSetMutedAction: SetMutedActionEvent;
+  onVideoChanged: VideoChangedEvent;
+  onSetHeldAction: SetHeldActionEvent;
+  onDTMF: DTMFEvent;
+  onCallIntentReceived: CallIntentReceivedEvent;
+  onVoIPPushTokenUpdated: VoIPPushTokenUpdatedEvent;
+}
+
+/** Process-local identity permits deduplication after an interrupted delivery. */
+export type OrderedCallEvent = {
+  [Name in keyof CallEventPayloadMap]: {
+    name: Name;
+    body: CallEventPayloadMap[Name];
+    epoch: string;
+    revision: number;
+    timestamp: string;
+    /** An answer request whose deadline or call lifetime has ended. */
+    expired: boolean;
+  };
+}[keyof CallEventPayloadMap];
+
+export interface CallEventSnapshot {
+  epoch: string;
+  revision: number;
+  sessions: CallSession[];
+  /** False if unacknowledged history overflowed the bounded native journal. */
+  replayComplete: boolean;
+  droppedThroughRevision: number;
+}
+
+export interface CallEventStreamOptions {
+  /** Successful return acknowledges this event. Throwing leaves it replayable. */
+  onEvent(event: OrderedCallEvent): void | Promise<void>;
+  /** Applied after replay and before live events, at the same native revision. */
+  onSnapshot?(snapshot: CallEventSnapshot): void | Promise<void>;
+  /** Required to accept incomplete bootstrap replay; otherwise ready rejects. */
+  onReplayGap?(snapshot: CallEventSnapshot): void | Promise<void>;
+  onError?(error: unknown): void;
+}
+
+export interface CallEventStreamSubscription {
+  /** Resolves after initial replay, snapshot and acknowledgement. */
+  ready: Promise<void>;
+  /** Detaches delivery. Native calls and deadlines continue. */
+  remove(): void;
 }
 
 /**

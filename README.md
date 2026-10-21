@@ -252,3 +252,46 @@ This module hands the OS a CallKit/Core-Telecom call, which keeps the *process* 
 
 Full side-by-side, compatibility matrix, and migration notes: **[docs/vs-callkeep.md](docs/vs-callkeep.md)**.
 
+## Ordered iOS events across JavaScript startup and reload
+
+Attach one `subscribeCallEvents` consumer near your application root. Its event
+union narrows the payload by `event.name`. Native events replay in revision order;
+the initial session snapshot follows replay and precedes live events.
+
+```ts
+import { subscribeCallEvents } from "expo-callkit-telecom";
+
+const events = subscribeCallEvents({
+  onEvent(event) {
+    if (event.name === "onCallAnswered" && !event.expired) {
+      // Dispatch cancellable media work using event.body.id and requestId.
+      // Return promptly so a later end event can cancel that work.
+    }
+  },
+  onSnapshot(snapshot) {
+    // Hydrate your UI from snapshot.sessions at snapshot.revision.
+  },
+  onError(error) { console.error(error); },
+});
+await events.ready;
+// Later: events.remove(); Native calls and native deadlines continue.
+```
+
+A successful handler return acknowledges delivery. If a bridge disappears before
+acknowledgement, an event can replay; use `(epoch, revision)` for idempotent effects.
+Native answer deadlines continue while JavaScript is absent. Replayed answers
+whose deadline or call lifetime ended carry `expired: true`; they must not start
+media. Fulfillment after the native deadline is rejected.
+
+Replay is local to the current app process. The journal retains up to 1,024 events
+and 4 MiB of payloads, including while detached. If unacknowledged history exceeds
+that limit, attachment exposes `replayComplete: false` and `droppedThroughRevision`.
+Provide `onReplayGap(snapshot)` to explicitly accept snapshot recovery; otherwise
+`ready` rejects. The existing per-event listeners remain independent, replay up to
+128 events per name, and preserve ordering within each name. Their registration
+order does not establish ordering across event names.
+
+The example's **Pause event stream** / **Resume event stream** controls exercise
+detachment and replay without ending the native call. Android retains its existing
+event APIs; the acknowledged stream currently requires iOS.
+

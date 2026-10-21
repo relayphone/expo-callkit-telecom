@@ -2,6 +2,7 @@ import CallKit
 import ExpoModulesCore
 
 public class ExpoCallKitTelecomModule: Module {
+  private let eventBridge = CallEventBridgeIdentity()
   public func definition() -> ModuleDefinition {
     Name("ExpoCallKitTelecom")
 
@@ -24,267 +25,335 @@ public class ExpoCallKitTelecomModule: Module {
       SetHeldActionEvent.name,
       DTMFEvent.name,
       CallIntentReceivedEvent.name,
-      VoIPPushTokenUpdatedEvent.name
+      VoIPPushTokenUpdatedEvent.name,
+      CallEventEmitter.streamEventName
     )
 
     // MARK: - Lifecycle
 
     OnCreate { [weak self] in
       Task { @MainActor in
-        CallEventEmitter.shared.module = self
+        guard let self else { return }
+        CallEventEmitter.shared.attach(module: self, identity: self.eventBridge)
+      }
+    }
+
+    OnDestroy { [weak self] in
+      guard let self else { return }
+      self.eventBridge.close()
+      Task { @MainActor in
+        CallEventEmitter.shared.detach(identity: self.eventBridge)
+      }
+    }
+
+    AsyncFunction("attachCallEventStream") { [weak self] (consumerID: String) -> [String: Any] in
+      guard let self, !consumerID.isEmpty, consumerID.count <= 128 else {
+        throw Exception(name: "InvalidEventConsumer", description: "A live bridge and consumer ID are required")
+      }
+      return try await MainActor.run {
+        guard let snapshot = CallEventEmitter.shared.attachStream(consumerID: consumerID, module: self, identity: self.eventBridge) else {
+          throw Exception(name: "EventStreamUnavailable", description: "Bridge replaced or an event consumer is already attached")
+        }
+        return snapshot
+      }
+    }
+    AsyncFunction("acknowledgeCallEvents") { [weak self] (consumerID: String, epoch: String, revision: Int) -> Bool in
+      guard let self else { return false }
+      return await MainActor.run {
+        CallEventEmitter.shared.acknowledgeStream(consumerID: consumerID, epoch: epoch, revision: revision, identity: self.eventBridge)
+      }
+    }
+    AsyncFunction("detachCallEventStream") { [weak self] (consumerID: String) in
+      guard let self else { return }
+      await MainActor.run {
+        CallEventEmitter.shared.detachStream(consumerID: consumerID, identity: self.eventBridge)
       }
     }
 
     // Register per-event observers
-    OnStartObserving(CallSessionAddedEvent.name) {
+    OnStartObserving(CallSessionAddedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: CallSessionAddedEvent.name
+          module: self, identity: self.eventBridge, eventName: CallSessionAddedEvent.name
         )
       }
     }
-    OnStopObserving(CallSessionAddedEvent.name) {
+    OnStopObserving(CallSessionAddedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: CallSessionAddedEvent.name
+          identity: self.eventBridge, eventName: CallSessionAddedEvent.name
         )
       }
     }
 
-    OnStartObserving(CallSessionUpdatedEvent.name) {
+    OnStartObserving(CallSessionUpdatedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: CallSessionUpdatedEvent.name
+          module: self, identity: self.eventBridge, eventName: CallSessionUpdatedEvent.name
         )
       }
     }
-    OnStopObserving(CallSessionUpdatedEvent.name) {
+    OnStopObserving(CallSessionUpdatedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: CallSessionUpdatedEvent.name
+          identity: self.eventBridge, eventName: CallSessionUpdatedEvent.name
         )
       }
     }
 
-    OnStartObserving(CallSessionRemovedEvent.name) {
+    OnStartObserving(CallSessionRemovedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: CallSessionRemovedEvent.name
+          module: self, identity: self.eventBridge, eventName: CallSessionRemovedEvent.name
         )
       }
     }
-    OnStopObserving(CallSessionRemovedEvent.name) {
+    OnStopObserving(CallSessionRemovedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: CallSessionRemovedEvent.name
+          identity: self.eventBridge, eventName: CallSessionRemovedEvent.name
         )
       }
     }
 
-    OnStartObserving(AudioSessionActivatedEvent.name) {
+    OnStartObserving(AudioSessionActivatedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: AudioSessionActivatedEvent.name
+          module: self, identity: self.eventBridge, eventName: AudioSessionActivatedEvent.name
         )
       }
     }
-    OnStopObserving(AudioSessionActivatedEvent.name) {
+    OnStopObserving(AudioSessionActivatedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: AudioSessionActivatedEvent.name
+          identity: self.eventBridge, eventName: AudioSessionActivatedEvent.name
         )
       }
     }
 
-    OnStartObserving(AudioSessionDeactivatedEvent.name) {
+    OnStartObserving(AudioSessionDeactivatedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: AudioSessionDeactivatedEvent.name
+          module: self, identity: self.eventBridge, eventName: AudioSessionDeactivatedEvent.name
         )
       }
     }
-    OnStopObserving(AudioSessionDeactivatedEvent.name) {
+    OnStopObserving(AudioSessionDeactivatedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: AudioSessionDeactivatedEvent.name
+          identity: self.eventBridge, eventName: AudioSessionDeactivatedEvent.name
         )
       }
     }
 
-    OnStartObserving(AudioRouteChangedEvent.name) {
+    OnStartObserving(AudioRouteChangedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: AudioRouteChangedEvent.name
+          module: self, identity: self.eventBridge, eventName: AudioRouteChangedEvent.name
         )
       }
     }
-    OnStopObserving(AudioRouteChangedEvent.name) {
+    OnStopObserving(AudioRouteChangedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: AudioRouteChangedEvent.name
+          identity: self.eventBridge, eventName: AudioRouteChangedEvent.name
         )
       }
     }
 
-    OnStartObserving(IncomingCallReportedEvent.name) {
+    OnStartObserving(IncomingCallReportedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: IncomingCallReportedEvent.name
+          module: self, identity: self.eventBridge, eventName: IncomingCallReportedEvent.name
         )
       }
     }
-    OnStopObserving(IncomingCallReportedEvent.name) {
+    OnStopObserving(IncomingCallReportedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: IncomingCallReportedEvent.name
+          identity: self.eventBridge, eventName: IncomingCallReportedEvent.name
         )
       }
     }
 
-    OnStartObserving(OutgoingCallStartedEvent.name) {
+    OnStartObserving(OutgoingCallStartedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: OutgoingCallStartedEvent.name
+          module: self, identity: self.eventBridge, eventName: OutgoingCallStartedEvent.name
         )
       }
     }
-    OnStopObserving(OutgoingCallStartedEvent.name) {
+    OnStopObserving(OutgoingCallStartedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: OutgoingCallStartedEvent.name
+          identity: self.eventBridge, eventName: OutgoingCallStartedEvent.name
         )
       }
     }
 
-    OnStartObserving(CallAnsweredEvent.name) {
+    OnStartObserving(CallAnsweredEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: CallAnsweredEvent.name
+          module: self, identity: self.eventBridge, eventName: CallAnsweredEvent.name
         )
       }
     }
-    OnStopObserving(CallAnsweredEvent.name) {
+    OnStopObserving(CallAnsweredEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: CallAnsweredEvent.name
+          identity: self.eventBridge, eventName: CallAnsweredEvent.name
         )
       }
     }
 
-    OnStartObserving(CallEndedEvent.name) {
+    OnStartObserving(CallEndedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: CallEndedEvent.name
+          module: self, identity: self.eventBridge, eventName: CallEndedEvent.name
         )
       }
     }
-    OnStopObserving(CallEndedEvent.name) {
+    OnStopObserving(CallEndedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: CallEndedEvent.name
+          identity: self.eventBridge, eventName: CallEndedEvent.name
         )
       }
     }
 
-    OnStartObserving(CallReportedEnded.name) {
+    OnStartObserving(CallReportedEnded.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: CallReportedEnded.name
+          module: self, identity: self.eventBridge, eventName: CallReportedEnded.name
         )
       }
     }
-    OnStopObserving(CallReportedEnded.name) {
+    OnStopObserving(CallReportedEnded.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: CallReportedEnded.name
+          identity: self.eventBridge, eventName: CallReportedEnded.name
         )
       }
     }
 
-    OnStartObserving(SetMutedActionEvent.name) {
+    OnStartObserving(SetMutedActionEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: SetMutedActionEvent.name
+          module: self, identity: self.eventBridge, eventName: SetMutedActionEvent.name
         )
       }
     }
-    OnStopObserving(SetMutedActionEvent.name) {
+    OnStopObserving(SetMutedActionEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: SetMutedActionEvent.name
+          identity: self.eventBridge, eventName: SetMutedActionEvent.name
         )
       }
     }
 
-    OnStartObserving(VideoChangedEvent.name) {
+    OnStartObserving(VideoChangedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: VideoChangedEvent.name
+          module: self, identity: self.eventBridge, eventName: VideoChangedEvent.name
         )
       }
     }
-    OnStopObserving(VideoChangedEvent.name) {
+    OnStopObserving(VideoChangedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: VideoChangedEvent.name
+          identity: self.eventBridge, eventName: VideoChangedEvent.name
         )
       }
     }
 
-    OnStartObserving(SetHeldActionEvent.name) {
+    OnStartObserving(SetHeldActionEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: SetHeldActionEvent.name
+          module: self, identity: self.eventBridge, eventName: SetHeldActionEvent.name
         )
       }
     }
-    OnStopObserving(SetHeldActionEvent.name) {
+    OnStopObserving(SetHeldActionEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: SetHeldActionEvent.name
+          identity: self.eventBridge, eventName: SetHeldActionEvent.name
         )
       }
     }
 
-    OnStartObserving(DTMFEvent.name) {
+    OnStartObserving(DTMFEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: DTMFEvent.name
+          module: self, identity: self.eventBridge, eventName: DTMFEvent.name
         )
       }
     }
-    OnStopObserving(DTMFEvent.name) {
+    OnStopObserving(DTMFEvent.name) { [weak self] in
       Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(eventName: DTMFEvent.name)
+        guard let self else { return }
+        CallEventEmitter.shared.stopObserving(identity: self.eventBridge, eventName: DTMFEvent.name)
       }
     }
 
-    OnStartObserving(CallIntentReceivedEvent.name) {
+    OnStartObserving(CallIntentReceivedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: CallIntentReceivedEvent.name
+          module: self, identity: self.eventBridge, eventName: CallIntentReceivedEvent.name
         )
       }
     }
-    OnStopObserving(CallIntentReceivedEvent.name) {
+    OnStopObserving(CallIntentReceivedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: CallIntentReceivedEvent.name
+          identity: self.eventBridge, eventName: CallIntentReceivedEvent.name
         )
       }
     }
 
-    OnStartObserving(VoIPPushTokenUpdatedEvent.name) {
+    OnStartObserving(VoIPPushTokenUpdatedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.startObserving(
-          eventName: VoIPPushTokenUpdatedEvent.name
+          module: self, identity: self.eventBridge, eventName: VoIPPushTokenUpdatedEvent.name
         )
       }
     }
-    OnStopObserving(VoIPPushTokenUpdatedEvent.name) {
+    OnStopObserving(VoIPPushTokenUpdatedEvent.name) { [weak self] in
       Task { @MainActor in
+        guard let self else { return }
         CallEventEmitter.shared.stopObserving(
-          eventName: VoIPPushTokenUpdatedEvent.name
+          identity: self.eventBridge, eventName: VoIPPushTokenUpdatedEvent.name
         )
       }
     }

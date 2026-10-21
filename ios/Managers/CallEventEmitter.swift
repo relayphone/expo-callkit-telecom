@@ -5,6 +5,7 @@ import Foundation
 private struct QueuedEvent {
   let body: [String: Any]
   let timestamp: Date
+  let revision: Int
 }
 
 /// Manages event delivery to the Expo module, buffering events until JS is ready.
@@ -20,7 +21,13 @@ final class CallEventEmitter {
   static let shared = CallEventEmitter()
 
   /// The Expo module to send events to. Set this when the module initializes.
-  weak var module: ExpoCallKitTelecomModule?
+  private weak var module: ExpoCallKitTelecomModule?
+  private var bridgeOrder: UInt64 = 0
+  private var bridgeIdentity: CallEventBridgeIdentity?
+  private var streamConsumer: String?
+  private var streamSentRevision = 0
+  private let journal = CallEventJournal()
+  nonisolated static let streamEventName = "onCallEventStream"
 
   /// Events currently being observed by JS.
   private var observingEvents: Set<String> = []
@@ -33,9 +40,43 @@ final class CallEventEmitter {
 
   /// Default queue limit for events without explicit configuration.
   /// Set to `nil` for unlimited, `0` to disable queueing by default.
-  var defaultQueueLimit: Int? = 0
+  var defaultQueueLimit: Int? = 128
 
   private init() {}
+
+  @discardableResult
+  func attach(module: ExpoCallKitTelecomModule, identity: CallEventBridgeIdentity) -> Bool {
+    guard identity.isAlive, identity.order >= bridgeOrder else { return false }
+    if self.module !== module {
+      bridgeOrder = identity.order
+      bridgeIdentity = identity
+      self.module = module
+      observingEvents.removeAll()
+      streamConsumer = nil
+    }
+    return true
+  }
+  func detach(identity: CallEventBridgeIdentity) {
+    guard identity.order == bridgeOrder else { return }
+    module = nil; bridgeIdentity = nil; observingEvents.removeAll(); streamConsumer = nil
+  }
+  func attachStream(consumerID: String, module: ExpoCallKitTelecomModule, identity: CallEventBridgeIdentity) -> [String: Any]? {
+    guard attach(module: module, identity: identity) else { return nil }
+    guard streamConsumer == nil || streamConsumer == consumerID else { return nil }
+    streamConsumer = consumerID
+    streamSentRevision = journal.revision
+    return journal.snapshot(consumerID: consumerID)
+  }
+  func acknowledgeStream(consumerID: String, epoch: String, revision: Int, identity: CallEventBridgeIdentity) -> Bool {
+    guard identity.isAlive, identity.order == bridgeOrder, streamConsumer == consumerID,
+      epoch == journal.epoch, revision >= 0, revision <= streamSentRevision else { return false }
+    journal.acknowledge(through: revision)
+    return true
+  }
+  func detachStream(consumerID: String, identity: CallEventBridgeIdentity) {
+    guard identity.order == bridgeOrder, streamConsumer == consumerID else { return }
+    streamConsumer = nil
+  }
 
   // MARK: - Configuration
 
@@ -100,8 +141,14 @@ final class CallEventEmitter {
   func send<E: CallEvent>(_ event: E) {
     let eventName = E.name
     let timestamp = Date()
+    let entry = journal.append(name: eventName, body: event.body, timestamp: timestamp)
+    if bridgeIdentity?.isAlive == true, let consumer = streamConsumer, let module {
+      streamSentRevision = entry.revision
+      module.sendEvent(Self.streamEventName, ["consumerID": consumer, "epoch": journal.epoch,
+        "events": [journal.dictionary(entry, replayed: false)]])
+    }
 
-    if observingEvents.contains(eventName), let module = module {
+    if bridgeIdentity?.isAlive == true, observingEvents.contains(eventName), let module = module {
       Log.call.debug("Sending event to JS - name: \(eventName)")
       let body = buildEventBody(
         event.body,
@@ -110,14 +157,15 @@ final class CallEventEmitter {
       )
       module.sendEvent(eventName, body)
     } else {
-      queueEvent(name: eventName, body: event.body, timestamp: timestamp)
+      queueEvent(name: eventName, body: event.body, timestamp: timestamp, revision: entry.revision)
     }
   }
 
   // MARK: - Expo Lifecycle
 
   /// Called when JS mounts a listener for a specific event.
-  func startObserving(eventName: String) {
+  func startObserving(module: ExpoCallKitTelecomModule, identity: CallEventBridgeIdentity, eventName: String) {
+    guard attach(module: module, identity: identity) else { return }
     let queueCount = eventQueues[eventName]?.count ?? 0
     Log.call.debug(
       "Start observing - event: \(eventName), queuedEvents: \(queueCount)"
@@ -127,7 +175,8 @@ final class CallEventEmitter {
   }
 
   /// Called when JS unmounts the listener for a specific event.
-  func stopObserving(eventName: String) {
+  func stopObserving(identity: CallEventBridgeIdentity, eventName: String) {
+    guard identity.isAlive, identity.order == bridgeOrder else { return }
     Log.call.debug("Stop observing - event: \(eventName)")
     observingEvents.remove(eventName)
   }
@@ -147,7 +196,7 @@ final class CallEventEmitter {
     return result
   }
 
-  private func queueEvent(name: String, body: [String: Any], timestamp: Date) {
+  private func queueEvent(name: String, body: [String: Any], timestamp: Date, revision: Int) {
     let limit = queueLimits[name] ?? defaultQueueLimit
 
     // If limit is 0, don't queue at all
@@ -157,7 +206,7 @@ final class CallEventEmitter {
     }
 
     var queue = eventQueues[name] ?? []
-    queue.append(QueuedEvent(body: body, timestamp: timestamp))
+    queue.append(QueuedEvent(body: body, timestamp: timestamp, revision: revision))
 
     // Enforce limit by dropping oldest events if necessary
     if let limit = limit, queue.count > limit {
@@ -176,7 +225,7 @@ final class CallEventEmitter {
   }
 
   private func flushQueue(for eventName: String) {
-    guard let queue = eventQueues[eventName], !queue.isEmpty,
+    guard bridgeIdentity?.isAlive == true, let queue = eventQueues[eventName], !queue.isEmpty,
       let module = module
     else {
       return

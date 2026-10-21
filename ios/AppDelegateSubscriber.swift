@@ -13,17 +13,8 @@ public class ExpoCallKitTelecomAppDelegateSubscriber: ExpoAppDelegateSubscriber 
     // Register for VoIP push so we can receive pushes when app is launched from terminated state.
     VoIPPushManager.shared.register()
 
-    // Initialize event emitter early so it can queue events before JS is ready
-    Task { @MainActor in
-      _ = CallEventEmitter.shared
-      // Allow events to queue that may fire before JS is ready on cold start
-      CallEventEmitter.shared.setQueueLimit(for: CallIntentReceivedEvent.self, limit: 1)
-      CallEventEmitter.shared.setQueueLimit(for: AudioSessionActivatedEvent.self, limit: 1)
-      CallEventEmitter.shared.setQueueLimit(for: AudioSessionDeactivatedEvent.self, limit: 1)
-      CallEventEmitter.shared.setQueueLimit(for: IncomingCallReportedEvent.self, limit: 1)
-      CallEventEmitter.shared.setQueueLimit(for: CallAnsweredEvent.self, limit: 1)
-      CallEventEmitter.shared.setQueueLimit(for: VoIPPushTokenUpdatedEvent.self, limit: 1)
-    }
+    // CallEventEmitter owns its buffering policy intrinsically, including when
+    // the first event precedes this subscriber or JavaScript initialization.
 
     return true
   }

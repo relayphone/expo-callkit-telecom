@@ -31,6 +31,7 @@ actor FulfillRequestManager {
     let id: UUID
     let callId: UUID
     let createdAt: Date
+    let deadline: Date
     let continuation: AsyncStream<Result>.Continuation
     let timeoutTask: Task<Void, Never>
   }
@@ -47,16 +48,19 @@ actor FulfillRequestManager {
   ///   - timeout: Duration before the request automatically times out.
   /// - Returns: A tuple containing the request ID and a task that resolves
   ///   when the request is fulfilled or times out.
-  func createRequest(callId: UUID, timeout: Duration) -> (
+  func createRequest(callId: UUID, timeout: Duration, deadline: Date? = nil) -> (
     requestId: UUID, result: Task<Result, Never>
   ) {
     let requestId = UUID()
+    let components = timeout.components
+    let configuredSeconds = Double(components.seconds) + Double(components.attoseconds) / 1e18
+    let expiresAt = min(deadline ?? .distantFuture, Date().addingTimeInterval(configuredSeconds))
 
     // Register synchronously on this actor before publishing the request ID.
     // Callers can immediately fulfill/cancel it, including after an end/reset.
     let stream = AsyncStream<Result>(bufferingPolicy: .bufferingNewest(1)) { continuation in
       let timeoutTask = Task { [weak self] in
-        try? await Task.sleep(for: timeout)
+        try? await Task.sleep(for: .seconds(max(0, expiresAt.timeIntervalSinceNow)))
         guard !Task.isCancelled, let self else { return }
         if let request = await self.removeRequest(for: requestId) {
           request.continuation.yield(.timedOut)
@@ -64,7 +68,7 @@ actor FulfillRequestManager {
         }
       }
       pendingRequests[requestId] = PendingRequest(
-        id: requestId, callId: callId, createdAt: Date(),
+        id: requestId, callId: callId, createdAt: Date(), deadline: expiresAt,
         continuation: continuation, timeoutTask: timeoutTask)
     }
     let resultTask = Task<Result, Never> {
@@ -90,6 +94,11 @@ actor FulfillRequestManager {
 
     // Cancel the timeout task since we're fulfilling
     request.timeoutTask.cancel()
+    guard request.deadline > Date() else {
+      request.continuation.yield(.timedOut)
+      request.continuation.finish()
+      return nil
+    }
 
     Log.call.debug("Fulfill request succeeded - requestId: \(requestId), callId: \(request.callId)")
     request.continuation.yield(.fulfilled(callId: request.callId))

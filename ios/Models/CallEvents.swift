@@ -146,11 +146,13 @@ struct CallAnsweredEvent: CallEvent {
 
   let id: UUID
   let requestId: UUID
+  let deadline: Date
 
   var body: [String: Any] {
     [
       CallEventKeys.id: id.uuidString,
       "requestId": requestId.uuidString,
+      "deadlineUnixMS": deadline.timeIntervalSince1970 * 1000,
     ]
   }
 }

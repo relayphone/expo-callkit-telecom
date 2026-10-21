@@ -59,6 +59,9 @@ extension CallManager: CXProviderDelegate {
   func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
     Log.call.debug("CXAnswerCallAction - id: \(action.callUUID)")
 
+    let configured = Self.answerCallTimeout.components
+    let configuredSeconds = Double(configured.seconds) + Double(configured.attoseconds) / 1e18
+    let deadline = min(action.timeoutDate.addingTimeInterval(-0.5), Date().addingTimeInterval(configuredSeconds))
     let incomingReport = store.incomingReports.report(for: action.callUUID)
     incomingReport?.answered()
     // Mark synchronously before cancellation; late report completion cannot
@@ -75,13 +78,15 @@ extension CallManager: CXProviderDelegate {
       // Create pending fulfill request with associated call ID
       let (requestId, resultTask) = await FulfillRequestManager.shared.createRequest(
         callId: action.callUUID,
-        timeout: Self.answerCallTimeout
+        timeout: Self.answerCallTimeout,
+        deadline: deadline
       )
 
       // End/reset may have won while either actor operation was suspended.
       let live = await MainActor.run {
+        guard deadline > Date() else { return false }
         if let incomingReport, !incomingReport.withSession({ $0 != nil }) { return false }
-        CallEventEmitter.shared.send(CallAnsweredEvent(id: action.callUUID, requestId: requestId))
+        CallEventEmitter.shared.send(CallAnsweredEvent(id: action.callUUID, requestId: requestId, deadline: deadline))
         return true
       }
       guard live else {
@@ -95,6 +100,7 @@ extension CallManager: CXProviderDelegate {
 
       switch result {
       case .fulfilled:
+        guard deadline > Date() else { action.fail(); return }
         if let incomingReport, !incomingReport.withSession({ $0 != nil }) {
           action.fail()
           return

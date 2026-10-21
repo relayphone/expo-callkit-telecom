@@ -6,6 +6,7 @@ import {
   getActiveCallSession,
 } from "expo-callkit-telecom";
 import { useEffect, useState } from "react";
+import { Platform } from "react-native";
 
 /**
  * Tracks the currently active call session. Hydrates once from
@@ -17,6 +18,7 @@ export function useCallSession(): CallSession | null {
   const [session, setSession] = useState<CallSession | null>(null);
 
   useEffect(() => {
+    if (Platform.OS === "ios") return;
     getActiveCallSession().then(setSession);
     const subs = [
       addCallSessionAddedListener((e) => setSession(e.session)),
