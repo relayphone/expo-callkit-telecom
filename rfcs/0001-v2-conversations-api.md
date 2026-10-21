@@ -250,6 +250,13 @@ One repository, one Swift source tree, two products that are versioned and teste
 | **Swift package** (SwiftPM; Swift 6, with no Expo, React Native or WebRTC dependency) | Native Swift apps, and later watchOS and Mac Catalyst | Owns the process's only `ConversationManager`, projects state, registers app metadata synchronously before reporting, enforces handler deadlines. Also holds the PushKit metadata shim (a separate Objective-C target), the media adapter protocols and the activation watchdog. |
 | **iOS-only Expo module** (npm; `expo-module.config.json` lists `apple` as its only platform) | Expo and bare React Native apps (bare apps need `expo-modules-core`) | A thin bridge that exposes this RFC's API: the state hooks, the handler, commands, reports, audio routes, push token and events. It also ships a config plugin for entitlements, `voip`, push, default calling and media adapters. Its podspec compiles the same Swift sources, so CocoaPods consumers need no separately published pod. |
 
+**Simulator support built in.** Genuine LiveCommunicationKit doesn't work in the iOS simulator: the call is torn down about 100 ms after the report. `ios-voip-sdk` therefore ships optional simulator support built on the [CallKit Simulator](https://github.com/ziahamza/callkit-simulator) runtime:
+
+- **Activation:** in simulator builds the SDK activates the runtime in-process, before it creates its `ConversationManager`. This needs no `DYLD_INSERT_LIBRARIES` and no global simulator setup.
+- **Packaging:** the runtime arrives as an XCFramework. Its simulator slice is the runtime; its device slice is an empty stub. Device and App Store builds therefore contain no simulator code, and no build setting has to remember to exclude it.
+- **Driving calls:** during development, a CLI and the Expo module's dev tools can push synthetic VoIP payloads and trigger the system's answer, decline, Hold & Accept and End & Accept actions.
+- **Fallback:** if the runtime refuses to install, for example on an unsupported simulator OS, the SDK logs why and falls back to genuine behavior. It never crashes the app.
+
 **Manager ownership.** On the iPhone, a `CXProvider` created later by any SDK receives every action instead of our manager, and so does a second `ConversationManager`. The package must own the only manager in the process. Debug builds warn when another provider appears.
 
 **Why one repository ships both:**
@@ -298,7 +305,7 @@ v2 removes the v1 API outright; there is no compatibility shim. Each v1 call map
 
 ## Testing
 
-- **iOS CI:** the [CallKit Simulator](https://github.com/ziahamza/callkit-simulator) runtime makes LiveCommunicationKit work in the iOS simulator. Genuine LiveCommunicationKit is torn down there about 100 ms after the report, just like CallKit. Hosted runners then exercise end-to-end journeys:
+- **Development and iOS CI:** with `ios-voip-sdk`'s built-in simulator support, calls work in any iOS simulator. Developers can test incoming and outgoing journeys without a device, and hosted runners exercise end-to-end journeys:
   - push, ring, join, connected, hold, end;
   - a cold launch with no handler;
   - the stale-audio fault.
