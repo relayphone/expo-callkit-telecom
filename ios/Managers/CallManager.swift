@@ -297,71 +297,11 @@ class CallManager: NSObject {
   /// - Parameter event: The incoming call event containing caller info.
   /// - Throws: An error if CallKit rejects the incoming call report.
   func reportIncomingCall(event: IncomingCallEvent) async throws {
-    let id = UUID()
-    Log.call.debug("Reporting incoming call - id: \(id)")
-
-    // Prepare audio session before reporting to CallKit
-    AudioManager.shared.prepareAudioSessionForCall(hasVideo: event.hasVideo)
-
-    let caller = CallParticipant(
-      id: event.caller.id,
-      phoneNumber: event.caller.phoneNumber,
-      email: event.caller.email,
-      displayName: event.caller.displayName,
-      avatarUrl: event.caller.avatarUrl
-    )
-
-    let session = CallSession(
-      id: id,
-      options: CallOptions(hasVideo: event.hasVideo),
-      origin: .incoming,
-      remoteParticipants: [caller],
-      incomingCallEvent: event,
-      status: .ringing,
-      connectedAt: nil,
-      isMuted: false,
-      isOnHold: false,
-      dtmfDigits: nil
-    )
-
-    let update = CXCallUpdate()
-    let handle = makeHandle(from: caller)
-    update.hasVideo = event.hasVideo
-    update.remoteHandle = handle
-    setLocalizedCallerNameIfNeeded(for: caller, on: update)
-    update.supportsHolding = supportsHolding
-    update.supportsGrouping = supportsGrouping
-    update.supportsUngrouping = supportsUngrouping
-    update.supportsDTMF = supportsDTMF
-
-    do {
-      try await withCheckedThrowingContinuation {
-        (continuation: CheckedContinuation<Void, Error>) in
-        provider.reportNewIncomingCall(with: id, update: update) { error in
-          if let error = error {
-            continuation.resume(throwing: error)
-          } else {
-            continuation.resume()
-          }
-        }
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      reportIncomingCall(event: event) { error in
+        if let error { continuation.resume(throwing: error) }
+        else { continuation.resume() }
       }
-      Log.call.debug("Incoming call reported to CallKit - id: \(id)")
-
-      await store.add(session)
-
-      // Notify JS that an incoming call has been reported to CallKit
-      await MainActor.run {
-        CallEventEmitter.shared.send(IncomingCallReportedEvent(id: id))
-      }
-
-      // Start timeout for incoming call
-      startCallTimeout(for: id, timeout: Self.incomingCallTimeout)
-    } catch {
-      Log.call.error(
-        "Failed to report incoming call to CallKit - id: \(id), error: \(error.localizedDescription)"
-      )
-      AudioManager.shared.restoreAudioSession()
-      throw error
     }
   }
 
@@ -411,31 +351,36 @@ class CallManager: NSObject {
     update.supportsUngrouping = supportsUngrouping
     update.supportsDTMF = supportsDTMF
 
-    // Report to CallKit - this is the critical part that must happen immediately
-    provider.reportNewIncomingCall(with: id, update: update) { [weak self] error in
-      if let error = error {
-        Log.call.error(
-          "Failed to report incoming call to CallKit - id: \(id), error: \(error.localizedDescription)"
-        )
-        AudioManager.shared.restoreAudioSession()
-        completion(error)
-        return
-      }
-
-      Log.call.debug("Incoming call reported to CallKit - id: \(id)")
-
-      // Now do the async work (store session, emit events, start timeout)
+    // Reserve before entering CallKit. Delegate actions can arrive before its
+    // report callback, including during a cold launch from a VoIP push.
+    let report = store.incomingReports.reserve(session)
+    provider.reportNewIncomingCall(with: id, update: update) { [self] error in
       Task {
-        await self?.store.add(session)
-
-        await MainActor.run {
-          CallEventEmitter.shared.send(IncomingCallReportedEvent(id: id))
+        if let error {
+          report.ended()
+          await store.remove(for: id)
+          store.incomingReports.finish(report)
+          Log.call.error("Failed to report incoming call to CallKit - id: \(id), error: \(error.localizedDescription)")
+          AudioManager.shared.restoreAudioSession()
+          completion(error)
+          return
         }
 
-        self?.startCallTimeout(for: id, timeout: Self.incomingCallTimeout)
+        if await store.publishIncoming(report) {
+          await MainActor.run {
+            if report.withSession({ $0 != nil }) {
+              CallEventEmitter.shared.send(IncomingCallReportedEvent(id: id))
+            }
+          }
+          // Answer/end mark the reservation before cancelling its timer. Hold
+          // the same reservation lock while arming so cancellation wins races.
+          report.whileRinging {
+            startCallTimeout(for: id, timeout: Self.incomingCallTimeout)
+          }
+        }
+        store.incomingReports.finish(report)
+        completion(nil)
       }
-
-      completion(nil)
     }
   }
 
@@ -580,12 +525,16 @@ class CallManager: NSObject {
 
     // Stop dialtone and cancel timeout (in case call ended before connecting)
     DialtonePlayer.shared.stop()
+    let pendingEnded = store.incomingReports.report(for: id)?.ended()
     cancelCallTimeout(for: id)
 
     provider.reportCall(with: id, endedAt: Date(), reason: reason)
 
+    await FulfillRequestManager.shared.cancel(forCallId: id)
     // Snapshot the session as ended so the embedded session reflects the terminal state.
-    if var session = await store.session(for: id) {
+    var endedSession = pendingEnded
+    if endedSession == nil { endedSession = await store.session(for: id) }
+    if var session = endedSession {
       session.status = .ended
       await MainActor.run {
         CallEventEmitter.shared.send(
