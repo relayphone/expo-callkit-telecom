@@ -35,6 +35,10 @@ final class PushIsolationUITests: XCTestCase {
             object["runID"] as? String == self.runID else { return false }
       return true
     }, object: nil)
+    let diagnostic = XCTAttachment(string: "[CKSIM-QA-readiness] session=\(root.appendingPathComponent("session.json").path), fileExists=\(FileManager.default.fileExists(atPath: root.appendingPathComponent("session.json").path))")
+    diagnostic.name = "Runtime mailbox readiness"
+    diagnostic.lifetime = .keepAlways
+    add(diagnostic)
     wait(for: [ready], timeout: 10)
     let session = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("session.json"))) as? [String: Any])
     XCTAssertEqual(session["runID"] as? String, runID)

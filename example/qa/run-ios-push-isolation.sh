@@ -40,9 +40,22 @@ PYDIAGNOSTICS
     fi
   fi
   if [[ -n "$UDID" ]]; then
+    if [[ "$scenario_status" -ne 0 ]]; then
+      local container
+      container=$(limit 10 xcrun simctl get_app_container "$UDID" com.example.expocallkittelecom data 2>/dev/null) || container=""
+      printf '%s\n' "$container" > "$OUT/app-container.after-test.txt"
+      if [[ -d "$container/Documents/.callkit-simulator" ]]; then
+        cp -R "$container/Documents/.callkit-simulator" "$OUT/runtime-mailbox" || true
+      fi
+      limit 10 xcrun simctl io "$UDID" screenshot "$OUT/failure.png" >> "$OUT/cleanup.log" 2>&1 || true
+    fi
+    if [[ "$scenario_status" -ne 0 && "${QA_PRESERVE_FAILURE:-0}" == 1 ]]; then
+      echo "Preserved run-owned simulator for diagnosis: $UDID" >> "$OUT/cleanup.log"
+    else
     limit 20 xcrun simctl shutdown "$UDID" >> "$OUT/cleanup.log" 2>&1 || true
     if ! limit 20 xcrun simctl delete "$UDID" >> "$OUT/cleanup.log" 2>&1; then
       [[ "$status" -ne 0 ]] || status=1
+    fi
     fi
   fi
   if ! rm -rf "$BUILD"; then
@@ -113,6 +126,14 @@ if [[ "${QA_TEST_PUBLICATION:-0}" == 1 ]]; then
   TESTS+=(-only-testing:PushIsolationUITests/PushIsolationUITests/testEarlyDeclineBeforePushReportCompletion)
   TESTS+=(-only-testing:PushIsolationUITests/PushIsolationUITests/testEarlyAnswerBeforeAsyncReportCompletion)
   EXPECTED_TESTS=$((EXPECTED_TESTS + 3))
+fi
+if [[ -n "${QA_ONLY_TEST:-}" ]]; then
+  case "$QA_ONLY_TEST" in
+    testOptionalMalformedPushPreservesConnectedCall|testRequiredMalformedPushPreservesConnectedCall|testLegacyMalformedPushPreservesConnectedCall|testEarlyAnswerBeforePushReportCompletion|testEarlyDeclineBeforePushReportCompletion|testEarlyAnswerBeforeAsyncReportCompletion) ;;
+    *) echo "Unsupported QA_ONLY_TEST" >&2; exit 1;;
+  esac
+  TESTS=("-only-testing:PushIsolationUITests/PushIsolationUITests/$QA_ONLY_TEST")
+  EXPECTED_TESTS=1
 fi
 PHASE=ui-test
 limit 420 xcodebuild "${COMMON[@]}" -destination "id=$UDID" -parallel-testing-enabled NO -collect-test-diagnostics never \
