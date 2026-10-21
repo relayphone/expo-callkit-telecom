@@ -44,6 +44,20 @@ Both transports wrap the event under an `incomingCall` key, just at different la
 
 ## iOS — APNs VoIP push
 
+On iOS 26.4 and later, the native PushKit adapter uses the metadata callback and
+honors `mustReport`. Older SDKs compile the legacy callback without referring to
+the newer metadata type. A required malformed push reports and ends its own
+placeholder UUID, without adding an application session or preparing audio.
+
+The config plugin defaults to `optionalVoIPPushPolicy: "ignoreInvalidPayloads"`,
+which skips malformed payloads when iOS says reporting is optional.
+`"reportAll"` explicitly opts into reporting placeholders for those payloads.
+A valid invitation still reports in either mode; a false
+`mustReport` value alone does not mean the invitation is stale. Legacy callbacks
+always follow the required-report path. Changing this option requires a native
+rebuild. For native integration, use the equivalent Info.plist string key
+`ExpoCallKitTelecomOptionalVoIPPushPolicy`.
+
 Send a [VoIP push through APNs](https://developer.apple.com/documentation/usernotifications/sending-voip-pushes) (`apns-push-type: voip`) whose dictionary payload nests the event under `incomingCall`:
 
 ```jsonc
@@ -68,3 +82,18 @@ FCM data values must be strings, so JSON-encode the inner event and put it under
 Every call push the module handles carries its own unique `eventId` inside the JSON payload, and a repeat delivery of an `eventId` seen in the last two minutes is dropped. Besides `incomingCall`, the module handles `callEnded` for ending a call from the server — see [Ending a call from the server](platform-notes.md#ending-a-call-from-the-server).
 
 Other data messages are forwarded to [`expo-notifications`](https://docs.expo.dev/versions/latest/sdk/notifications/)'s service for normal handling.
+
+## When the payload doesn't parse (iOS)
+
+When reporting is required, a payload that fails validation still produces a brief
+system call UI ("Invalid Call") that the module ends immediately. Optional malformed
+pushes follow `optionalVoIPPushPolicy`, described above. No application session is
+created and **no JS events are emitted** for a placeholder.
+
+To find out why a payload was rejected, check the device log: the parser logs which guard
+failed (missing envelope, envelope of the wrong type — e.g. the FCM JSON-string form sent to
+APNs — missing/empty `eventId`/`serverCallId`, or a missing `caller.id`). In Console.app,
+filter on subsystem `expo-callkit-telecom`, category `VoIPPush`. You can reproduce rejection
+cases with `example/server/send-test-push.ts --raw-payload '<json>'`.
+
+On Android, an FCM message that fails validation falls through to `expo-notifications`.

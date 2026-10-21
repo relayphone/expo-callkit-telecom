@@ -1,0 +1,18 @@
+{
+  "title": "Test - CallKitTel",
+  "result": "Passed",
+  "totalTestCount": 1,
+  "passedTests": 1,
+  "failedTests": 0,
+  "skippedTests": 0,
+  "finishTime": 1792536878.78,
+  "startTime": 1792536806.07,
+  "testFailures": [],
+  "libraryCommit": "eae5e37a6cd3046fbda05977489cf241645bb0f0",
+  "runtimeCommit": "b7a33ab82785bf3d3862528f68f4a2cc689fbba6",
+  "xcode": "27.1",
+  "sdk": "27.1",
+  "simulatorOS": "27.0",
+  "pushAPI": "metadata",
+  "runnerExitCode": 0
+}

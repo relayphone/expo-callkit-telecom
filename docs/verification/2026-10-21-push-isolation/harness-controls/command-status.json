@@ -1,0 +1,32 @@
+{
+  "success": true,
+  "cases": [
+    {
+      "case": "success",
+      "processStatus": 0,
+      "receipt": {
+        "phase": "success",
+        "elapsedSeconds": "0",
+        "exitStatus": "0"
+      }
+    },
+    {
+      "case": "failure",
+      "processStatus": 17,
+      "receipt": {
+        "phase": "failure",
+        "elapsedSeconds": "0",
+        "exitStatus": "17"
+      }
+    },
+    {
+      "case": "deadline",
+      "processStatus": 142,
+      "receipt": {
+        "phase": "deadline",
+        "elapsedSeconds": "1",
+        "exitStatus": "142"
+      }
+    }
+  ]
+}

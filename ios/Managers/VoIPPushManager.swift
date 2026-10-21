@@ -15,6 +15,22 @@ final class VoIPPushManager: NSObject {
 
   /// The PushKit registry for VoIP notifications.
   private var pushRegistry: PKPushRegistry?
+  // PKPushRegistry's delegate is weak. Keep the SDK compatibility adapter alive.
+  private var pushDelegate: CallKitVoIPPushDelegate?
+
+  enum OptionalPushPolicy: String {
+    case reportAll
+    case ignoreInvalidPayloads
+  }
+
+  /// Valid invitations always report. Malformed optional pushes are ignored;
+  /// reportAll retains the previous placeholder behavior as an explicit opt-in.
+  private(set) var optionalPushPolicy: OptionalPushPolicy = {
+    let value =
+      Bundle.main.object(forInfoDictionaryKey: "ExpoCallKitTelecomOptionalVoIPPushPolicy")
+      as? String
+    return value.flatMap(OptionalPushPolicy.init(rawValue:)) ?? .ignoreInvalidPayloads
+  }()
 
   /// The current VoIP push token, if available.
   private(set) var token: String?
@@ -37,7 +53,9 @@ final class VoIPPushManager: NSObject {
     Log.voipPush.debug("Registering for VoIP push notifications")
 
     let registry = PKPushRegistry(queue: .main)
-    registry.delegate = self
+    let delegate = CallKitVoIPPushDelegate(receiver: self)
+    pushDelegate = delegate
+    registry.delegate = delegate
     registry.desiredPushTypes = [.voIP]
     pushRegistry = registry
   }

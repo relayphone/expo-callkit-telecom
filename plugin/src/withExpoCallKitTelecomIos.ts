@@ -110,7 +110,7 @@ const withTimeouts: ConfigPlugin<{
   fulfillAnswerCallTimeout?: number;
 }> = (
   config,
-  { incomingCallTimeout, outgoingCallTimeout, fulfillAnswerCallTimeout },
+  { incomingCallTimeout, outgoingCallTimeout, fulfillAnswerCallTimeout }
 ) => {
   return withInfoPlist(config, (config) => {
     config.modResults.ExpoCallKitTelecomIncomingCallTimeout =
@@ -128,7 +128,7 @@ const withTimeouts: ConfigPlugin<{
  */
 const withRecents: ConfigPlugin<{ includesCallsInRecents?: boolean }> = (
   config,
-  { includesCallsInRecents },
+  { includesCallsInRecents }
 ) => {
   return withInfoPlist(config, (config) => {
     config.modResults.ExpoCallKitTelecomIncludesCallsInRecents =
@@ -146,14 +146,14 @@ const withRecents: ConfigPlugin<{ includesCallsInRecents?: boolean }> = (
 function copyResourceFileToProject(
   config: Parameters<Parameters<typeof withXcodeProject>[1]>[0],
   sourcePath: string,
-  projectName: string,
+  projectName: string
 ) {
   const filename = basename(sourcePath);
   const destinationPath = resolve(
     config.modRequest.projectRoot,
     "ios",
     projectName,
-    filename,
+    filename
   );
 
   // Copy the file to the iOS project directory
@@ -177,7 +177,7 @@ function copyResourceFileToProject(
  */
 function setSoundFiles(
   config: Parameters<Parameters<typeof withXcodeProject>[1]>[0],
-  sounds: string[],
+  sounds: string[]
 ) {
   const projectRoot = config.modRequest.projectRoot;
   const projectName = config.modRequest.projectName;
@@ -204,7 +204,7 @@ function setSoundFiles(
  */
 const withSounds: ConfigPlugin<{ sounds?: string[] }> = (
   config,
-  { sounds },
+  { sounds }
 ) => {
   if (sounds && sounds.length > 0) {
     config = withXcodeProject(config, (config) => {
@@ -228,20 +228,21 @@ const withDefaultRingtone: ConfigPlugin<{
     if (soundFilenames.length === 0) {
       throw new Error(
         `${ERROR_MSG_PREFIX}"defaultRingtone" was specified but no ` +
-          `sounds were provided.`,
+          `sounds were provided.`
       );
     }
     if (!soundFilenames.includes(defaultRingtone)) {
       throw new Error(
         `${ERROR_MSG_PREFIX}"defaultRingtone" must be one of the provided ` +
           `sounds (${soundFilenames.join(", ")}) or "default" for ` +
-          `system ringtone.`,
+          `system ringtone.`
       );
     }
   }
 
   return withInfoPlist(config, (config) => {
-    config.modResults.ExpoCallKitTelecomDefaultRingtone = defaultRingtone || "default";
+    config.modResults.ExpoCallKitTelecomDefaultRingtone =
+      defaultRingtone || "default";
     return config;
   });
 };
@@ -262,13 +263,13 @@ const withDefaultDialtone: ConfigPlugin<{
   if (soundFilenames.length === 0) {
     throw new Error(
       `${ERROR_MSG_PREFIX}"defaultDialtone" was specified but no ` +
-        `sounds were provided.`,
+        `sounds were provided.`
     );
   }
   if (!soundFilenames.includes(defaultDialtone)) {
     throw new Error(
       `${ERROR_MSG_PREFIX}"defaultDialtone" must be one of the provided ` +
-        `sounds (${soundFilenames.join(", ")}).`,
+        `sounds (${soundFilenames.join(", ")}).`
     );
   }
 
@@ -302,7 +303,7 @@ const withIconTemplate: ConfigPlugin<{
   if (sounds?.some((s) => basename(s) === iconFilename)) {
     throw new Error(
       `${ERROR_MSG_PREFIX}"iconTemplateIos" filename "${iconFilename}" ` +
-        `collides with a file in "sounds".`,
+        `collides with a file in "sounds".`
     );
   }
 
@@ -318,7 +319,7 @@ const withIconTemplate: ConfigPlugin<{
 
     if (!existsSync(sourcePath)) {
       throw new Error(
-        `${ERROR_MSG_PREFIX}Icon template file not found: ${sourcePath}`,
+        `${ERROR_MSG_PREFIX}Icon template file not found: ${sourcePath}`
       );
     }
 
@@ -334,7 +335,9 @@ const withIconTemplate: ConfigPlugin<{
   return config;
 };
 
-export const withExpoCallKitTelecomIos: ConfigPlugin<ExpoCallKitTelecomPluginProps> = (
+export const withExpoCallKitTelecomIos: ConfigPlugin<
+  ExpoCallKitTelecomPluginProps
+> = (
   config,
   {
     cameraPermission,
@@ -343,11 +346,12 @@ export const withExpoCallKitTelecomIos: ConfigPlugin<ExpoCallKitTelecomPluginPro
     outgoingCallTimeout,
     fulfillAnswerCallTimeout,
     includesCallsInRecents,
+    optionalVoIPPushPolicy = "ignoreInvalidPayloads",
     sounds,
     defaultRingtoneIos,
     defaultDialtone,
     iconTemplateIos,
-  },
+  }
 ) => {
   config = withPermissions(config, { cameraPermission, microphonePermission });
   config = withPushNotificationEntitlement(config);
@@ -359,6 +363,18 @@ export const withExpoCallKitTelecomIos: ConfigPlugin<ExpoCallKitTelecomPluginPro
     fulfillAnswerCallTimeout,
   });
   config = withRecents(config, { includesCallsInRecents });
+  if (
+    !["reportAll", "ignoreInvalidPayloads"].includes(optionalVoIPPushPolicy)
+  ) {
+    throw new Error(
+      "optionalVoIPPushPolicy must be reportAll or ignoreInvalidPayloads"
+    );
+  }
+  config = withInfoPlist(config, (config) => {
+    config.modResults.ExpoCallKitTelecomOptionalVoIPPushPolicy =
+      optionalVoIPPushPolicy;
+    return config;
+  });
   config = withSounds(config, { sounds });
   config = withDefaultRingtone(config, {
     sounds,

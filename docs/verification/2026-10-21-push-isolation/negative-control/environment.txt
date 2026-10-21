@@ -1,0 +1,11 @@
+1ada9b954d5e5e4a598aed21dd248aaa35ec6100
+f24d606645191563dfb49d612e74e6affc12eb71
+Xcode 27.1
+Build version 27A9275
+v26.4.0
+1.4.0
+1.17.0
+ruby 4.0.7 (2026-09-15 revision 229531a6cf) +PRISM [arm64-darwin27]
+27.1
+simulatorRuntime=com.apple.CoreSimulator.SimRuntime.iOS-27-0 pushAPI=metadata
+runOwnedSimulator=6D18F191-4808-4AFA-9919-92AF7AFAE9D8
