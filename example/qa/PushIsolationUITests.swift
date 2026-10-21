@@ -112,6 +112,7 @@ final class PushIsolationUITests: XCTestCase {
     let callID = app.staticTexts["call-session-id"].label
     XCTAssertNotEqual(callID, "Call ID: none")
     let activeUUID = try XCTUnwrap(UUID(uuidString: callID.replacingOccurrences(of: "Call ID: ", with: "")))
+    let beforePush = events().compactMap { $0["sequence"] as? Int }.max() ?? 0
     let push = try control("push", ["mustReport": mustReport,
       "payload": ["aps": [:], "from": "+15555550142", "callId": "invalid-payload-qa"]])
     let pushID = try XCTUnwrap(push["pushID"] as? String)
@@ -153,6 +154,11 @@ final class PushIsolationUITests: XCTestCase {
     lostCall.isInverted = true
     wait(for: [lostCall], timeout: 2)
     XCTAssertFalse(app.staticTexts["Invalid Call"].exists)
+    let allReports = events().filter {
+      ($0["sequence"] as? Int ?? 0) > beforePush && ($0["event"] as? String)?.hasPrefix("report.") == true
+    }
+    XCTAssertEqual(allReports.count, expectedPlaceholder ? 3 : 0,
+      "Check the entire post-push journal, including asynchronous uncorrelated reports")
     let screenshot = XCTAttachment(screenshot: app.screenshot())
     screenshot.name = "Connected call survives malformed push"
     screenshot.lifetime = .keepAlways
