@@ -323,6 +323,6 @@ v2 removes the v1 API outright; there is no compatibility shim. Each v1 call map
 
 1. Is raising iOS to 17.4 in v2 acceptable, or should we keep a CallKit backend for iOS 16.0–17.3 for one major version?
 2. Are you comfortable with the iOS side being a dependency on `ios-voip-sdk`'s Expo module, co-maintained, with you as a maintainer there too? Or would you prefer the same code vendored into this repo?
-   - **Prerequisite for either:** `ios-voip-sdk` needs an MIT-compatible license before this repository can depend on it or vendor it.
+   - **Prerequisite for either:** `ios-voip-sdk` needs *a* license that permits use and redistribution, such as MIT or Apache-2.0. MIT doesn't require dependencies to be MIT, but code with no license is all rights reserved, so apps couldn't legally ship it. Vendoring also means keeping its notice.
 3. Are the status names and the handler shape right for your users? Is `unhandledAction: "fail"` the right default on a cold launch?
 4. How should this land alongside the open fixes (#29, #49–#52) and the pending 1.0.0 release? For example: release 1.0.0, then a `v2` branch with alphas.
