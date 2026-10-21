@@ -15,10 +15,10 @@ v2 replaces the CallKit-shaped API with a **conversations** API that works the s
 | **Commands and reports** | Commands are things the app asks the system to do. Reports are things the app's transport tells the system. |
 | **Audio routes** | One cross-platform API. Audio session plumbing moves out of JS into native media adapters. |
 
-- **iOS** runs on **LiveCommunicationKit**, Apple's successor API, through a small Swift package (`ios-voip-sdk`).
+- **iOS** runs on **LiveCommunicationKit** through `ios-voip-sdk`. That one repository ships a Swift package **and** an iOS-only Expo module with this API. expo-callkit-telecom v2 depends on the Expo module for iOS, so it carries no iOS native code of its own.
 - **Android** runs on **Core-Telecom**. Its suspending callbacks already have this shape, so Android can drop the CallKit emulation it carries today.
 - **Unchanged:** the push wire format (`incomingCall` and `callEnded` envelopes, deduplicated by `eventId`) and the config plugin's existing props.
-- **Migration:** a `v1` compatibility entry point keeps existing apps building for one major version.
+- **Migration:** v2 is a clean break, with **no compatibility shim**. The change is large enough that a shim would hide it. A migration guide maps every v1 call to its v2 replacement.
 
 ## Motivation
 
@@ -241,22 +241,32 @@ Most apps need only state and the handler. Lifecycle signals that aren't state g
 
 ## Native architecture
 
-**iOS: `ios-voip-sdk`**, an Expo-independent Swift 6 package that the module depends on. It is to be created at `ziahamza/ios-voip-sdk`.
+### iOS: `ios-voip-sdk` (to be created at `ziahamza/ios-voip-sdk`)
 
-- **Manager ownership.** It owns the process's **only** `ConversationManager`.
-  - **Why it matters:** on the iPhone, a `CXProvider` created later, by any SDK, receives every action instead. So do a second manager's actions.
-  - **Debug builds:** warn when that happens.
-- **State.** It projects LiveCommunicationKit's state, registers app metadata synchronously before reporting, and enforces handler deadlines.
-- **Push.** A small Objective-C shim handles the PushKit metadata selector, so older SDKs still compile.
-- **Audio.** Media adapter protocols and the activation watchdog.
+One repository, one Swift source tree, two products that are versioned and tested together:
 
-**Dependency.** The module would depend on it through CocoaPods or the `spm_dependency` podspec helper. Native Swift apps can use the package directly, and later watchOS and Mac Catalyst apps can too.
+| Product | For | Contents |
+| --- | --- | --- |
+| **Swift package** (SwiftPM; Swift 6, with no Expo, React Native or WebRTC dependency) | Native Swift apps, and later watchOS and Mac Catalyst | Owns the process's only `ConversationManager`, projects state, registers app metadata synchronously before reporting, enforces handler deadlines. Also holds the PushKit metadata shim (a separate Objective-C target), the media adapter protocols and the activation watchdog. |
+| **iOS-only Expo module** (npm; `expo-module.config.json` lists `apple` as its only platform) | Expo and bare React Native apps (bare apps need `expo-modules-core`) | A thin bridge that exposes this RFC's API: the state hooks, the handler, commands, reports, audio routes, push token and events. It also ships a config plugin for entitlements, `voip`, push, default calling and media adapters. Its podspec compiles the same Swift sources, so CocoaPods consumers need no separately published pod. |
 
-**Android.** The Kotlin stays in this repo, refactored to the handler and registry model:
+**Manager ownership.** On the iPhone, a `CXProvider` created later by any SDK receives every action instead of our manager, and so does a second `ConversationManager`. The package must own the only manager in the process. Debug builds warn when another provider appears.
 
-- `FulfillRequestManager` and the single-session constraint go away.
-- `onAnswer`, `onDisconnect`, `onSetActive` and `onSetInactive` suspend until the JS handler settles, or until native policy decides when no handler is attached.
-- **To verify before committing to this:** how long Core-Telecom lets these callbacks suspend, and what happens when one throws or times out. Measure on the emulator and a device; this sets Android's `deadline`.
+**Why one repository ships both:**
+
+- the JS bridge can't drift from the Swift core;
+- one CI on the CallKit Simulator runtime covers both;
+- an iOS-only app can use the Expo module on its own;
+- expo-callkit-telecom's iOS side becomes a dependency instead of a second implementation.
+
+### expo-callkit-telecom v2
+
+- **iOS:** depends on the `ios-voip-sdk` Expo module, and its iOS entry re-exports that module's API. Its config plugin composes the iOS module's plugin.
+- **Android:** the Kotlin stays in this repo, refactored to the same API:
+  - `FulfillRequestManager` and the single-session constraint go away.
+  - `onAnswer`, `onDisconnect`, `onSetActive` and `onSetInactive` suspend until the JS handler settles, or until native policy decides when no handler is attached.
+  - **To verify before committing to this:** how long Core-Telecom lets these callbacks suspend, and what happens when one throws or times out. Measure on the emulator and a device; this sets Android's `deadline`.
+- **One contract:** the TypeScript types are defined once and implemented by both platforms. A shared conformance scenario list keeps the two from drifting.
 
 ## Requirements
 
@@ -266,9 +276,9 @@ Most apps need only state and the handler. Lifecycle signals that aren't state g
 - **Android:** minSdk 26 and Core-Telecom 1.0.x, unchanged.
 - **Mac Catalyst:** waits for a fix to an Apple SDK defect. With Xcode 27.1, LiveCommunicationKit delegate conformances fail to link on Catalyst.
 
-## Migration
+## Breaking changes and migration guide
 
-`expo-callkit-telecom/v1` keeps the old functions working, implemented on the v2 core, with deprecation warnings for one major version:
+v2 removes the v1 API outright; there is no compatibility shim. Each v1 call maps to a v2 replacement:
 
 | v1 | v2 |
 | --- | --- |
@@ -298,14 +308,14 @@ Most apps need only state and the handler. Lifecycle signals that aren't state g
 
 ## Phasing
 
-1. **`2.0.0-alpha`.** `ios-voip-sdk` core and handler, iOS on LiveCommunicationKit, the Android refactor, `v1` compatibility, and the push format kept.
+1. **`2.0.0-alpha`.** The `ios-voip-sdk` Swift package and Expo module, expo-callkit-telecom depending on it for iOS, the Android refactor, the push format kept, and the migration guide.
 2. **Audio.** Media adapters (`webrtc`, `livekit`) plus the watchdog.
 3. **System entry points.** Default calling app, then the default dialer (EU), translation and Mac Catalyst once Apple fixes the SDK.
 
 ## Questions for Michael
 
 1. Is raising iOS to 17.4 in v2 acceptable, or should we keep a CallKit backend for iOS 16.0–17.3 for one major version?
-2. Should the Swift core be an external package (`ios-voip-sdk`, co-maintained), or would you prefer it vendored in this repo?
+2. Are you comfortable with the iOS side being a dependency on `ios-voip-sdk`'s Expo module, co-maintained, with you as a maintainer there too? Or would you prefer the same code vendored into this repo?
+   - **Prerequisite for either:** `ios-voip-sdk` needs an MIT-compatible license before this repository can depend on it or vendor it.
 3. Are the status names and the handler shape right for your users? Is `unhandledAction: "fail"` the right default on a cold launch?
-4. Should the `v1` compatibility entry point live for one major version, or ship only as a codemod?
-5. How should this land alongside the open fixes (#29, #49–#52) and the pending 1.0.0 release?
+4. How should this land alongside the open fixes (#29, #49–#52) and the pending 1.0.0 release? For example: release 1.0.0, then a `v2` branch with alphas.
