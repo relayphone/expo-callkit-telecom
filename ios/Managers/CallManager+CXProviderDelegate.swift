@@ -18,6 +18,7 @@ extension CallManager: CXProviderDelegate {
   func providerDidReset(_ provider: CXProvider) {
     Log.call.debug("Provider did reset - removing all sessions")
     DialtonePlayer.shared.stop()
+    store.incomingReports.endAll()
     cancelAllCallTimeouts()
     Task {
       await FulfillRequestManager.shared.cancelAll()
@@ -58,10 +59,17 @@ extension CallManager: CXProviderDelegate {
   func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
     Log.call.debug("CXAnswerCallAction - id: \(action.callUUID)")
 
-    // Cancel the incoming call timeout since user answered
+    let incomingReport = store.incomingReports.report(for: action.callUUID)
+    incomingReport?.answered()
+    // Mark synchronously before cancellation; late report completion cannot
+    // recreate a ringing session or arm a new incoming timeout.
     cancelCallTimeout(for: action.callUUID)
 
     Task {
+      if let incomingReport, !(await store.publishIncoming(incomingReport)) {
+        action.fail()
+        return
+      }
       await store.updateStatus(for: action.callUUID, status: .connecting)
 
       // Create pending fulfill request with associated call ID
@@ -70,11 +78,16 @@ extension CallManager: CXProviderDelegate {
         timeout: Self.answerCallTimeout
       )
 
-      // Send event with request ID
-      await MainActor.run {
-        CallEventEmitter.shared.send(
-          CallAnsweredEvent(id: action.callUUID, requestId: requestId)
-        )
+      // End/reset may have won while either actor operation was suspended.
+      let live = await MainActor.run {
+        if let incomingReport, !incomingReport.withSession({ $0 != nil }) { return false }
+        CallEventEmitter.shared.send(CallAnsweredEvent(id: action.callUUID, requestId: requestId))
+        return true
+      }
+      guard live else {
+        await FulfillRequestManager.shared.cancel(requestId: requestId)
+        action.fail()
+        return
       }
 
       // Wait for fulfill or timeout
@@ -82,6 +95,10 @@ extension CallManager: CXProviderDelegate {
 
       switch result {
       case .fulfilled:
+        if let incomingReport, !incomingReport.withSession({ $0 != nil }) {
+          action.fail()
+          return
+        }
         Log.call.debug("CXAnswerCallAction fulfilled - id: \(action.callUUID)")
         action.fulfill()
       case .cancelled:
@@ -101,11 +118,15 @@ extension CallManager: CXProviderDelegate {
 
     // Stop dialtone and cancel timeout
     DialtonePlayer.shared.stop()
+    let pendingEnded = store.incomingReports.report(for: action.callUUID)?.ended()
     cancelCallTimeout(for: action.callUUID)
 
     Task {
+      await FulfillRequestManager.shared.cancel(forCallId: action.callUUID)
       // Snapshot the session as ended so the embedded session reflects the terminal state.
-      if var session = await store.session(for: action.callUUID) {
+      var endedSession = pendingEnded
+      if endedSession == nil { endedSession = await store.session(for: action.callUUID) }
+      if var session = endedSession {
         session.status = .ended
         await MainActor.run {
           CallEventEmitter.shared.send(
