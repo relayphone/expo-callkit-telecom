@@ -75,7 +75,9 @@ PHASE=runtime-validation
 codesign --verify --strict "$RUNTIME_DIST/CKSimRuntime.dylib"
 RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x.get("platform")=="iOS" and x["isAvailable"]]; print(sorted(r,key=lambda x:[int(p) for p in x["version"].split(".")])[-1]["identifier"])')
 echo "simulatorRuntime=$RUNTIME pushAPI=$PUSH_API" >> "$OUT/environment.txt"
-UDID=$(xcrun simctl create "callkit-library-qa-$$" com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro "$RUNTIME")
+DEVICE_TYPE=${QA_DEVICE_TYPE:-com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro}
+echo "deviceType=$DEVICE_TYPE" >> "$OUT/environment.txt"
+UDID=$(xcrun simctl create "callkit-library-qa-$$" "$DEVICE_TYPE" "$RUNTIME")
 echo "runOwnedSimulator=$UDID" >> "$OUT/environment.txt"
 PHASE=simulator-boot
 limit 30 xcrun simctl boot "$UDID"
