@@ -8,6 +8,7 @@ OUT=$(cd "$OUT" && pwd)
 BUILD=$(mktemp -d "${TMPDIR:-/tmp}/callkit-push-build.XXXXXX")
 DERIVED=${QA_DERIVED_DATA:-$BUILD/DerivedData}
 UDID=""
+INDEX_WATCHER=""
 PHASE=preflight
 limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
 run_stage() {
@@ -24,6 +25,7 @@ cleanup() {
   local scenario_status=$?
   local status=$scenario_status
   trap - EXIT
+  if [[ -n "$INDEX_WATCHER" ]]; then kill "$INDEX_WATCHER" 2>/dev/null || true; wait "$INDEX_WATCHER" 2>/dev/null || true; fi
   if [[ "$status" -ne 0 ]]; then
     printf 'phase=%s scenarioExitStatus=%s\n' "$PHASE" "$scenario_status" >&2 || true
     # This log ends before app launch. Select compiler/linker diagnostics only;
@@ -136,6 +138,8 @@ if [[ -n "${QA_ONLY_TEST:-}" ]]; then
   EXPECTED_TESTS=1
 fi
 PHASE=ui-test
+python3 "$ROOT/example/qa/watch-aut-container.py" "$UDID" com.example.expocallkittelecom "$OUT/aut-container.txt" > "$OUT/container-index.log" 2>&1 &
+INDEX_WATCHER=$!
 limit 420 xcodebuild "${COMMON[@]}" -destination "id=$UDID" -parallel-testing-enabled NO -collect-test-diagnostics never \
   "${TESTS[@]}" -resultBundlePath "$OUT/PushIsolation.xcresult" test-without-building > "$OUT/test.log" 2>&1
 xcrun xcresulttool get test-results summary --path "$OUT/PushIsolation.xcresult" > "$OUT/test-summary.json"

@@ -27,19 +27,21 @@ final class PushIsolationUITests: XCTestCase {
   @MainActor
   private func control(_ operation: String, _ fields: [String: Any] = [:]) throws -> [String: Any] {
     let index = try XCTUnwrap(ProcessInfo.processInfo.environment["CKSIM_QA_CONTAINER_INDEX"])
-    let container = try String(contentsOfFile: index, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-    let root = URL(fileURLWithPath: container).appendingPathComponent("Documents/.callkit-simulator")
+    var resolvedRoot: URL?
     let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+      // test-without-building reinstalls the AUT. Re-read the host's atomic
+      // index while waiting instead of retaining its pretest container path.
+      guard let container = try? String(contentsOfFile: index, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+      let root = URL(fileURLWithPath: container).appendingPathComponent("Documents/.callkit-simulator")
       guard let data = try? Data(contentsOf: root.appendingPathComponent("session.json")),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            object["runID"] as? String == self.runID else { return false }
+            object["runID"] as? String == self.runID,
+            object["bundleID"] as? String == "com.example.expocallkittelecom" else { return false }
+      resolvedRoot = root
       return true
     }, object: nil)
-    let diagnostic = XCTAttachment(string: "[CKSIM-QA-readiness] session=\(root.appendingPathComponent("session.json").path), fileExists=\(FileManager.default.fileExists(atPath: root.appendingPathComponent("session.json").path))")
-    diagnostic.name = "Runtime mailbox readiness"
-    diagnostic.lifetime = .keepAlways
-    add(diagnostic)
-    wait(for: [ready], timeout: 10)
+    wait(for: [ready], timeout: 20)
+    let root = try XCTUnwrap(resolvedRoot)
     let session = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("session.json"))) as? [String: Any])
     XCTAssertEqual(session["runID"] as? String, runID)
     let folder = root.appendingPathComponent(runID)
