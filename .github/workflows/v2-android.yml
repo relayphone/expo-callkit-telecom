@@ -5,7 +5,7 @@ on:
     branches: [v2]
     paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
   push:
-    branches: [v2, v2-android-webrtc]
+    branches: [v2]
     paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
 
 permissions:

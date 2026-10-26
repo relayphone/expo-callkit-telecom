@@ -265,7 +265,9 @@ class NativeLifetimeTest {
             }
             try {
                 val controller = NativeMediaController(InstrumentationRegistry.getInstrumentation().targetContext,
-                    mapOf("media" to mapOf("expiresAt" to System.currentTimeMillis()/1000+120)),
+                    mapOf("eventId" to "invalidated-event", "serverCallId" to "invalidated-call", "media" to mapOf(
+                        "provider" to "livekit", "url" to "wss://fixture.invalid", "room" to "fixture-room",
+                        "identity" to "fixture-device", "token" to "fixture-not-a-jwt", "expiresAt" to System.currentTimeMillis()/1000+120)),
                     JSONObject(mapOf("media" to "livekit")), owner, { fail("Unexpected native failure") }, { connected.complete(Unit) })
                 controller.prewarm(); withTimeout(3000) { prepared.await() }
                 ready.set(false)
