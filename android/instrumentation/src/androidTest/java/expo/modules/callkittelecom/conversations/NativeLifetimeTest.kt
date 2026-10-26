@@ -191,4 +191,45 @@ class NativeLifetimeTest {
         }
     }
 
+    @Test fun holdBeforeActivationCanResumeWithoutStartingHeldMedia() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val owner = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            val waiting = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val connected = CompletableDeferred<Unit>()
+            val closed = CompletableDeferred<Unit>()
+            var playing = false
+            var active = false
+            var activations = 0
+            NativeMediaRegistry.factories["webrtc"] = {
+                object : NativeMediaSession {
+                    override suspend fun prewarm(payload: Map<String, Any?>) {}
+                    override suspend fun activate() { active = true; playing = true; activations++ }
+                    override suspend fun setHeld(held: Boolean) { playing = active && !held }
+                    override suspend fun setMuted(muted: Boolean) {}
+                    override suspend fun close(reason: String) { playing = false; closed.complete(Unit) }
+                }
+            }
+            try {
+                val payload = mapOf("media" to mapOf("expiresAt" to System.currentTimeMillis() / 1000 + 120))
+                val controller = NativeMediaController(InstrumentationRegistry.getInstrumentation().targetContext,
+                    payload, JSONObject(mapOf("media" to "webrtc")), owner, {}, { connected.complete(Unit) })
+                controller.prewarm(); controller.answered { waiting.complete(Unit); gate.await() }
+                withTimeout(3000) { waiting.await() }
+                controller.pause(); gate.complete(Unit)
+                delay(50)
+                assertFalse(playing); assertEquals(0, activations)
+                controller.resume {}
+                withTimeout(3000) { connected.await() }
+                assertTrue(playing); assertEquals(1, activations)
+                controller.pause(); assertFalse(playing)
+                controller.resume {}
+                withTimeout(3000) { while (!playing) delay(10) }
+                assertEquals(1, activations)
+                controller.close("ended")
+                withTimeout(3000) { closed.await() }
+            } finally { NativeMediaRegistry.factories.remove("webrtc"); owner.cancel() }
+        }
+    }
+
 }
