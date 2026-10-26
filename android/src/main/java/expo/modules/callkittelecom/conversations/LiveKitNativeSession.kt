@@ -104,7 +104,7 @@ internal class LiveKitNativeSession(private val context: Context) : NativeMediaS
     }
     override suspend fun setHeld(held: Boolean): Unit = withContext(Dispatchers.Main.immediate) {
         check(!closed)
-        this.held = held
+        this@LiveKitNativeSession.held = held
         if (!active) return@withContext
         if (!held) firstAudio.set(false)
         tracks.forEach { it.enabled = !held }
@@ -113,7 +113,7 @@ internal class LiveKitNativeSession(private val context: Context) : NativeMediaS
     }
     override suspend fun setMuted(muted: Boolean): Unit = withContext(Dispatchers.Main.immediate) {
         check(!closed)
-        this.muted = muted
+        this@LiveKitNativeSession.muted = muted
         if (active) setMicrophone(!held && !muted)
     }
     private suspend fun setMicrophone(enabled: Boolean) {
