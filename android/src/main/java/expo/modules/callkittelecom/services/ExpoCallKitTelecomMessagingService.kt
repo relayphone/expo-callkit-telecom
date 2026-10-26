@@ -20,7 +20,8 @@ class ExpoCallKitTelecomMessagingService : ExpoFirebaseMessagingService() {
             try {
             if (type == "incomingCall" || type == "incoming_call") {
                 val result = engine.incoming(payload)
-                if (result["status"] == "reported") (application as? ReactApplication)?.reactHost?.start()
+                val warmJavaScript = engine.policy.optString("type", "native") != "native" || engine.policy.optBoolean("prewarm", true)
+                if (result["status"] == "reported" && warmJavaScript) (application as? ReactApplication)?.reactHost?.start()
             } else engine.remoteEnd(payload)
             } catch (_: Exception) { /* Malformed/stale pushes never crash the service. */ }
         }
