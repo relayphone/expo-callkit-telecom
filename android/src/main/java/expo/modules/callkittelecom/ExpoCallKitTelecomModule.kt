@@ -13,7 +13,7 @@ class ExpoCallKitTelecomModule : Module() {
     private lateinit var engine: ConversationEngine
     private val owner = Any()
     private var epoch = 0L
-    private suspend fun <T> command(body: suspend () -> T): T = withContext(Dispatchers.Main) {
+    private suspend fun <T> command(body: suspend () -> T): T = engine.jobs.async {
         try { check(engine.bridgeOwner === owner); body() }
         catch (error: Exception) {
             if (error is TimeoutCancellationException) throw CodedException("deadline_exceeded", "Conversation deadline exceeded", null)
@@ -27,7 +27,7 @@ class ExpoCallKitTelecomModule : Module() {
             val code = error.message?.takeIf { it in setOf("invalid_arguments", "unknown_conversation", "unsupported") } ?: "conversation"
             throw CodedException(code, "Conversation operation failed", null)
         }
-    }
+    }.await()
     override fun definition() = ModuleDefinition {
         Name("ExpoCallKitTelecom")
         Events("conversationsChanged", "audioRoutesChanged", "pushTokenUpdated", "handlerAction", "actionCancelled", "conversationEvent")

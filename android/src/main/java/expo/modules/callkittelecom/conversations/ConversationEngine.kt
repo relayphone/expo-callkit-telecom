@@ -47,6 +47,8 @@ class ConversationEngine(val context: Context) {
         var job: Job? = null
         var collectors: Job? = null
         var active = false
+        var admitted = false
+        var endpoint: CallEndpointCompat? = null
         var media: NativeMediaController? = null
         var timeout: Job? = null
         var endpoints: List<CallEndpointCompat> = emptyList()
@@ -65,11 +67,14 @@ class ConversationEngine(val context: Context) {
 
     fun audioRoutes() = routes
     private fun publish() {
-        snapshot = mapOf("revision" to ++revision, "conversations" to calls.map { (id, call) ->
+        val states = calls.filterValues { it.admitted }.map { (id, call) ->
             buildMap<String, Any?> {
                 putAll(call.state.filterKeys { it != "endReason" }.filterValues { it != null })
                 actions.pending(id)?.let { put("pending", it) }
-            } }.sortedBy { it["id"] as String })
+            }
+        }.sortedBy { it["id"] as String }
+        if (snapshot["conversations"] == states) return
+        snapshot = mapOf("revision" to ++revision, "conversations" to states)
         emit("conversationsChanged", snapshot)
     }
     private fun call(id: String) = calls[id] ?: error("unknown_conversation")
@@ -133,6 +138,8 @@ class ConversationEngine(val context: Context) {
                     onDisconnect = { withTimeout(4500) { action(id, "end", "system"); terminal(id, "local") } },
                     onSetActive = { withTimeout(4500) { hold(id, false, "system") } },
                     onSetInactive = { withTimeout(4500) { hold(id, true, "system") } }) {
+                    call.admitted = true
+                    publish()
                     call.ready.complete(this)
                     ConversationService.show(context, id, call.state)
                     call.timeout = jobs.launch {
@@ -172,6 +179,7 @@ class ConversationEngine(val context: Context) {
                     publish()
                 }
             }).also { it.prewarm() }
+            if (call.active) joined(id)
         }
     }
 
@@ -197,13 +205,14 @@ class ConversationEngine(val context: Context) {
         current.state["status"] = "connecting"
         ConversationService.show(context, id, current.state)
         current.media?.answered { awaitAudio(id, current) }
+        refreshRoutes()
         publish()
     }
     private suspend fun awaitAudio(id: String, current: Call) {
         // Returning through main lets Core-Telecom finish a system callback before audio begins.
         withContext(Dispatchers.Main) { yield(); check(calls[id] === current && current.active) }
         withTimeout(1500) {
-            while (audio.mode != AudioManager.MODE_IN_COMMUNICATION || routes["current"] == null) delay(10)
+            while (audio.mode != AudioManager.MODE_IN_COMMUNICATION || current.endpoint == null) delay(10)
             check(calls[id] === current && current.active)
         }
     }
@@ -218,6 +227,7 @@ class ConversationEngine(val context: Context) {
         action(id, "hold", origin, mapOf("held" to held))
         if (origin == "app") checked(if (held) control(id).setInactive() else control(id).setActive())
         current.active = !held
+        refreshRoutes()
         if (held) current.media?.pause() else current.media?.resume { awaitAudio(id, current) }
         current.state["status"] = if (held) "held" else if (current.state["connectedAt"] != null) "connected" else "connecting"
         publish()
@@ -274,6 +284,7 @@ class ConversationEngine(val context: Context) {
         actions.cancel(id)
         publish()
         calls.remove(id)
+        refreshRoutes()
         ConversationService.remove(context, id)
         publish()
     }
@@ -281,13 +292,20 @@ class ConversationEngine(val context: Context) {
         "type" to when(endpoint.type) { CallEndpointCompat.TYPE_EARPIECE -> "builtInReceiver"; CallEndpointCompat.TYPE_SPEAKER -> "builtInSpeaker";
             CallEndpointCompat.TYPE_BLUETOOTH -> "bluetoothHFP"; CallEndpointCompat.TYPE_WIRED_HEADSET -> "headphones"; else -> "unknown" })
     private fun updateRoutes(id: String, endpoint: CallEndpointCompat?) {
-        if (!calls.containsKey(id)) return
-        routes = mapOf("revision" to ++routeRevision, "routes" to call(id).endpoints.map(::route),
-            "current" to (endpoint?.let(::route) ?: routes["current"]))
+        val current = calls[id] ?: return
+        if (endpoint != null) current.endpoint = endpoint
+        refreshRoutes()
+    }
+    private fun refreshRoutes() {
+        val selected = calls.values.firstOrNull { it.active } ?: calls.values.firstOrNull { it.admitted }
+        val available = selected?.endpoints?.map(::route) ?: emptyList()
+        val current = selected?.endpoint?.let(::route)
+        if (routes["routes"] == available && routes["current"] == current) return
+        routes = mapOf("revision" to ++routeRevision, "routes" to available, "current" to current)
         emit("audioRoutesChanged", routes)
     }
     suspend fun selectRoute(id: String) {
-        val current = calls.values.firstOrNull { it.state["status"] == "connected" } ?: error("unknown_conversation")
+        val current = calls.values.firstOrNull { it.active } ?: error("unknown_conversation")
         val endpoint = current.endpoints.firstOrNull { it.identifier.toString() == id } ?: error("invalid_arguments")
         checked(current.ready.await().requestEndpointChange(endpoint))
     }
