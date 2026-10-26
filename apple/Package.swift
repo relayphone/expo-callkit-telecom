@@ -6,8 +6,9 @@ let package = Package(
   platforms: [.iOS("17.4")],
   products: [.library(name: "ExpoConversationsBoundary", targets: ["ExpoConversationsBoundary"])],
   dependencies: [
-    .package(url: "https://github.com/ziahamza/ios-voip-sdk.git",
-             revision: "52c2eaba23f61e67e9086a7b2328cf9e293da4ea")
+    // The SDK manifest reads VERSION beside itself. Check out sdk-revision before
+    // resolving so SwiftPM evaluates that manifest from its complete source tree.
+    .package(path: ".sdk/ios-voip-sdk")
   ],
   targets: [
     .target(name: "ExpoConversationsBoundary", dependencies: [

@@ -6,8 +6,13 @@ snapshot and forwards handler registration. It creates no LCK manager, CallKit
 provider, PushKit registry or audio session. IDs, status, direction, participants,
 deadlines and reports remain SDK values. iOS17.4 is the minimum.
 
-`Package.swift` pins `ziahamza/ios-voip-sdk` at
+`sdk-revision` pins `ziahamza/ios-voip-sdk` at
 `52c2eaba23f61e67e9086a7b2328cf9e293da4ea`, the shared identity contract revision.
+CI checks out that exact commit in `apple/.sdk/ios-voip-sdk` before resolving the
+local package dependency. The SDK manifest reads its adjacent `VERSION` file;
+remote manifest preview on Xcode26.6 evaluates it at `/Package.swift`, where
+`/VERSION` is absent. Checking out complete sources avoids that preview failure
+without modifying SDK sources. Local builds need the same pinned checkout there.
 The compile-only CI builds this adapter with the real SDK for a generic iOS
 simulator on `macos-26`; it does not boot a simulator. A parallel job prebuilds
 and compiles the v2 example for a generic iOS simulator. Native simulator journeys

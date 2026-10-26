@@ -20,6 +20,18 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
+      - name: Read pinned SDK revision
+        id: sdk
+        run: |
+          sdk_revision=$(cat apple/sdk-revision)
+          [[ "$sdk_revision" =~ ^[0-9a-f]{40}$ ]]
+          echo "revision=$sdk_revision" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v6
+        with:
+          repository: ziahamza/ios-voip-sdk
+          ref: ${{ steps.sdk.outputs.revision }}
+          path: apple/.sdk/ios-voip-sdk
+          persist-credentials: false
       - name: Compile pinned SDK adapter for iOS simulator
         working-directory: apple
         run: xcodebuild -scheme ExpoConversationsBoundary -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/v2-ios-boundary" CODE_SIGNING_ALLOWED=NO build
