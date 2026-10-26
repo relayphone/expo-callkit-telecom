@@ -1,0 +1,53 @@
+name: v2 TypeScript
+
+on:
+  pull_request:
+    branches: [v2]
+    paths:
+      - 'src/**'
+      - 'plugin/**'
+      - 'rfcs/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig*.json'
+      - 'typedoc.json'
+      - 'eslint.config.js'
+      - '.github/workflows/v2-typescript.yml'
+  push:
+    branches: [v2]
+    paths:
+      - 'src/**'
+      - 'plugin/**'
+      - 'rfcs/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig*.json'
+      - 'typedoc.json'
+      - 'eslint.config.js'
+      - '.github/workflows/v2-typescript.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-typescript-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typescript:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run test -- --runInBand
+      - run: bun run build
+      - run: bun run docs:api
