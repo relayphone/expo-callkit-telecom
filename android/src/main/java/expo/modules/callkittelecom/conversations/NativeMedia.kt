@@ -11,6 +11,9 @@ import org.json.JSONObject
 interface NativeMediaSession {
     suspend fun prewarm(payload: Map<String, Any?>)
     suspend fun activate()
+    /** Suspend local capture AND remote playback; resume only after native audio authority. */
+    suspend fun setHeld(held: Boolean)
+    /** Set desired mute state without starting inactive media. */
     suspend fun setMuted(muted: Boolean)
     suspend fun close(reason: String)
 }
@@ -34,6 +37,9 @@ internal class NativeMediaController(private val context: Context, private val p
     @Volatile private var closed = false
     @Volatile private var desiredMuted = false
     @Volatile private var activated = false
+    @Volatile private var activating = false
+    @Volatile private var held = false
+    private var retried = false
 
     @Suppress("UNCHECKED_CAST")
     private suspend fun prepare() = serial.withLock {
@@ -60,12 +66,21 @@ internal class NativeMediaController(private val context: Context, private val p
             try {
                 withTimeout(5000) {
                     try { preparation?.await() ?: error("No pre-warm") }
-                    catch (_: Exception) { ensureActive(); check(!closed); prepare() }
+                    catch (error: Exception) {
+                        ensureActive(); check(!closed)
+                        if (retried) throw error
+                        retried = true
+                        preparation = operations.async { withTimeout(8000) { prepare() } }
+                        preparation!!.await()
+                    }
                     audioReady()
                     serial.withLock {
-                        ensureActive(); check(!closed)
+                        ensureActive(); check(!closed && !held)
+                        session?.setHeld(false)
                         session?.setMuted(desiredMuted)
-                        session?.activate() ?: error("Native media adapter unavailable")
+                        activating = true
+                        try { session?.activate() ?: error("Native media adapter unavailable") }
+                        finally { activating = false }
                         ensureActive(); check(!closed)
                         activated = true
                         session?.setMuted(desiredMuted)
@@ -73,7 +88,7 @@ internal class NativeMediaController(private val context: Context, private val p
                 }
                 withContext(Dispatchers.Main) { if (!closed) connected() }
             } catch (_: Exception) {
-                if (isActive && !closed) withContext(Dispatchers.Main) { if (!closed) failed() }
+                if (isActive && !closed && !held) withContext(Dispatchers.Main) { if (!closed) failed() }
             }
         }
     }
@@ -84,15 +99,35 @@ internal class NativeMediaController(private val context: Context, private val p
         val work = operations.async { withTimeout(1000) { serial.withLock { check(!closed); session?.setMuted(true) } } }
         try { work.await() } finally { work.cancel() }
     }
+    fun clearMute() { check(!closed); desiredMuted = false; unmuteJob?.cancel() }
+    suspend fun pause() {
+        check(!closed)
+        held = true; answerJob?.cancel(); answerJob = null; unmuteJob?.cancel()
+        if (!activated && !activating) return
+        val work = operations.async { withTimeout(1000) { serial.withLock { check(!closed); session?.setHeld(true) } } }
+        try { work.await() } finally { work.cancel() }
+    }
+    fun resume(audioReady: suspend () -> Unit) {
+        check(!closed)
+        held = false
+        if (!activated) { answerJob = null; answered(audioReady); return }
+        unmuteJob?.cancel()
+        unmuteJob = operations.launch {
+            try { withTimeout(3000) {
+                audioReady()
+                serial.withLock { ensureActive(); check(!closed && !held); session?.setHeld(false); session?.setMuted(desiredMuted) }
+            } } catch (_: Exception) { if (isActive && !closed && !held) withContext(Dispatchers.Main) { if (!closed) failed() } }
+        }
+    }
     fun unmute(audioReady: suspend () -> Unit) {
         check(!closed)
-        desiredMuted = false; unmuteJob?.cancel()
-        if (!activated) return
+        clearMute()
+        if (!activated || held) return
         unmuteJob = operations.launch {
             try { withTimeout(3000) {
                 audioReady()
                 serial.withLock { ensureActive(); check(!closed); if (!desiredMuted) session?.setMuted(false) }
-            } } catch (_: Exception) { if (isActive && !closed) withContext(Dispatchers.Main) { if (!closed) failed() } }
+            } } catch (_: Exception) { if (isActive && !closed && !held) withContext(Dispatchers.Main) { if (!closed) failed() } }
         }
     }
     fun close(reason: String) {

@@ -53,6 +53,7 @@ class NativeLifetimeTest {
                 object : NativeMediaSession {
                     override suspend fun prewarm(payload: Map<String, Any?>) { assertTrue(fetched); ready.complete(Unit) }
                     override suspend fun activate() { activations++ }
+                    override suspend fun setHeld(held: Boolean) {}
                     override suspend fun setMuted(muted: Boolean) {}
                     override suspend fun close(reason: String) { closed.complete(Unit) }
                 }
@@ -111,6 +112,7 @@ class NativeLifetimeTest {
                 object : NativeMediaSession {
                     override suspend fun prewarm(payload: Map<String, Any?>) {}
                     override suspend fun activate() {}
+                    override suspend fun setHeld(held: Boolean) {}
                     override suspend fun setMuted(mutedValue: Boolean) {
                         if (mutedValue) {
                             muteCalls++; muted.complete(Unit)
@@ -167,6 +169,7 @@ class NativeLifetimeTest {
                 object : NativeMediaSession {
                     override suspend fun prewarm(payload: Map<String, Any?>) {}
                     override suspend fun activate() { entered.complete(Unit); gate.await() }
+                    override suspend fun setHeld(held: Boolean) {}
                     override suspend fun setMuted(muted: Boolean) { nativeMuted = muted }
                     override suspend fun close(reason: String) { closed.complete(Unit) }
                 }
