@@ -68,12 +68,12 @@ internal class NativeMediaController(private val context: Context, private val p
                         session?.activate() ?: error("Native media adapter unavailable")
                         ensureActive(); check(!closed)
                         activated = true
-                        if (desiredMuted) session?.setMuted(true)
+                        session?.setMuted(desiredMuted)
                     }
                 }
                 withContext(Dispatchers.Main) { if (!closed) connected() }
             } catch (_: Exception) {
-                if (isActive && !closed) withContext(Dispatchers.Main) { failed() }
+                if (isActive && !closed) withContext(Dispatchers.Main) { if (!closed) failed() }
             }
         }
     }
@@ -92,7 +92,7 @@ internal class NativeMediaController(private val context: Context, private val p
             try { withTimeout(3000) {
                 audioReady()
                 serial.withLock { ensureActive(); check(!closed); if (!desiredMuted) session?.setMuted(false) }
-            } } catch (_: Exception) { if (isActive && !closed) withContext(Dispatchers.Main) { failed() } }
+            } } catch (_: Exception) { if (isActive && !closed) withContext(Dispatchers.Main) { if (!closed) failed() } }
         }
     }
     fun close(reason: String) {

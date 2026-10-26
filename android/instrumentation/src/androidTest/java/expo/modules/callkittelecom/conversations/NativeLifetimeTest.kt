@@ -155,4 +155,37 @@ class NativeLifetimeTest {
         }
     }
 
+    @Test fun unmuteDuringActivationUsesLatestDesiredState() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val owner = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            val entered = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val connected = CompletableDeferred<Unit>()
+            val closed = CompletableDeferred<Unit>()
+            var nativeMuted = false
+            NativeMediaRegistry.factories["webrtc"] = {
+                object : NativeMediaSession {
+                    override suspend fun prewarm(payload: Map<String, Any?>) {}
+                    override suspend fun activate() { entered.complete(Unit); gate.await() }
+                    override suspend fun setMuted(muted: Boolean) { nativeMuted = muted }
+                    override suspend fun close(reason: String) { closed.complete(Unit) }
+                }
+            }
+            try {
+                val payload = mapOf("media" to mapOf("expiresAt" to System.currentTimeMillis() / 1000 + 120))
+                val controller = NativeMediaController(InstrumentationRegistry.getInstrumentation().targetContext,
+                    payload, JSONObject(mapOf("media" to "webrtc")), owner, {}, { connected.complete(Unit) })
+                controller.prewarm(); controller.mute(); controller.answered {}
+                withTimeout(3000) { entered.await() }
+                assertTrue(nativeMuted)
+                controller.unmute {}
+                gate.complete(Unit)
+                withTimeout(3000) { connected.await() }
+                assertFalse(nativeMuted)
+                controller.close("ended")
+                withTimeout(3000) { closed.await() }
+            } finally { NativeMediaRegistry.factories.remove("webrtc"); owner.cancel() }
+        }
+    }
+
 }
