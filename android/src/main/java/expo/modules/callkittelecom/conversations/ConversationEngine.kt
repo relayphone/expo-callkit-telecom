@@ -128,7 +128,7 @@ class ConversationEngine(val context: Context) {
             try {
                 telecom.addCall(attributes,
                     onAnswer = { withTimeout(4500) {
-                        if (call.state["status"] == "ringing") { action(id, "join", "system"); call.active = true; joined(id) }
+                        if (call.state["status"] == "ringing") { call.timeout?.cancel(); action(id, "join", "system"); call.active = true; joined(id) }
                     } },
                     onDisconnect = { withTimeout(4500) { action(id, "end", "system"); terminal(id, "local") } },
                     onSetActive = { withTimeout(4500) { hold(id, false, "system") } },
@@ -185,6 +185,7 @@ class ConversationEngine(val context: Context) {
     }
     suspend fun join(id: String) {
         require(call(id).state["status"] == "ringing") { "invalid_arguments" }
+        call(id).timeout?.cancel()
         try { action(id, "join", "app") }
         catch (error: Exception) { if (calls.containsKey(id)) finish(id, "failed"); throw error }
         checked(control(id).answer(if (call(id).state["isVideo"] == true) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL))
@@ -217,8 +218,7 @@ class ConversationEngine(val context: Context) {
         action(id, "hold", origin, mapOf("held" to held))
         if (origin == "app") checked(if (held) control(id).setInactive() else control(id).setActive())
         current.active = !held
-        if (held || current.state["isMuted"] == true) current.media?.mute()
-        else current.media?.unmute { awaitAudio(id, current) }
+        if (held) current.media?.pause() else current.media?.resume { awaitAudio(id, current) }
         current.state["status"] = if (held) "held" else if (current.state["connectedAt"] != null) "connected" else "connecting"
         publish()
     }
@@ -226,7 +226,9 @@ class ConversationEngine(val context: Context) {
         val current = call(id)
         if (current.state["isMuted"] == muted) return
         action(id, "mute", origin, mapOf("muted" to muted))
-        if (muted) current.media?.mute() else current.media?.unmute { awaitAudio(id, current) }
+        if (muted) current.media?.mute()
+        else if (current.active) current.media?.unmute { awaitAudio(id, current) }
+        else current.media?.clearMute()
         if (current.active && origin == "app") audio.isMicrophoneMute = muted
         current.state["isMuted"] = muted
         publish()

@@ -113,6 +113,7 @@ class ConversationJourneyTest {
                         order += "prewarm-muted"
                     }
                     override suspend fun activate() { order += "activate" }
+                    override suspend fun setHeld(held: Boolean) {}
                     override suspend fun setMuted(muted: Boolean) {}
                     override suspend fun close(reason: String) { order += "close" }
                 }
@@ -155,6 +156,7 @@ class ConversationJourneyTest {
                 object : NativeMediaSession {
                     override suspend fun prewarm(payload: Map<String, Any?>) { assertTrue(fetched); ready.complete(Unit) }
                     override suspend fun activate() { activations++ }
+                    override suspend fun setHeld(held: Boolean) {}
                     override suspend fun setMuted(muted: Boolean) {}
                     override suspend fun close(reason: String) { closed.complete(Unit) }
                 }
