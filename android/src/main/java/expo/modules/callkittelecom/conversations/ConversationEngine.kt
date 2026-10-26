@@ -78,6 +78,11 @@ class ConversationEngine(val context: Context) {
         snapshot = mapOf("revision" to ++revision, "conversations" to states)
         emit("conversationsChanged", snapshot)
     }
+    @Suppress("UNCHECKED_CAST")
+    private fun signal(current: Call, stage: NativeMediaStage) {
+        ((current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String)
+            ?.let { NativeMediaSignals.emit(it, stage) }
+    }
     private fun call(id: String) = calls[id] ?: error("unknown_conversation")
     private suspend fun control(id: String) = call(id).ready.await()
     private fun checked(result: CallControlResult) {
@@ -134,12 +139,13 @@ class ConversationEngine(val context: Context) {
             try {
                 telecom.addCall(attributes,
                     onAnswer = { withTimeout(4500) {
-                        if (call.state["status"] == "ringing") { call.timeout?.cancel(); action(id, "join", "system"); call.active = true; joined(id) }
+                        if (call.state["status"] == "ringing") { signal(call, NativeMediaStage.ANSWER_REQUESTED); call.timeout?.cancel(); action(id, "join", "system"); call.active = true; joined(id) }
                     } },
                     onDisconnect = { withTimeout(4500) { action(id, "end", "system"); terminal(id, "local") } },
                     onSetActive = { withTimeout(4500) { hold(id, false, "system") } },
                     onSetInactive = { withTimeout(4500) { hold(id, true, "system") } }) {
                     call.admitted = true
+                    signal(call, NativeMediaStage.REPORTED)
                     publish()
                     call.ready.complete(this)
                     ConversationService.show(context, id, call.state)
@@ -194,6 +200,7 @@ class ConversationEngine(val context: Context) {
     }
     suspend fun join(id: String) {
         require(call(id).state["status"] == "ringing") { "invalid_arguments" }
+        signal(call(id), NativeMediaStage.ANSWER_REQUESTED)
         call(id).timeout?.cancel()
         try { action(id, "join", "app") }
         catch (error: Exception) { if (calls.containsKey(id)) finish(id, "failed"); throw error }
@@ -203,6 +210,7 @@ class ConversationEngine(val context: Context) {
     }
     private fun joined(id: String) {
         val current = call(id)
+        signal(current, NativeMediaStage.ANSWER_ACCEPTED)
         current.state["status"] = "connecting"
         current.timeout?.cancel()
         current.timeout = jobs.launch {
@@ -220,6 +228,7 @@ class ConversationEngine(val context: Context) {
         withTimeout(1500) {
             while (audio.mode != AudioManager.MODE_IN_COMMUNICATION || current.endpoint == null) delay(10)
             check(calls[id] === current && current.active)
+            signal(current, NativeMediaStage.AUDIO_AUTHORIZED)
         }
     }
     suspend fun end(id: String) {
