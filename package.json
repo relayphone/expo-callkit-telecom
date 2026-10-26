@@ -34,7 +34,8 @@
     "docs:build": "bun run docs:api && vitepress build docs",
     "docs:preview": "vitepress preview docs",
     "deploy": "bun run docs:build && wrangler deploy",
-    "preview": "bun run docs:build && wrangler dev"
+    "preview": "bun run docs:build && wrangler dev",
+    "test:contracts": "bun test test/contracts"
   },
   "keywords": [
     "callkit",
