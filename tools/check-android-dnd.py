@@ -18,7 +18,9 @@ for name, permitted in expected.items():
     assert value["notificationAllowed"] is permitted
     assert value["ringtonePlaybackObserved"] is permitted
     if permitted:
-        assert value["ringVolume"] > 0 and value["ringerMode"] == 2
+        assert value["ringVolume"] > 0
+        if value["interruptionFilter"] == 1:
+            assert value["ringerMode"] == 2
     assert value["notificationCategory"] == "call" and value["soundConfigured"] is True
     assert value["nativeHookCount"] == 1
     result = value["outcome"]

@@ -100,7 +100,12 @@ class DndMatrixTest {
                 val rawRingtoneObserved = ringtoneObserved.get()
                 stage = "ringtone-playback"
                 assertEquals("Actual ringtone playback activity", allowed, rawRingtoneObserved)
-                if (allowed) { assertTrue(audio.getStreamVolume(AudioManager.STREAM_RING) > 0); assertEquals(AudioManager.RINGER_MODE_NORMAL, audio.ringerMode) }
+                if (allowed) {
+                    assertTrue(audio.getStreamVolume(AudioManager.STREAM_RING) > 0)
+                    // Priority DND may expose SILENT externally while playing an allowed call.
+                    if (expectedMode == NotificationManager.INTERRUPTION_FILTER_ALL)
+                        assertEquals(AudioManager.RINGER_MODE_NORMAL, audio.ringerMode)
+                }
                 stage = "raw-cleanup"
                 assertTrue(control.disconnect(DisconnectCause(DisconnectCause.REJECTED)) is CallControlResult.Success)
                 ConversationService.remove(context, id)

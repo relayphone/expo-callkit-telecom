@@ -63,7 +63,10 @@ The matrix covers off/on, priority any/no calls, contacts versus unknown, starre
 versus ordinary contacts, repeat caller first/second attempt, and restoration.
 Required JSON checks distinguish Core's actual RINGING state from notification
 eligibility/suppression. They also observe actual ringtone playback activity via
-AudioManager, and assert normal ringer mode/nonzero volume for allowed calls.
+AudioManager, require nonzero volume for allowed calls, and record ringer mode.
+Priority DND can report external ringer mode SILENT while an allowed call plays;
+the mode is recorded, while actual playback is the required evidence. NORMAL is
+asserted when DND is off, and allowed cases require nonzero ring volume.
 These are virtual-device playback facts, not an acoustic recording. A separate real media journey
 requires prejoin→DND change→filtered outcome, Core removal, native closure,
 server participant departure and no capture. Native blockList/other outcomes and
