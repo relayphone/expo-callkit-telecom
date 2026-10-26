@@ -19,11 +19,13 @@
     "expo-splash-screen": "~57.0.9",
     "react": "19.2.3",
     "react-native": "0.86.3",
-    "react-native-safe-area-context": "~5.7.0"
+    "react-native-safe-area-context": "~5.7.0",
+    "expo-file-system": "~57.0.7"
   },
   "devDependencies": {
     "@types/react": "~19.2.14",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "@types/node": "^26.6.2"
   },
   "private": true,
   "expo": {
