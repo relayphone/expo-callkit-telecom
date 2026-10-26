@@ -65,9 +65,9 @@ class ActionCoordinator(private val emit: (String, Map<String, Any?>) -> Unit,
         changed()
         if (attached) deliver(entry)
         try {
-            val accepted = withTimeoutOrNull(budget) { entry.result.await() }
-                ?: (entry.delivered == null && acceptUnhandled)
-            check(accepted) { "Conversation action rejected or expired" }
+            val result = withTimeoutOrNull(budget) { entry.result.await() }
+            if (result == null && !(entry.delivered == null && acceptUnhandled)) throw ConversationFailure("deadline_exceeded")
+            if (result == false) throw ConversationFailure("handler_failed")
         } finally {
             entries.remove(id)
             if (!entry.result.isCompleted) entry.delivered?.let { cancelEvent(id, it, "deadline") }

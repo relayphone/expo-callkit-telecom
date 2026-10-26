@@ -1,4 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
+
 import bridge from "./ExpoCallKitTelecomModule";
 import {
   HandlerDispatcher,
@@ -40,12 +41,12 @@ class Runtime {
     );
     const snapshot = bridge.snapshot;
     this.update(snapshot.revision, snapshot.conversations);
-    void this.read().catch((error: unknown) => this.conversations.fail(error));
-    void bridge
+    this.read().catch((error: unknown) => this.conversations.fail(error));
+    bridge
       .getAudioRoutes()
       .then((event) => this.routes.accept(event.revision, event))
       .catch((error: unknown) => this.routes.fail(error));
-    void bridge
+    bridge
       .getPushToken()
       .then((event) => this.token.accept(event.revision, event.token))
       .catch((error: unknown) => this.token.fail(error));
@@ -106,7 +107,9 @@ export function useConversationEvent<Name extends keyof ConversationEventMap>(
   listener: (event: ConversationEventMap[Name]) => void
 ): void {
   const callback = useRef(listener);
-  callback.current = listener;
+  useEffect(() => {
+    callback.current = listener;
+  }, [listener]);
   useEffect(() => {
     if (name === "pushTokenUpdated")
       return runtime.token.subscribe(() =>

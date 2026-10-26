@@ -22,6 +22,7 @@ class ConversationJourneyTest {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val engine = ConversationEngine.get(context)
             engine.policy = JSONObject(mapOf("type" to "handler"))
+            val baselineJobs = engine.jobs.coroutineContext[Job]!!.children.count { it.isActive }
             val seen = mutableListOf<String>()
             engine.emit = { name, body ->
                 if (name == "handlerAction") engine.actions.settle(body["actionID"] as String,
@@ -65,6 +66,7 @@ class ConversationJourneyTest {
                 engine.end(outgoing)
                 assertNull(status(outgoing))
                 seen += "outgoing-ended"
+                withTimeout(5000) { while (engine.jobs.coroutineContext[Job]!!.children.count { it.isActive } > baselineJobs) delay(10) }
             }
             assertEquals(listOf("ringing", "connecting", "connected", "held", "connected",
                 "incoming-ended", "dialing", "connecting", "connected", "outgoing-ended"), seen)
@@ -120,7 +122,8 @@ class ConversationJourneyTest {
             engine.emit = { name, _ -> assertNotEquals("handlerAction", name) }
             try {
                 val outcome = engine.incoming(mapOf("eventId" to "native-event", "serverCallId" to "native-call",
-                    "caller" to mapOf("id" to "native-caller"), "hasVideo" to false))
+                    "caller" to mapOf("id" to "native-caller"), "hasVideo" to false,
+                    "media" to mapOf("provider" to "livekit", "expiresAt" to System.currentTimeMillis() / 1000 + 120)))
                 assertEquals("reported", outcome["status"])
                 val id = outcome["id"] as String
                 val began = android.os.SystemClock.elapsedRealtime()
@@ -128,9 +131,50 @@ class ConversationJourneyTest {
                 assertTrue(android.os.SystemClock.elapsedRealtime() - began < 1500)
                 withTimeout(5000) { while (!order.contains("activate")) delay(10) }
                 assertEquals(listOf("prewarm-muted", "activate"), order)
-                engine.end(id)
+                engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                 withTimeout(3000) { while (!order.contains("close")) delay(10) }
             } finally { NativeMediaRegistry.factories.remove("webrtc") }
+        }
+    }
+
+    @Test fun terminationCancelsAnswerAndFetchFallbackIsNative() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val owner = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            val ready = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val closed = CompletableDeferred<Unit>()
+            var activations = 0
+            var fetched = false
+            NativeMediaRegistry.fetchers["fixture-fetcher"] = {
+                fetched = true
+                mapOf("provider" to "livekit", "expiresAt" to System.currentTimeMillis() / 1000 + 120)
+            }
+            NativeMediaRegistry.factories["webrtc"] = {
+                object : NativeMediaSession {
+                    override suspend fun prewarm(payload: Map<String, Any?>) { assertTrue(fetched); ready.complete(Unit) }
+                    override suspend fun activate() { activations++ }
+                    override suspend fun setMuted(muted: Boolean) {}
+                    override suspend fun close(reason: String) { closed.complete(Unit) }
+                }
+            }
+            try {
+                val policy = JSONObject(mapOf("media" to "webrtc", "fallback" to mapOf("name" to "fixture-fetcher")))
+                val controller = NativeMediaController(context, emptyMap(), policy, owner, {}, {})
+                controller.prewarm()
+                withTimeout(3000) { ready.await() }
+                controller.answered { gate.await() }
+                yield()
+                controller.close("ended")
+                withTimeout(3000) { closed.await() }
+                gate.complete(Unit)
+                delay(50)
+                assertEquals(0, activations)
+            } finally {
+                NativeMediaRegistry.factories.remove("webrtc")
+                NativeMediaRegistry.fetchers.remove("fixture-fetcher")
+                owner.cancel()
+            }
         }
     }
 

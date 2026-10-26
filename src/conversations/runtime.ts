@@ -50,7 +50,12 @@ export class HandlerDispatcher {
   private handler: ConversationHandler | null = null;
   private generation = 0;
   private readonly pending = new Map<string, AbortController>();
-  constructor(private readonly bridge: NativeTransport) {}
+  constructor(
+    private readonly bridge: Pick<
+      NativeTransport,
+      "setHandlerAttached" | "settleAction"
+    >
+  ) {}
   set(handler: ConversationHandler | null): void {
     const generation = ++this.generation;
     const pending = [...this.pending.values()];
@@ -115,7 +120,7 @@ export class HandlerDispatcher {
       this.pending.delete(key);
       this.bridge.settleAction(action.actionID, action.generation, success);
     };
-    void Promise.resolve()
+    Promise.resolve()
       .then(() => {
         if (!controller.signal.aborted) return invoke();
       })

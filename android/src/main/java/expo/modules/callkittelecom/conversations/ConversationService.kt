@@ -4,6 +4,10 @@ import android.app.*
 import android.content.*
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.Bundle
+import android.media.AudioAttributes
+import android.net.Uri
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.app.ServiceCompat
@@ -17,7 +21,13 @@ class ConversationService : Service() {
         private var nextId = 7000
         fun show(context: Context, id: String, state: Map<String, Any?>) {
             val manager = context.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(NotificationChannel("conversations", "Calls", NotificationManager.IMPORTANCE_HIGH))
+            val channel = NotificationChannel("conversations", "Calls", NotificationManager.IMPORTANCE_HIGH)
+            val metadata = context.packageManager.getApplicationInfo(context.packageName, android.content.pm.PackageManager.GET_META_DATA).metaData
+            val ringtone = metadata?.getString("ExpoCallKitTelecomDefaultRingtone") ?: "default"
+            val resource = context.resources.getIdentifier(ringtone.substringBeforeLast('.'), "raw", context.packageName)
+            val sound = if (resource != 0) Uri.parse("android.resource://${context.packageName}/$resource") else Settings.System.DEFAULT_RINGTONE_URI
+            channel.setSound(sound, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build())
+            manager.createNotificationChannel(channel)
             fun action(name: String) = PendingIntent.getBroadcast(context, (id + name).hashCode(),
                 Intent(context, ConversationReceiver::class.java).setAction(name).putExtra("id", id),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -26,6 +36,8 @@ class ConversationService : Service() {
             val builder = NotificationCompat.Builder(context, "conversations")
                 .setSmallIcon(android.R.drawable.sym_call_incoming).setOngoing(true)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setFullScreenIntent(PendingIntent.getActivity(context, id.hashCode(),
+                    Intent(context, ConversationActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE), state["status"] == "ringing")
             builder.setStyle(if (state["status"] == "ringing") NotificationCompat.CallStyle.forIncomingCall(person, action("end"), action("join"))
                 else NotificationCompat.CallStyle.forOngoingCall(person, action("end")))
             val notificationId = notifications[id]?.first ?: nextId++
@@ -57,5 +69,14 @@ class ConversationReceiver : BroadcastReceiver() {
             catch (_: Exception) { /* The native engine owns failure and terminal state. */ }
             finally { pending.finish() }
         }
+    }
+}
+
+/** A notification opens the app's own conversation UI; the library owns no call screen. */
+class ConversationActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        packageManager.getLaunchIntentForPackage(packageName)?.let { startActivity(it) }
+        finish()
     }
 }

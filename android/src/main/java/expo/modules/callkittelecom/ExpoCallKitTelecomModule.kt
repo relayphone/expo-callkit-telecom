@@ -16,6 +16,10 @@ class ExpoCallKitTelecomModule : Module() {
         try { check(engine.bridgeOwner === owner); body() }
         catch (error: Exception) {
             if (error is CancellationException) throw error
+            if (error is expo.modules.callkittelecom.conversations.ConversationFailure) {
+                val details = JSONObject(mapOf("code" to error.code, "message" to "Conversation operation failed", "nativeDomain" to "androidx.core.telecom", "nativeCode" to error.nativeCode)).toString()
+                throw CodedException(error.code, "expo-conversation:$details", null)
+            }
             val code = error.message?.takeIf { it in setOf("invalid_arguments", "unknown_conversation", "unsupported") } ?: "conversation"
             throw CodedException(code, "Conversation operation failed", null)
         }
@@ -39,9 +43,9 @@ class ExpoCallKitTelecomModule : Module() {
         OnDestroy { if (::engine.isInitialized) engine.jobs.launch { if (engine.bridgeOwner === owner) engine.bind(null) { _, _ -> } } }
         Property("snapshot") { engine.snapshot }
         Property("mediaAdapter") { engine.policy.optString("media", "webrtc") }
-        AsyncFunction("getConversations") Coroutine { command { engine.snapshot } }
-        AsyncFunction("getAudioRoutes") Coroutine { command { engine.audioRoutes() } }
-        AsyncFunction("getPushToken") Coroutine { command { engine.pushTokenSnapshot() } }
+        AsyncFunction("getConversations") Coroutine { -> command { engine.snapshot } }
+        AsyncFunction("getAudioRoutes") Coroutine { -> command { engine.audioRoutes() } }
+        AsyncFunction("getPushToken") Coroutine { -> command { engine.pushTokenSnapshot() } }
         AsyncFunction("reportIncomingConversation") Coroutine { payload: Map<String, Any?> -> command { engine.incoming(payload) } }
         AsyncFunction("startConversation") Coroutine { options: Map<String, Any?> -> command { engine.start(options) } }
         AsyncFunction("joinConversation") Coroutine { id: String -> command { engine.join(id) } }
@@ -49,7 +53,7 @@ class ExpoCallKitTelecomModule : Module() {
         AsyncFunction("setHeld") Coroutine { id: String, value: Boolean -> command { engine.hold(id, value) } }
         AsyncFunction("setMuted") Coroutine { id: String, value: Boolean -> command { engine.mute(id, value) } }
         AsyncFunction("playTones") Coroutine { id: String, digits: String -> command { engine.tones(id, digits) } }
-        AsyncFunction("mergeConversations") Coroutine { _: String, _: String -> command { error("unsupported") } }
+        AsyncFunction("mergeConversations") Coroutine { _: String, _: String -> command<Unit> { error("unsupported") } }
         AsyncFunction("reportConversation") Coroutine { id: String, report: Map<String, Any?> -> command { engine.report(id, report) } }
         AsyncFunction("selectAudioRoute") Coroutine { id: String -> command { engine.selectRoute(id) } }
         Function("setHandlerAttached") { attached: Boolean, generation: Int -> engine.jobs.launch { if (engine.bridgeOwner === owner) engine.actions.attach(attached, generation) }; Unit }
