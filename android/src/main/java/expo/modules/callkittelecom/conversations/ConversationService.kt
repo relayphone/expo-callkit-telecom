@@ -21,20 +21,23 @@ class ConversationService : Service() {
         private var nextId = 7000
         fun show(context: Context, id: String, state: Map<String, Any?>) {
             val manager = context.getSystemService(NotificationManager::class.java)
-            val channel = NotificationChannel("conversations", "Calls", NotificationManager.IMPORTANCE_HIGH)
             val metadata = context.packageManager.getApplicationInfo(context.packageName, android.content.pm.PackageManager.GET_META_DATA).metaData
             val ringtone = metadata?.getString("ExpoCallKitTelecomDefaultRingtone") ?: "default"
             val resource = context.resources.getIdentifier(ringtone.substringBeforeLast('.'), "raw", context.packageName)
             val sound = if (resource != 0) Uri.parse("android.resource://${context.packageName}/$resource") else Settings.System.DEFAULT_RINGTONE_URI
-            channel.setSound(sound, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build())
+            val ringing = state["status"] == "ringing"
+            val channelId = if (ringing) "conversations-incoming-v2-${ringtone.hashCode().toUInt().toString(16)}" else "conversations-ongoing-v2"
+            val channel = NotificationChannel(channelId, if (ringing) "Incoming calls" else "Ongoing calls",
+                if (ringing) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_LOW)
+            channel.setSound(if (ringing) sound else null, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build())
             manager.createNotificationChannel(channel)
             fun action(name: String) = PendingIntent.getBroadcast(context, (id + name).hashCode(),
                 Intent(context, ConversationReceiver::class.java).setAction(name).putExtra("id", id),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val person = Person.Builder().setName(((state["members"] as? List<*>)?.firstOrNull() as? Map<*, *>)
                 ?.get("displayName")?.toString() ?: "Caller").setImportant(true).build()
-            val builder = NotificationCompat.Builder(context, "conversations")
-                .setSmallIcon(android.R.drawable.sym_call_incoming).setOngoing(true)
+            val builder = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.sym_call_incoming).setOngoing(true).setOnlyAlertOnce(true)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setFullScreenIntent(PendingIntent.getActivity(context, id.hashCode(),
                     Intent(context, ConversationActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE), state["status"] == "ringing")

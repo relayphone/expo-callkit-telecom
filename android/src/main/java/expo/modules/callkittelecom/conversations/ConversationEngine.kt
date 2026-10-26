@@ -55,6 +55,7 @@ class ConversationEngine(val context: Context) {
     }
     private val calls = linkedMapOf<String, Call>()
     private val recent = mutableMapOf<String, Pair<Long, String>>()
+    internal var answerTimeoutMillis = (metadata?.getInt("ExpoCallKitTelecomFulfillAnswerCallTimeout", 30) ?: 30).coerceAtLeast(1).toLong() * 1000
     private var revision = 0L
     @Volatile var snapshot: Map<String, Any?> = mapOf("revision" to 0, "conversations" to emptyList<Any>())
         private set
@@ -203,6 +204,11 @@ class ConversationEngine(val context: Context) {
     private fun joined(id: String) {
         val current = call(id)
         current.state["status"] = "connecting"
+        current.timeout?.cancel()
+        current.timeout = jobs.launch {
+            delay(answerTimeoutMillis)
+            if (calls[id] === current && current.state["connectedAt"] == null) terminateLater(id, "failed")
+        }
         ConversationService.show(context, id, current.state)
         current.media?.answered { awaitAudio(id, current) }
         refreshRoutes()

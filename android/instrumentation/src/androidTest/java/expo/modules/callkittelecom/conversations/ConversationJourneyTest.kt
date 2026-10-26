@@ -205,4 +205,28 @@ class ConversationJourneyTest {
         }
     }
 
+    @Test fun joinedCallWithoutConnectedReportExpires() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val engine = ConversationEngine.get(InstrumentationRegistry.getInstrumentation().targetContext)
+            engine.policy = JSONObject(mapOf("type" to "handler"))
+            engine.emit = { name, body ->
+                if (name == "handlerAction") engine.actions.settle(body["actionID"] as String,
+                    body["generation"] as Int, true, engine.actions.epoch)
+            }
+            engine.actions.attach(true, 1, engine.actions.epoch)
+            val previous = engine.answerTimeoutMillis
+            try {
+                engine.answerTimeoutMillis = 200
+                val outcome = engine.incoming(mapOf("eventId" to "timeout-event", "serverCallId" to "timeout-call",
+                    "caller" to mapOf("id" to "caller")))
+                assertEquals("reported", outcome["status"])
+                val id = outcome["id"] as String
+                engine.join(id)
+                withTimeout(4000) {
+                    while ((engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id }) delay(10)
+                }
+            } finally { engine.answerTimeoutMillis = previous }
+        }
+    }
+
 }
