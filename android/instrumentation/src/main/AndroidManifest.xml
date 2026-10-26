@@ -5,9 +5,17 @@
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
   <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.READ_CONTACTS" />
+  <uses-permission android:name="android.permission.WRITE_CONTACTS" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
   <application android:label="Conversations tests" android:networkSecurityConfig="@xml/media_network_security">
+    <activity android:name="expo.modules.callkittelecom.conversations.DndBootstrapActivity" android:exported="true"
+      android:permission="android.permission.DUMP" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+    <service android:name="expo.modules.callkittelecom.conversations.DndObservationService"
+      android:exported="true" android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
+    </service>
     <activity android:name="expo.modules.callkittelecom.conversations.ConversationActivity" android:exported="false" />
     <service android:name="expo.modules.callkittelecom.conversations.ConversationService" android:exported="false" android:foregroundServiceType="phoneCall" />
     <receiver android:name="expo.modules.callkittelecom.conversations.ConversationReceiver" android:exported="false" />

@@ -1,0 +1,12 @@
+plugins { id 'com.android.application' }
+android {
+  namespace 'expo.modules.callkittelecom.dndpolicy'
+  compileSdk 35
+  defaultConfig {
+    applicationId 'expo.modules.callkittelecom.dndpolicy'
+    minSdk 26
+    // Android15 restricts global policy writes by target35 apps. This CI-only
+    // helper uses the supported target34 API; the tested application targets35.
+    targetSdk 34
+  }
+}

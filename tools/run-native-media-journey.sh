@@ -7,7 +7,7 @@ collect_media_results() {
   done
 }
 trap collect_media_results EXIT
-gradle -p android/instrumentation connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --stacktrace
+gradle -p android/instrumentation :connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --stacktrace
 adb exec-out run-as expo.modules.callkittelecom.instrumentation cat files/journey-results.json > android/instrumentation/build/journey-results.json
 python3 tools/check-android-journey.py android/instrumentation/build/journey-results.json
 adb exec-out run-as expo.modules.callkittelecom.instrumentation cat files/native-media-results.json > android/instrumentation/build/native-media-results.json
