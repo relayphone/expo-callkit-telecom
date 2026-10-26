@@ -6,6 +6,10 @@ plugins {
 android {
   namespace 'expo.modules.callkittelecom.instrumentation'
   compileSdk 35
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
   defaultConfig {
     applicationId 'expo.modules.callkittelecom.instrumentation'
     minSdk 26
@@ -17,6 +21,8 @@ android {
     androidTest.assets.srcDirs = ['../src/androidTest/assets']
   }
 }
+
+kotlin { jvmToolchain(17) }
 
 dependencies {
   androidTestImplementation 'androidx.test:runner:1.6.2'
