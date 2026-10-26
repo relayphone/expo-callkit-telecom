@@ -128,7 +128,13 @@ const eventOnly: JoinPolicy = {
 void eventOnly;
 
 const nativeHttpPolicy: JoinPolicy = {
-  type: "native", media: "livekit", credentials: "fromPush",
-  fallback: { type: "http", baseUrl: "https://api.example.invalid", authentication: "device-auth" },
+  type: "native",
+  media: "livekit",
+  credentials: "fromPush",
+  fallback: {
+    type: "http",
+    baseUrl: "https://api.example.invalid",
+    authentication: "device-auth",
+  },
 };
 void nativeHttpPolicy;

@@ -46,7 +46,6 @@ class NativeMediaJourneyTest {
             output.delete()
             var warmRequests = 0
             var joinHandlerCalls = 0
-            var declineSignalingObserved = false
             NativeMediaAuthenticationProviders.providers["fixture"] = {
                 NativeMediaAuthentication(settings.getString("authentication"), "fixture-device")
             }
@@ -144,8 +143,7 @@ class NativeMediaJourneyTest {
                 stage(declinedServer, NativeMediaStage.PREJOINED)
                 engine.end(declined)
                 absent(declined); stage(declinedServer, NativeMediaStage.CLOSED)
-                val declineState = noClient(declinedServer)
-                declineSignalingObserved = declineState.getJSONArray("states").toString().contains("declined")
+                noClient(declinedServer)
                 assertFalse(events(declinedServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
                 owned -= declined; cleanupResults += "declined"
 
@@ -172,7 +170,7 @@ class NativeMediaJourneyTest {
                 assertEquals(0, joinHandlerCalls)
                 output.writeText(JSONObject(mapOf("passed" to true, "metric" to "native-answer-request-to-first-remote-pcm",
                     "pcmThreshold" to 128, "budgetMs" to 3000, "targetMs" to 300, "samples" to results,
-                    "cleanup" to cleanupResults, "declineSignalingObserved" to declineSignalingObserved,
+                    "cleanup" to cleanupResults,
                     "jsJoinHandlerCalls" to joinHandlerCalls, "jsWarmRequests" to warmRequests)).toString())
             } } catch (error: Throwable) {
                 output.writeText(JSONObject(mapOf("passed" to false, "stage" to "native-livekit-journey", "samples" to results,
