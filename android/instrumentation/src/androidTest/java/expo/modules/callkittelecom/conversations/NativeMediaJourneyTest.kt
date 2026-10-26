@@ -121,15 +121,15 @@ class NativeMediaJourneyTest {
                         val holdRequested = android.os.SystemClock.elapsedRealtimeNanos()
                         engine.hold(id, true)
                         assertTrue(stage(serverId, NativeMediaStage.CAPTURE_STOPPED).elapsedRealtimeNanos >= holdRequested)
-                        assertTrue(stage(serverId, NativeMediaStage.REMOTE_UNSUBSCRIBED).elapsedRealtimeNanos >= holdRequested)
+                        assertTrue(stage(serverId, NativeMediaStage.PLAYBACK_STOPPED).elapsedRealtimeNanos >= holdRequested)
                         val starts = events(serverId).count { it.stage == NativeMediaStage.CAPTURE_STARTED }
-                        val subscriptions = events(serverId).count { it.stage == NativeMediaStage.REMOTE_SUBSCRIBED }
+                        val playbackStarts = events(serverId).count { it.stage == NativeMediaStage.PLAYBACK_STARTED }
                         delay(100)
                         assertEquals(starts, events(serverId).count { it.stage == NativeMediaStage.CAPTURE_STARTED })
-                        assertEquals(subscriptions, events(serverId).count { it.stage == NativeMediaStage.REMOTE_SUBSCRIBED })
+                        assertEquals(playbackStarts, events(serverId).count { it.stage == NativeMediaStage.PLAYBACK_STARTED })
                         engine.hold(id, false)
                         val resumed = stage(serverId, NativeMediaStage.AUDIO_AUTHORIZED, 2)
-                        for (kind in listOf(NativeMediaStage.CAPTURE_STARTED, NativeMediaStage.REMOTE_SUBSCRIBED, NativeMediaStage.FIRST_AUDIO))
+                        for (kind in listOf(NativeMediaStage.CAPTURE_STARTED, NativeMediaStage.PLAYBACK_STARTED, NativeMediaStage.FIRST_AUDIO))
                             assertTrue(stage(serverId, kind, 2).elapsedRealtimeNanos >= resumed.elapsedRealtimeNanos)
                         cleanupResults += "hold-capture-stopped-resumed"
                     }

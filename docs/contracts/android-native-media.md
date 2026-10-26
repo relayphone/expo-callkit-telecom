@@ -49,7 +49,7 @@ prejoin, JS warm request, answer, audio authority and first PCM timestamps. Its
 actual timing. The native harness records the JS warm request; the compiled Expo
 service invokes `ReactHost.start()`.
 
-The journey also requires capture to stop on hold and restart after resume, and
+The journey also requires capture/playback to stop on hold and restart after resume, and
 room departure on decline/timeout. Missing credentials (404/410) spend one retry
 on answer and terminate without capture. Generated fixture credentials and the
 test CA stay in the CI workspace; only sanitized result JSON and JUnit are uploaded.
