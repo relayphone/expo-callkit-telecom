@@ -6,6 +6,7 @@ import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.json.JSONObject
@@ -84,7 +85,7 @@ class NativeHttpCredentialsTest {
         server.useHttps(tls.sslSocketFactory(), false); server.start()
         NativeMediaAuthenticationProviders.providers["cancel-device"] = { NativeMediaAuthentication("fixture", "device") }
         try {
-            server.enqueue(MockResponse().setBody("{}").setBodyDelay(5, TimeUnit.SECONDS))
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
             val client = OkHttpClient.Builder().sslSocketFactory(trust.sslSocketFactory(), trust.trustManager).build()
             val work = async { NativeHttpCredentials(client).fetch(mapOf("serverCallId" to "call", "eventId" to "event"),
                 JSONObject(mapOf("type" to "http", "baseUrl" to server.url("/").toString(), "authentication" to "cancel-device"))) }

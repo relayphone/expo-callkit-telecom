@@ -49,13 +49,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: |
-            trap 'adb exec-out run-as expo.modules.callkittelecom.instrumentation cat files/native-media-results.json > android/instrumentation/build/native-media-results.json || true' EXIT
-            gradle -p android/instrumentation connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --stacktrace
-            adb exec-out run-as expo.modules.callkittelecom.instrumentation cat files/journey-results.json > android/instrumentation/build/journey-results.json
-            python3 tools/check-android-journey.py android/instrumentation/build/journey-results.json
-            adb exec-out run-as expo.modules.callkittelecom.instrumentation cat files/native-media-results.json > android/instrumentation/build/native-media-results.json
-            python3 tools/check-native-media.py android/instrumentation/build/native-media-results.json
+          script: bash tools/run-native-media-journey.sh
       - name: Stop native media fixture
         if: always()
         run: |
@@ -66,7 +60,7 @@ jobs:
         with:
           name: android-instrumentation-results
           path: |
-            android/instrumentation/build/outputs/androidTest-results
+            android/instrumentation/build/outputs/androidTest-results/**/*.xml
             android/instrumentation/build/journey-results.json
             android/instrumentation/build/native-media-results.json
           if-no-files-found: error

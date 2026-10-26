@@ -13,7 +13,7 @@ from pathlib import Path
 directory=Path(sys.argv[1])
 values={"key":"ci-key","secret":secrets.token_hex(32),"deviceAuth":secrets.token_hex(24)}
 (directory/'settings.json').write_text(json.dumps(values))
-(directory/'livekit.yaml').write_text('port: 7880\nrtc:\n  node_ip: 10.0.2.2\n  use_external_ip: false\n  tcp_port: 7881\n  udp_port: 7882\nkeys:\n  ci-key: '+values['secret']+'\nlogging:\n  level: error\n')
+(directory/'livekit.yaml').write_text('port: 7880\nrtc:\n  node_ip: 10.0.2.2\n  use_external_ip: false\n  enable_loopback_candidate: true\n  tcp_port: 7881\n  udp_port: 7882\nkeys:\n  ci-key: '+values['secret']+'\nlogging:\n  level: error\n')
 Path('android/instrumentation/src/androidTest/assets/media-ci.json').write_text(json.dumps({"baseUrl":"https://10.0.2.2:9443","authentication":values['deviceAuth']}))
 PY
 chmod 600 "$fixture_dir"/*.key "$fixture_dir/settings.json" "$fixture_dir/livekit.yaml"
