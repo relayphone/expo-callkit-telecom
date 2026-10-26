@@ -22,9 +22,11 @@ class ConversationEngine(val context: Context) {
     private val telecom = CallsManager(context).apply {
         registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE or CallsManager.CAPABILITY_SUPPORTS_VIDEO_CALLING)
     }
+    var policy = org.json.JSONObject()
     private class Call(val state: MutableMap<String, Any?>) {
         val ready = CompletableDeferred<CallControlScope>()
         var job: Job? = null
+        var media: NativeMediaController? = null
         var endpoints: List<CallEndpointCompat> = emptyList()
     }
     private val calls = linkedMapOf<String, Call>()
@@ -86,7 +88,7 @@ class ConversationEngine(val context: Context) {
         val incoming = payload != null
         val call = Call(linkedMapOf("id" to id, "direction" to if (incoming) "incoming" else "outgoing",
             "status" to if (incoming) "ringing" else "dialing", "members" to listOf(member),
-            "isMuted" to false, "isVideo" to video, "payload" to payload,
+            "isMuted" to false, "isVideo" to video, "payload" to payload?.filterKeys { it != "media" },
             "capabilities" to mapOf("hold" to true, "merge" to false, "tones" to true, "video" to true)))
         calls[id] = call
         publish()
@@ -116,12 +118,19 @@ class ConversationEngine(val context: Context) {
                 if (calls[id] === call) terminal(id, call.state["endReason"] as? String ?: "failed")
             }
         }
-        withTimeout(6000) { call.ready.await() }
+        try { withTimeout(6000) { call.ready.await() } }
+        catch (error: Exception) { call.job?.cancel(); throw error }
+        if (incoming && policy.optString("type", "native") == "native") {
+            call.media = NativeMediaController(context, payload!!, policy, jobs) {
+                jobs.launch { if (calls.containsKey(id)) finish(id, "failed") }
+            }.also { it.prewarm() }
+        }
     }
 
     private suspend fun action(id: String, kind: String, origin: String, args: Map<String, Any?> = emptyMap()) {
         val current = call(id)
-        actions.perform(current.state.toMap(), kind, origin, args)
+        if (kind != "join" || policy.optString("type", "native") == "handler")
+            actions.perform(current.state.toMap(), kind, origin, args)
         check(calls[id] === current) { "unknown_conversation" }
     }
     suspend fun join(id: String) {
@@ -129,7 +138,14 @@ class ConversationEngine(val context: Context) {
         checked(control(id).answer(if (call(id).state["isVideo"] == true) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL))
         joined(id)
     }
-    private fun joined(id: String) { call(id).state["status"] = "connecting"; publish() }
+    private fun joined(id: String) {
+        val current = call(id)
+        current.state["status"] = "connecting"
+        current.media?.answered {
+            withTimeout(1500) { while (audio.mode != AudioManager.MODE_IN_COMMUNICATION) delay(10) }
+        }
+        publish()
+    }
     suspend fun end(id: String) { action(id, "end", "app"); finish(id, "local") }
     suspend fun hold(id: String, held: Boolean, origin: String = "app") {
         val current = call(id)
@@ -143,6 +159,7 @@ class ConversationEngine(val context: Context) {
         val current = call(id)
         if (current.state["isMuted"] == muted) return
         action(id, "mute", origin, mapOf("muted" to muted))
+        current.media?.mute(muted)
         audio.isMicrophoneMute = muted
         current.state["isMuted"] = muted
         publish()
@@ -175,6 +192,7 @@ class ConversationEngine(val context: Context) {
         val current = calls[id] ?: return
         current.state["status"] = "ended"
         current.state["ended"] = mapOf("at" to Instant.now().toString(), "reason" to reason)
+        current.media?.close(if (reason == "local" && current.state["connectedAt"] == null) "declined" else "ended")
         actions.cancel(id)
         publish()
         calls.remove(id)

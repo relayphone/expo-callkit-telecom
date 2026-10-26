@@ -21,6 +21,7 @@ class ConversationJourneyTest {
         withContext(Dispatchers.Main) {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val engine = ConversationEngine.get(context)
+            engine.policy = JSONObject(mapOf("type" to "handler"))
             val seen = mutableListOf<String>()
             engine.emit = { name, body ->
                 if (name == "handlerAction") engine.actions.settle(body["actionID"] as String,
