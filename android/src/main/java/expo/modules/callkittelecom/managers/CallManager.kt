@@ -1,5 +1,6 @@
 package expo.modules.callkittelecom.managers
 
+import expo.modules.callkittelecom.conversations.CallIdentity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -324,7 +325,7 @@ class CallManager private constructor() {
             throw IllegalStateException("A call session already exists")
         }
 
-        val id = UUID.randomUUID()
+        val id = CallIdentity.forServerCallId(event.serverCallId)
         CallKitTelecomLog.d(TAG) { "Reporting incoming call - id: $id" }
 
         val caller =
