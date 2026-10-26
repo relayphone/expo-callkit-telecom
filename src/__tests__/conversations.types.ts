@@ -9,6 +9,8 @@ import type {
   IncomingConversationOutcome,
   PendingAction,
   NativeTransport,
+  JoinPolicy,
+  IncomingCallPayload,
 } from "../conversations";
 
 declare const api: ConversationsApi;
@@ -70,7 +72,7 @@ const handler: ConversationHandler = {
 };
 api.setConversationHandler(handler);
 api.setConversationHandler(null);
-// @ts-expect-error The three signaling callbacks are required when a handler attaches.
+// @ts-expect-error Attaching a handler still requires start/end signaling callbacks.
 api.setConversationHandler({ mute() {} });
 
 declare const native: NativeTransport;
@@ -81,3 +83,46 @@ native.addListener("conversationsChanged", ({ revision, conversations }) => {
 // @ts-expect-error Versioned change events cannot omit the revision.
 const invalidSnapshot: ConversationsSnapshot = { conversations: [] };
 void invalidSnapshot;
+
+const nativePolicy: JoinPolicy = {
+  type: "native",
+  media: "livekit",
+  credentials: "fromPush",
+  prewarm: true,
+  fallback: { type: "nativeFetcher", name: "authenticated-device-fetcher" },
+};
+const handlerPolicy: JoinPolicy = {
+  type: "handler",
+  coldLaunchJoinBudgetMs: 1500,
+};
+void nativePolicy;
+void handlerPolicy;
+const invitation: IncomingCallPayload = {
+  eventId: "event",
+  serverCallId: "call",
+  caller: { id: "owner" },
+  hasVideo: false,
+  media: {
+    provider: "livekit",
+    url: "wss://media.invalid",
+    room: "room",
+    identity: "owner-device",
+    token: "test-fixture-not-a-token",
+    expiresAt: 1798000000,
+  },
+};
+void invitation;
+const jsFetcher: JoinPolicy = {
+  type: "native",
+  media: "livekit",
+  // @ts-expect-error Native credentials cannot depend on a JavaScript callback.
+  credentials: async () => invitation.media,
+};
+void jsFetcher;
+const eventOnly: JoinPolicy = {
+  type: "native",
+  // @ts-expect-error Event-only media has no native engine to answer with.
+  media: "none",
+  credentials: "fromPush",
+};
+void eventOnly;
