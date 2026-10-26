@@ -6,6 +6,7 @@ import sys
 directory = Path(sys.argv[1])
 expected = {"off-any": True, "on-any": False, "priority-any": True, "priority-none": False,
             "priority-contacts-unknown": False, "priority-contacts-contact": True,
+            "priority-contacts-opaque": False,
             "priority-starred-contact": False, "priority-starred-starred": True,
             "priority-repeat-first": False, "priority-repeat-second": True, "off-restored": True}
 for name, permitted in expected.items():

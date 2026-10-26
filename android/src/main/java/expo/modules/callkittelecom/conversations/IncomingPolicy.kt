@@ -2,7 +2,6 @@ package expo.modules.callkittelecom.conversations
 
 import android.app.NotificationManager
 import android.content.Context
-import android.net.Uri
 import android.os.Build
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlinx.coroutines.Dispatchers
@@ -66,8 +65,7 @@ internal class IncomingPolicy(private val context: Context) {
         if (manager.getNotificationChannel(ConversationService.incomingChannelId(context))?.canBypassDnd() == true)
             return@withContext null
         val caller = payload["caller"] as? Map<String, Any?> ?: return@withContext null
-        val uri = (caller["phoneNumber"] as? String)?.let { Uri.fromParts("tel", it, null) }
-            ?: (caller["email"] as? String)?.let { Uri.fromParts("mailto", it, null) } ?: return@withContext null
+        val uri = callerAddress(context, caller) ?: return@withContext null
         // Public API requires READ_CONTACTS or notification-listener access. When unavailable,
         // leave presentation to Android rather than inventing a filtered outcome.
         val permitted = try { manager.matchesCallFilter(uri) } catch (_: SecurityException) { return@withContext null }

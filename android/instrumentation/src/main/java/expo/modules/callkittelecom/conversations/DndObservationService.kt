@@ -5,6 +5,9 @@ import android.app.Person
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import java.util.concurrent.ConcurrentHashMap
+import android.app.Activity
+import android.content.ComponentName
+import android.os.Bundle
 
 /** Platform ranking evidence from the test application, separate from library policy decisions. */
 class DndObservationService : NotificationListenerService() {
@@ -27,5 +30,14 @@ class DndObservationService : NotificationListenerService() {
         if (!map.getRanking(value.key, ranking)) return
         val channel = getSystemService(android.app.NotificationManager::class.java).getNotificationChannel(value.notification.channelId)
         observations[name] = Observation(ranking.matchesInterruptionFilter(), channel?.sound != null, value.notification.category)
+    }
+}
+
+/** Keep the listener process alive while separate --no-restart instrumentation cases attach. */
+class DndBootstrapActivity : Activity() {
+    override fun onCreate(state: Bundle?) {
+        super.onCreate(state)
+        NotificationListenerService.requestRebind(ComponentName(this, DndObservationService::class.java))
+        finish()
     }
 }

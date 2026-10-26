@@ -16,6 +16,8 @@ On API33+, priority mode uses `NotificationManager.matchesCallFilter` with the
 caller's real `tel:`/`mailto:` URI. The notification also carries that Person URI,
 so Android can apply contact/starred/repeat-caller policy. A user-enabled bypass
 channel remains under Android's presentation policy.
+An id-only VoIP caller uses a stable app-scoped URI, has unknown contact affinity,
+and participates in Android's non-telephone repeat-caller history.
 
 Priority caller matching requires existing READ_CONTACTS permission or notification
 listener access. The library requests neither permission nor listener access.

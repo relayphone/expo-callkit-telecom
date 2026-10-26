@@ -40,8 +40,7 @@ class ConversationService : Service() {
                 Intent(context, ConversationReceiver::class.java).setAction(name).putExtra("id", id),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val member = (state["members"] as? List<*>)?.firstOrNull() as? Map<*, *>
-            val callerUri = (member?.get("phoneNumber") as? String)?.let { Uri.fromParts("tel", it, null).toString() }
-                ?: (member?.get("email") as? String)?.let { Uri.fromParts("mailto", it, null).toString() }
+            val callerUri = callerAddress(context, member)?.toString()
             val person = Person.Builder().setUri(callerUri).setName(member
                 ?.get("displayName")?.toString() ?: "Caller").setImportant(true).build()
             val builder = NotificationCompat.Builder(context, channelId)
