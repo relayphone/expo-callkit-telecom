@@ -50,7 +50,8 @@ internal class NativeMediaController(private val context: Context, private val p
         if (session == null) {
             val adapter = policy.optString("media", "webrtc")
             session = NativeMediaRegistry.factories[adapter]?.invoke(context)
-                ?: if (adapter == "livekit") LiveKitNativeSession(context) else null
+                ?: if (adapter == "livekit") LiveKitNativeSession(context,
+                    payload["serverCallId"] as? String ?: error("Invalid media invitation")) else null
         }
         session?.setFailureListener {
             operations.launch(Dispatchers.Main) { if (!closed) failed() }

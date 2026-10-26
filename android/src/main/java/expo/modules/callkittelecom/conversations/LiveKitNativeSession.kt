@@ -19,13 +19,13 @@ import livekit.org.webrtc.audio.JavaAudioDeviceModule
 import org.json.JSONObject
 
 /** Telecom alone authorizes audio. A pre-join opens no capture, playback, focus or audio mode. */
-internal class LiveKitNativeSession(private val context: Context) : NativeMediaSession {
+internal class LiveKitNativeSession(private val context: Context, invitationId: String) : NativeMediaSession {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     @Volatile private var room: Room? = null
     override val isPrepared: Boolean get() = room != null
     private var microphone: LocalAudioTrack? = null
     private var microphonePublished = false
-    private var serverId = ""
+    private var serverId = invitationId
     @Volatile private var active = false
     @Volatile private var held = false
     @Volatile private var muted = false
