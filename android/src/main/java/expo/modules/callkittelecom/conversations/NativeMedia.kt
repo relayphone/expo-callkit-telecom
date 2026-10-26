@@ -50,7 +50,11 @@ internal class NativeMediaController(private val context: Context, private val p
         if (session == null) {
             val adapter = policy.optString("media", "webrtc")
             session = NativeMediaRegistry.factories[adapter]?.invoke(context)
-                ?: if (adapter == "livekit") LiveKitNativeSession(context) else null
+                ?: when (adapter) {
+                    "livekit" -> LiveKitNativeSession(context)
+                    "webrtc" -> WebRTCNativeSession(context)
+                    else -> null
+                }
         }
         session?.setFailureListener {
             operations.launch(Dispatchers.Main) { if (!closed) failed() }
@@ -58,10 +62,11 @@ internal class NativeMediaController(private val context: Context, private val p
         currentCoroutineContext().ensureActive(); check(!closed)
         val pushed = payload["media"] as? Map<String, Any?>
         val fresh = (pushed?.get("expiresAt") as? Number)?.toLong()?.let { it > System.currentTimeMillis() / 1000 } == true
+        val compatiblePush = policy.optString("media", "webrtc") == "livekit" && pushed?.get("provider") == "livekit"
         // WebRTC sessions own native negotiation; only LiveKit has a push credential wire shape.
-        val nativeNegotiation = policy.optString("media", "webrtc") == "webrtc" &&
+        val nativeNegotiation = policy.optString("media", "webrtc") == "webrtc" && NativeMediaRegistry.factories.containsKey("webrtc") &&
             policy.opt("credentials") !is JSONObject && policy.opt("fallback") !is JSONObject
-        val resolved = if (nativeNegotiation || (policy.opt("credentials") !is JSONObject && fresh)) payload else {
+        val resolved = if (nativeNegotiation || (policy.opt("credentials") !is JSONObject && fresh && compatiblePush)) payload else {
             val source = policy.optJSONObject("credentials") ?: policy.optJSONObject("fallback")
             val credentials = withTimeout(3000) {
                 if (source?.optString("type") == "http") NativeHttpCredentials().fetch(payload, source)

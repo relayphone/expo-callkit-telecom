@@ -52,11 +52,27 @@ class NativeHttpCredentialsTest {
                 val failure = runCatching { fetcher.fetch(invitation, policy) }.exceptionOrNull()
                 assertTrue(failure is MediaCredentialsUnavailable)
                 assertEquals(code, (failure as MediaCredentialsUnavailable).status)
+                assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
             }
             val requestsBefore = server.requestCount
             val insecure = JSONObject(policy.toString()).put("baseUrl", "http://localhost/")
             assertTrue(runCatching { fetcher.fetch(invitation, insecure) }.isFailure)
             assertEquals(requestsBefore, server.requestCount)
+            server.enqueue(MockResponse().setBody(JSONObject(mapOf("provider" to "webrtc", "url" to server.url("/sdp").toString(),
+                "token" to "fixture", "expiresAt" to System.currentTimeMillis()/1000 + 120,
+                "iceServers" to listOf(mapOf("urls" to listOf("turns:relay.invalid:443"), "username" to "device", "credential" to "fixture")))).toString()))
+            val webRTC = fetcher.fetch(invitation, policy)
+            val ice = (webRTC["iceServers"] as List<*>).single() as Map<*, *>
+            assertEquals(listOf("turns:relay.invalid:443"), ice["urls"])
+            server.takeRequest(2, TimeUnit.SECONDS)
+            server.enqueue(MockResponse().setBody(JSONObject(mapOf("type" to "answer", "sdp" to "v=0\r\n")).toString()))
+            val answer = fetcher.post(server.url("/sdp").toString(), "fixture", mapOf("type" to "offer", "sdp" to "v=0\r\n"))
+            assertEquals("v=0\r\n", answer["sdp"])
+            val offer = server.takeRequest(2, TimeUnit.SECONDS)!!
+            assertEquals("v=0\r\n", JSONObject(offer.body.readUtf8()).getString("sdp"))
+            val beforeOversized = server.requestCount
+            assertTrue(runCatching { fetcher.post(server.url("/sdp").toString(), "fixture", mapOf("sdp" to "x".repeat(65_537))) }.isFailure)
+            assertEquals(beforeOversized, server.requestCount)
         } finally { NativeMediaAuthenticationProviders.providers.remove("fixture-device"); server.shutdown() }
     }
 

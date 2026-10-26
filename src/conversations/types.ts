@@ -39,6 +39,24 @@ export interface LiveKitMediaCredentials {
   readonly expiresAt: number;
 }
 
+/** Native fetcher response for the built-in WebRTC SDP exchange. Never put it in snapshots. @category Configuration */
+export interface WebRTCMediaCredentials {
+  readonly provider: "webrtc";
+  /** HTTPS endpoint accepting an offer and returning an answer, both with gathered ICE candidates. */
+  readonly url: string;
+  /** Short-lived, call-scoped Bearer token for the SDP/state endpoint. */
+  readonly token: string;
+  readonly expiresAt: number;
+  readonly iceServers?: readonly {
+    readonly urls: readonly string[];
+    readonly username?: string;
+    readonly credential?: string;
+  }[];
+}
+
+/** Native credential fetcher result; the push media wire object remains LiveKit-only. @category Configuration */
+export type NativeMediaCredentials = LiveKitMediaCredentials | WebRTCMediaCredentials;
+
 /** Incoming invitation from push or foreground transport. @category Reports */
 export interface IncomingCallPayload {
   readonly eventId: string;
@@ -252,7 +270,7 @@ export type MediaAdapter = "webrtc" | "livekit" | "none";
 /**
  * Reference to an app-registered native fetcher, available without JavaScript.
  * It POSTs media-credentials with eventId/deviceId and native-held device authentication.
- * Fetchers return LiveKitMediaCredentials; 404/410 abandons this call's pre-warm.
+ * Fetchers return NativeMediaCredentials; 404/410 abandons this call's pre-warm.
  * A JavaScript callback is deliberately not a credentials source.
  * @category Configuration
  */

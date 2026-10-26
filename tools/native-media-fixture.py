@@ -9,9 +9,13 @@ import ssl
 import struct
 import sys
 import time
+from fractions import Fraction
 
 from aiohttp import ClientSession, WSMsgType, web
 from livekit import api, rtc
+from aiortc import AudioStreamTrack, RTCConfiguration, RTCPeerConnection, RTCSessionDescription
+from aiortc.contrib.media import MediaBlackhole
+from av import AudioFrame
 
 directory = Path(sys.argv[1])
 settings = json.loads((directory / "settings.json").read_text())
@@ -19,6 +23,27 @@ bots = {}
 fetches = {}
 states = {}
 lock = asyncio.Lock()
+raw_peers = {}
+closed_negotiations = set()
+
+
+class ToneTrack(AudioStreamTrack):
+    def __init__(self):
+        super().__init__()
+        self.index = 0
+        self.started = None
+
+    async def recv(self):
+        if self.started is None:
+            self.started = asyncio.get_running_loop().time()
+        await asyncio.sleep(max(0, self.started + self.index / 48000 - asyncio.get_running_loop().time()))
+        frame = AudioFrame(format="s16", layout="mono", samples=960)
+        frame.planes[0].update(struct.pack("<960h", *[int(6000 * math.sin(2 * math.pi * 440 * (self.index + i) / 48000)) for i in range(960)]))
+        frame.sample_rate = 48000
+        frame.pts = self.index
+        frame.time_base = Fraction(1, 48000)
+        self.index += 960
+        return frame
 
 
 def token(room, identity):
@@ -55,6 +80,9 @@ async def publish(room_name):
 
 
 async def credentials(server_id):
+    if server_id.startswith("rtc-"):
+        return {"provider": "webrtc", "url": "https://10.0.2.2:9443/fixture/webrtc/" + server_id,
+                "token": settings["deviceAuth"], "expiresAt": int(time.time()) + 120, "iceServers": []}
     room_name = "native-ci-" + server_id
     async with lock:
         if room_name not in bots:
@@ -102,8 +130,55 @@ async def observations(request):
     client_count = 0
     if room_name in bots:
         client_count = sum(p.identity.startswith("device-") for p in bots[room_name][0].remote_participants.values())
+    if server_id in raw_peers:
+        client_count = int(raw_peers[server_id][0].connectionState == "connected")
     return web.json_response({"clients": client_count, "states": states.get(room_name, []),
                               "fetches": fetches.get(server_id, 0)})
+
+
+async def raw_signaling(request):
+    if not authenticated(request):
+        return web.Response(status=401)
+    server_id = request.match_info["server_id"]
+    body = await request.json()
+    if body.get("serverCallId") != server_id or body.get("eventId") != "event-" + server_id:
+        return web.Response(status=400)
+    negotiation = body.get("negotiationId")
+    if not isinstance(negotiation, str) or not negotiation:
+        return web.Response(status=400)
+    if body.get("type") == "offer":
+        peer = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+        blackhole = MediaBlackhole()
+
+        @peer.on("track")
+        def track(track):
+            blackhole.addTrack(track)
+
+        await peer.setRemoteDescription(RTCSessionDescription(sdp=body["sdp"], type="offer"))
+        peer.addTrack(ToneTrack())
+        await blackhole.start()
+        await peer.setLocalDescription(await peer.createAnswer())
+        if negotiation in closed_negotiations:
+            await blackhole.stop()
+            await peer.close()
+            return web.Response(status=410)
+        if server_id in raw_peers:
+            previous, consumer, _ = raw_peers.pop(server_id)
+            await consumer.stop()
+            await previous.close()
+        raw_peers[server_id] = peer, blackhole, negotiation
+        return web.json_response({"type": "answer", "sdp": peer.localDescription.sdp})
+    if body.get("type") == "state":
+        state = body.get("state")
+        states.setdefault("native-ci-" + server_id, []).append(state)
+        if state in ("declined", "ended", "filtered", "unanswered"):
+            closed_negotiations.add(negotiation)
+            if server_id in raw_peers and raw_peers[server_id][2] == negotiation:
+                peer, blackhole, _ = raw_peers.pop(server_id)
+                await blackhole.stop()
+                await peer.close()
+        return web.json_response({})
+    return web.Response(status=400)
 
 
 async def proxy(request):
@@ -148,6 +223,7 @@ app.router.add_get("/health", lambda _: web.json_response({"ready": True}))
 app.router.add_get("/fixture/invitation/{server_id}", invitation)
 app.router.add_get("/fixture/observations/{server_id}", observations)
 app.router.add_post("/v1/calls/{server_id}/media-credentials", media_credentials)
+app.router.add_post("/fixture/webrtc/{server_id}", raw_signaling)
 app.router.add_route("*", "/{rest:.*}", proxy)
 tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 tls.load_cert_chain(directory / "server.crt", directory / "server.key")

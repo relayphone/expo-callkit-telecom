@@ -11,6 +11,7 @@ import type {
   NativeTransport,
   JoinPolicy,
   IncomingCallPayload,
+  NativeMediaCredentials,
 } from "../conversations";
 
 declare const api: ConversationsApi;
@@ -19,6 +20,11 @@ declare const id: ConversationId;
 declare const snapshot: ConversationsSnapshot;
 declare const action: PendingAction;
 declare const outcome: IncomingConversationOutcome;
+const webRTCCredentials: NativeMediaCredentials = {
+  provider: "webrtc", url: "https://media.invalid/sdp", token: "test-fixture",
+  expiresAt: 2000000000, iceServers: [{ urls: ["turns:relay.invalid:443"], username: "device", credential: "test-fixture" }],
+};
+void webRTCCredentials;
 
 void api.joinConversation(id);
 // @ts-expect-error A server id is not a native ConversationId.
