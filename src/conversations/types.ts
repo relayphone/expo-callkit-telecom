@@ -317,6 +317,12 @@ export interface PushToken {
 
 /** Lifecycle signals that cannot be derived from the snapshot. @category Events */
 export interface ConversationEventMap {
+  /** Native report/filter result, also delivered when Android filters a prewarmed ringing call after a policy change. */
+  readonly incomingConversationOutcome: {
+    readonly eventId: string;
+    readonly serverCallId: string;
+    readonly outcome: IncomingConversationOutcome;
+  };
   readonly audioActivated: { readonly conversationId?: ConversationId };
   readonly audioDeactivated: { readonly conversationId?: ConversationId };
   readonly audioActivationMissing: { readonly conversationId: ConversationId };

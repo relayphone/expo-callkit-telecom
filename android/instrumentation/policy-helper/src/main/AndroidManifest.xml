@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+  <application android:label="CI DND policy helper">
+    <receiver android:name=".PolicyReceiver" android:exported="true" android:permission="android.permission.DUMP">
+      <intent-filter><action android:name="expo.callkittelecom.SET_DND_POLICY" /></intent-filter>
+    </receiver>
+  </application>
+</manifest>

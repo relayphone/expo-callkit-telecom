@@ -17,7 +17,7 @@ android {
     testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
   }
   sourceSets {
-    main.java.srcDirs = ['../src/main/java/expo/modules/callkittelecom/conversations']
+    main.java.srcDirs = ['../src/main/java/expo/modules/callkittelecom/conversations', 'src/main/java']
     androidTest.assets.srcDirs = ['../src/androidTest/assets', 'src/androidTest/assets']
   }
 }
