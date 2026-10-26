@@ -19,7 +19,7 @@ class ActionCoordinator(private val emit: (String, Map<String, Any?>) -> Unit,
     private var attached = false
     var acceptUnhandled = false
     var coldJoinBudgetMs = 3500L
-        set(value) { field = value.coerceIn(1, 3500) }
+        set(value) { require(value > 0); field = value.coerceAtMost(3500) }
 
     fun resetBridge() {
         epoch++

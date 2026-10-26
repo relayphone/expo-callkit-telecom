@@ -77,4 +77,82 @@ class NativeLifetimeTest {
         }
     }
 
+    @Test fun bridgeEpochAndColdBudgetCannotBeReused() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val deliveries = mutableListOf<Map<String, Any?>>()
+            val coordinator = ActionCoordinator({ name, body -> if (name == "handlerAction") deliveries += body }, {})
+            coordinator.coldJoinBudgetMs = 60_000
+            assertEquals(3500L, coordinator.coldJoinBudgetMs)
+            assertTrue(runCatching { coordinator.coldJoinBudgetMs = 0 }.isFailure)
+            val oldEpoch = coordinator.epoch
+            coordinator.attach(true, 1, oldEpoch)
+            val pending = async { coordinator.perform(mapOf("id" to "epoch"), "join", "system") }
+            yield()
+            val id = deliveries.first()["actionID"] as String
+            coordinator.resetBridge()
+            coordinator.attach(true, 1, coordinator.epoch)
+            coordinator.settle(id, 1, true, oldEpoch)
+            assertFalse(pending.isCompleted)
+            coordinator.settle(id, 1, true, coordinator.epoch)
+            pending.await()
+        }
+    }
+
+    @Test fun timeoutFailsAndMuteCannotOutliveClose() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val owner = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            val failed = CompletableDeferred<Unit>()
+            val muted = CompletableDeferred<Unit>()
+            val muteCancelled = CompletableDeferred<Unit>()
+            var closed = CompletableDeferred<Unit>()
+            var muteCalls = 0
+            NativeMediaRegistry.factories["webrtc"] = {
+                object : NativeMediaSession {
+                    override suspend fun prewarm(payload: Map<String, Any?>) {}
+                    override suspend fun activate() {}
+                    override suspend fun setMuted(mutedValue: Boolean) {
+                        if (mutedValue) {
+                            muteCalls++; muted.complete(Unit)
+                            try { awaitCancellation() } finally { muteCancelled.complete(Unit) }
+                        }
+                    }
+                    override suspend fun close(reason: String) { closed.complete(Unit) }
+                }
+            }
+            NativeMediaRegistry.fetchers["slow"] = { awaitCancellation() }
+            try {
+                val timeoutPolicy = JSONObject(mapOf("media" to "webrtc", "prewarm" to false,
+                    "credentials" to mapOf("name" to "slow")))
+                val first = NativeMediaController(context, emptyMap(), timeoutPolicy, owner, { failed.complete(Unit) }, {})
+                first.answered {}
+                withTimeout(4500) { failed.await() }
+                first.close("failed")
+                withTimeout(3000) { closed.await() }
+                closed = CompletableDeferred()
+                val connected = CompletableDeferred<Unit>()
+                val payload = mapOf("media" to mapOf("expiresAt" to System.currentTimeMillis() / 1000 + 120))
+                val second = NativeMediaController(context, payload, JSONObject(mapOf("media" to "webrtc")), owner, {}, { connected.complete(Unit) })
+                second.prewarm(); second.answered {}
+                withTimeout(3000) { connected.await() }
+                val pendingMute = owner.async { runCatching { second.mute() } }
+                withTimeout(3000) { muted.await() }
+                second.close("ended")
+                withTimeout(3000) { closed.await(); muteCancelled.await(); pendingMute.await() }
+                assertTrue(runCatching { second.mute() }.isFailure)
+                assertEquals(1, muteCalls)
+                closed = CompletableDeferred()
+                val thirdConnected = CompletableDeferred<Unit>()
+                val third = NativeMediaController(context, payload, JSONObject(mapOf("media" to "webrtc")), owner, {}, { thirdConnected.complete(Unit) })
+                third.prewarm(); third.answered {}
+                withTimeout(3000) { thirdConnected.await() }
+                owner.cancel()
+                third.close("ended")
+                withTimeout(3000) { closed.await() }
+            } finally {
+                NativeMediaRegistry.factories.remove("webrtc"); NativeMediaRegistry.fetchers.remove("slow"); owner.cancel()
+            }
+        }
+    }
+
 }
