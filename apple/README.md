@@ -9,7 +9,8 @@ deadlines and reports remain SDK values. iOS17.4 is the minimum.
 `Package.swift` pins `ziahamza/ios-voip-sdk` at
 `52c2eaba23f61e67e9086a7b2328cf9e293da4ea`, the shared identity contract revision.
 The compile-only CI builds this adapter with the real SDK for a generic iOS
-simulator on `macos-26`; it does not boot a simulator. Native simulator journeys
+simulator on `macos-26`; it does not boot a simulator. A parallel job prebuilds
+and compiles the v2 example for a generic iOS simulator. Native simulator journeys
 belong to the SDK repository.
 
 The TS `IOSConversationAdapter` interface is the required Expo Modules 2 port,

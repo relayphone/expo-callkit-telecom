@@ -3,10 +3,10 @@ name: v2 iOS boundary
 on:
   pull_request:
     branches: [v2]
-    paths: ['apple/**', 'src/conversations/ios.ts', '.github/workflows/v2-ios-boundary.yml']
+    paths: ['apple/**', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', '.github/workflows/v2-ios-boundary.yml']
   push:
     branches: [v2]
-    paths: ['apple/**', 'src/conversations/ios.ts', '.github/workflows/v2-ios-boundary.yml']
+    paths: ['apple/**', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', '.github/workflows/v2-ios-boundary.yml']
 
 permissions:
   contents: read
@@ -23,3 +23,28 @@ jobs:
       - name: Compile pinned SDK adapter for iOS simulator
         working-directory: apple
         run: xcodebuild -scheme ExpoConversationsBoundary -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/v2-ios-boundary" CODE_SIGNING_ALLOWED=NO build
+
+  compile-example:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: bun install --frozen-lockfile
+        working-directory: example/client
+      - run: bunx expo prebuild --platform ios --no-install
+        working-directory: example/client
+        env:
+          CI: '1'
+      - run: pod install
+        working-directory: example/client/ios
+      - name: Compile v2 example without launching a simulator
+        working-directory: example/client/ios
+        run: xcodebuild -workspace CallKitTel.xcworkspace -scheme CallKitTel -configuration Release -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/v2-example-ios" CODE_SIGNING_ALLOWED=NO build
