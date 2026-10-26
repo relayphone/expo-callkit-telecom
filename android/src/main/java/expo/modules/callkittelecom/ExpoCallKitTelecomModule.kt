@@ -12,13 +12,16 @@ import org.json.JSONObject
 class ExpoCallKitTelecomModule : Module() {
     private lateinit var engine: ConversationEngine
     private val owner = Any()
+    private var epoch = 0L
     private suspend fun <T> command(body: suspend () -> T): T = withContext(Dispatchers.Main) {
         try { check(engine.bridgeOwner === owner); body() }
         catch (error: Exception) {
             if (error is TimeoutCancellationException) throw CodedException("deadline_exceeded", "Conversation deadline exceeded", null)
             if (error is CancellationException) throw error
             if (error is expo.modules.callkittelecom.conversations.ConversationFailure) {
-                val details = JSONObject(mapOf("code" to error.code, "message" to "Conversation operation failed", "nativeDomain" to "androidx.core.telecom", "nativeCode" to error.nativeCode)).toString()
+                val fields = mutableMapOf<String, Any>("code" to error.code, "message" to "Conversation operation failed")
+                error.nativeCode?.let { fields["nativeDomain"] = "androidx.core.telecom"; fields["nativeCode"] = it }
+                val details = JSONObject(fields).toString()
                 throw CodedException(error.code, "expo-conversation:$details", null)
             }
             val code = error.message?.takeIf { it in setOf("invalid_arguments", "unknown_conversation", "unsupported") } ?: "conversation"
@@ -33,6 +36,7 @@ class ExpoCallKitTelecomModule : Module() {
             engine = ConversationEngine.get(context)
             engine.jobs.launch {
                 engine.bind(owner) { name, body -> sendEvent(name, body) }
+                epoch = engine.actions.epoch
                 val metadata = context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA).metaData
                 engine.policy = JSONObject(metadata?.getString("ExpoCallKitTelecomJoinPolicy") ?: "{}")
                 runCatching { com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
@@ -57,10 +61,10 @@ class ExpoCallKitTelecomModule : Module() {
         AsyncFunction("mergeConversations") Coroutine { _: String, _: String -> command<Unit> { error("unsupported") } }
         AsyncFunction("reportConversation") Coroutine { id: String, report: Map<String, Any?> -> command { engine.report(id, report) } }
         AsyncFunction("selectAudioRoute") Coroutine { id: String -> command { engine.selectRoute(id) } }
-        Function("setHandlerAttached") { attached: Boolean, generation: Int -> engine.jobs.launch { if (engine.bridgeOwner === owner) engine.actions.attach(attached, generation) }; Unit }
+        Function("setHandlerAttached") { attached: Boolean, generation: Int -> engine.jobs.launch { if (engine.bridgeOwner === owner) engine.actions.attach(attached, generation, epoch) }; Unit }
         Function("setDialRequestListenerAttached") { _: Boolean, _: Int -> Unit }
         Function("settleAction") { id: String, generation: Int, success: Boolean, _: Map<String, Any?>? ->
-            engine.jobs.launch { if (engine.bridgeOwner === owner) engine.actions.settle(id, generation, success) }; Unit
+            engine.jobs.launch { if (engine.bridgeOwner === owner) engine.actions.settle(id, generation, success, epoch) }; Unit
         }
     }
 }

@@ -161,3 +161,14 @@ describe("handler generation and cancellation", () => {
     expect(h.settlements.length).toBe(1);
   });
 });
+
+import { commandError } from '../../src/conversations/errors';
+
+test('native command errors preserve typed code and platform details', () => {
+  const error = commandError(new Error('Native call rejected: expo-conversation:{"code":"conversation","message":"Control failed","nativeDomain":"androidx.core.telecom","nativeCode":4}'));
+  expect(error).toMatchObject({ code: 'conversation', message: 'Control failed', nativeDomain: 'androidx.core.telecom', nativeCode: 4 });
+  const unrelated = new Error('Other library');
+  expect(commandError(unrelated)).toBe(unrelated);
+  const malformed = new Error('expo-conversation:{"code":"made_up","message":"bad"}');
+  expect(commandError(malformed)).toBe(malformed);
+});

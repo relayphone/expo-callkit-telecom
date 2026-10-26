@@ -217,7 +217,7 @@ class ConversationEngine(val context: Context) {
         action(id, "hold", origin, mapOf("held" to held))
         if (origin == "app") checked(if (held) control(id).setInactive() else control(id).setActive())
         current.active = !held
-        if (held || current.state["isMuted"] == true) current.media?.mute(true)
+        if (held || current.state["isMuted"] == true) current.media?.mute()
         else current.media?.unmute { awaitAudio(id, current) }
         current.state["status"] = if (held) "held" else if (current.state["connectedAt"] != null) "connected" else "connecting"
         publish()
@@ -226,7 +226,7 @@ class ConversationEngine(val context: Context) {
         val current = call(id)
         if (current.state["isMuted"] == muted) return
         action(id, "mute", origin, mapOf("muted" to muted))
-        if (muted) current.media?.mute(true) else current.media?.unmute { awaitAudio(id, current) }
+        if (muted) current.media?.mute() else current.media?.unmute { awaitAudio(id, current) }
         if (current.active && origin == "app") audio.isMicrophoneMute = muted
         current.state["isMuted"] = muted
         publish()

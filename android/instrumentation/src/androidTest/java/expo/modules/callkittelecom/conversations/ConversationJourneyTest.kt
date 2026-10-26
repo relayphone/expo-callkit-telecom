@@ -26,9 +26,9 @@ class ConversationJourneyTest {
             val seen = mutableListOf<String>()
             engine.emit = { name, body ->
                 if (name == "handlerAction") engine.actions.settle(body["actionID"] as String,
-                    body["generation"] as Int, true)
+                    body["generation"] as Int, true, engine.actions.epoch)
             }
-            engine.actions.attach(true, 1)
+            engine.actions.attach(true, 1, engine.actions.epoch)
             fun status(id: String): String? {
                 val states = engine.snapshot["conversations"] as List<*>
                 return (states.firstOrNull { (it as Map<*, *>)["id"] == id } as? Map<*, *>)?.get("status") as? String
@@ -83,14 +83,14 @@ class ConversationJourneyTest {
             val pending = async { coordinator.perform(conversation, "join", "system") }
             yield()
             assertNotNull(coordinator.pending("test-conversation"))
-            coordinator.attach(true, 1)
+            coordinator.attach(true, 1, coordinator.epoch)
             assertEquals(1, deliveries.size)
-            coordinator.attach(true, 2)
+            coordinator.attach(true, 2, coordinator.epoch)
             assertEquals(2, deliveries.size)
             val id = deliveries[0]["actionID"] as String
-            coordinator.settle(id, 1, false)
+            coordinator.settle(id, 1, false, coordinator.epoch)
             assertFalse(pending.isCompleted)
-            coordinator.settle(id, 2, true)
+            coordinator.settle(id, 2, true, coordinator.epoch)
             pending.await()
             assertNull(coordinator.pending("test-conversation"))
             val began = android.os.SystemClock.elapsedRealtime()
@@ -143,6 +143,7 @@ class ConversationJourneyTest {
             val owner = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
             val ready = CompletableDeferred<Unit>()
             val gate = CompletableDeferred<Unit>()
+            val entered = CompletableDeferred<Unit>()
             val closed = CompletableDeferred<Unit>()
             var activations = 0
             var fetched = false
@@ -163,8 +164,8 @@ class ConversationJourneyTest {
                 val controller = NativeMediaController(context, emptyMap(), policy, owner, {}, {})
                 controller.prewarm()
                 withTimeout(3000) { ready.await() }
-                controller.answered { gate.await() }
-                yield()
+                controller.answered { entered.complete(Unit); gate.await() }
+                withTimeout(3000) { entered.await() }
                 controller.close("ended")
                 withTimeout(3000) { closed.await() }
                 gate.complete(Unit)
