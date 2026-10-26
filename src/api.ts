@@ -69,7 +69,8 @@ class Runtime {
 const registry = globalThis as typeof globalThis & {
   __expoConversationsRuntime?: Runtime;
 };
-const runtime = (registry.__expoConversationsRuntime ??= new Runtime());
+const runtime = registry.__expoConversationsRuntime ?? new Runtime();
+registry.__expoConversationsRuntime = runtime;
 
 /** Complete current conversation list, including native cold-launch state. @category State */
 export const getConversations = (): Promise<readonly Conversation[]> =>

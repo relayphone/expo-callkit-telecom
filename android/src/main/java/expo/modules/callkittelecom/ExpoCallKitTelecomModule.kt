@@ -15,6 +15,7 @@ class ExpoCallKitTelecomModule : Module() {
     private suspend fun <T> command(body: suspend () -> T): T = withContext(Dispatchers.Main) {
         try { check(engine.bridgeOwner === owner); body() }
         catch (error: Exception) {
+            if (error is TimeoutCancellationException) throw CodedException("deadline_exceeded", "Conversation deadline exceeded", null)
             if (error is CancellationException) throw error
             if (error is expo.modules.callkittelecom.conversations.ConversationFailure) {
                 val details = JSONObject(mapOf("code" to error.code, "message" to "Conversation operation failed", "nativeDomain" to "androidx.core.telecom", "nativeCode" to error.nativeCode)).toString()

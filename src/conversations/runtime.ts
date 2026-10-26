@@ -118,7 +118,14 @@ export class HandlerDispatcher {
       if (this.pending.get(key) !== controller || controller.signal.aborted)
         return;
       this.pending.delete(key);
-      this.bridge.settleAction(action.actionID, action.generation, success);
+      this.bridge.settleAction(
+        action.actionID,
+        action.generation,
+        success,
+        success
+          ? undefined
+          : { name: "HandlerError", message: "Conversation handler failed" }
+      );
     };
     Promise.resolve()
       .then(() => {

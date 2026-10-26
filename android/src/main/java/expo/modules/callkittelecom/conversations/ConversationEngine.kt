@@ -195,14 +195,16 @@ class ConversationEngine(val context: Context) {
         val current = call(id)
         current.state["status"] = "connecting"
         ConversationService.show(context, id, current.state)
-        current.media?.answered {
-            yield() // The system callback returns, or the app's answer result has succeeded.
-            withTimeout(1500) {
-                while (calls[id] === current && (audio.mode != AudioManager.MODE_IN_COMMUNICATION || routes["current"] == null)) delay(10)
-                check(calls[id] === current && current.active)
-            }
-        }
+        current.media?.answered { awaitAudio(id, current) }
         publish()
+    }
+    private suspend fun awaitAudio(id: String, current: Call) {
+        // Returning through main lets Core-Telecom finish a system callback before audio begins.
+        withContext(Dispatchers.Main) { yield(); check(calls[id] === current && current.active) }
+        withTimeout(1500) {
+            while (audio.mode != AudioManager.MODE_IN_COMMUNICATION || routes["current"] == null) delay(10)
+            check(calls[id] === current && current.active)
+        }
     }
     suspend fun end(id: String) {
         try { action(id, "end", "app") }
@@ -215,7 +217,8 @@ class ConversationEngine(val context: Context) {
         action(id, "hold", origin, mapOf("held" to held))
         if (origin == "app") checked(if (held) control(id).setInactive() else control(id).setActive())
         current.active = !held
-        current.media?.mute(held || current.state["isMuted"] == true)
+        if (held || current.state["isMuted"] == true) current.media?.mute(true)
+        else current.media?.unmute { awaitAudio(id, current) }
         current.state["status"] = if (held) "held" else if (current.state["connectedAt"] != null) "connected" else "connecting"
         publish()
     }
@@ -223,8 +226,8 @@ class ConversationEngine(val context: Context) {
         val current = call(id)
         if (current.state["isMuted"] == muted) return
         action(id, "mute", origin, mapOf("muted" to muted))
-        current.media?.mute(muted)
-        audio.isMicrophoneMute = muted
+        if (muted) current.media?.mute(true) else current.media?.unmute { awaitAudio(id, current) }
+        if (current.active && origin == "app") audio.isMicrophoneMute = muted
         current.state["isMuted"] = muted
         publish()
     }

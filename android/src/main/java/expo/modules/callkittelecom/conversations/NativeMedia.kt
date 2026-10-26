@@ -25,6 +25,8 @@ class NativeMediaController(private val context: Context, private val payload: M
     private val mediaContext = Dispatchers.IO.limitedParallelism(1)
     private var preparation: Deferred<Unit>? = null
     private var answerJob: Job? = null
+    private var unmuteJob: Job? = null
+    @Volatile private var desiredMuted = false
     @Volatile private var closed = false
 
     @Suppress("UNCHECKED_CAST")
@@ -57,6 +59,7 @@ class NativeMediaController(private val context: Context, private val payload: M
                     ensureActive(); check(!closed)
                     audioReady()
                     ensureActive(); check(!closed)
+                    session?.setMuted(desiredMuted)
                     session?.activate() ?: error("Native media adapter unavailable")
                     ensureActive(); check(!closed)
                 }
@@ -64,13 +67,28 @@ class NativeMediaController(private val context: Context, private val payload: M
             } catch (error: Exception) { if (error !is CancellationException && !closed) failed() }
         }
     }
-    suspend fun mute(value: Boolean) { withTimeout(1000) { withContext(mediaContext) { session?.setMuted(value) } } }
+    suspend fun mute(value: Boolean) {
+        desiredMuted = value
+        if (value) unmuteJob?.cancel()
+        withTimeout(1000) { withContext(mediaContext) { session?.setMuted(value) } }
+    }
+    fun unmute(audioReady: suspend () -> Unit) {
+        desiredMuted = false
+        unmuteJob?.cancel()
+        unmuteJob = scope.launch {
+            try { withContext(mediaContext) {
+                audioReady()
+                ensureActive(); check(!closed)
+                if (!desiredMuted) session?.setMuted(false)
+            } } catch (error: Exception) { if (error !is CancellationException && !closed) failed() }
+        }
+    }
     fun close(reason: String) {
         if (closed) return
         closed = true
-        answerJob?.cancel(); preparation?.cancel()
+        answerJob?.cancel(); unmuteJob?.cancel(); preparation?.cancel()
         scope.launch(mediaContext) { withContext(NonCancellable) {
-            withTimeoutOrNull(1500) { answerJob?.join(); preparation?.join() }
+            withTimeoutOrNull(1500) { answerJob?.join(); unmuteJob?.join(); preparation?.join() }
             runCatching { withTimeout(1500) { session?.close(reason) } }
         } }
     }
