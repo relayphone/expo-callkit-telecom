@@ -3,10 +3,10 @@ name: v2 Android
 on:
   pull_request:
     branches: [v2]
-    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
+    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
   push:
     branches: [v2]
-    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
+    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
 
 permissions:
   contents: read
@@ -49,7 +49,9 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash tools/run-native-media-journey.sh
+          script: |
+            bash tools/run-native-media-journey.sh
+            bash tools/run-android-dnd.sh
       - name: Stop native media fixture
         if: always()
         run: |
@@ -63,6 +65,7 @@ jobs:
             android/instrumentation/build/outputs/androidTest-results/**/*.xml
             android/instrumentation/build/journey-results.json
             android/instrumentation/build/native-media-results.json
+            android/instrumentation/build/dnd-results
           if-no-files-found: error
 
   native-bridge:

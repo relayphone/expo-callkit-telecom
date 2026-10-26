@@ -1,6 +1,11 @@
 package expo.modules.callkittelecom.conversations
 
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
+import android.app.NotificationManager
+import androidx.core.content.ContextCompat
 import android.media.AudioManager
 import android.net.Uri
 import android.telecom.DisconnectCause
@@ -44,17 +49,30 @@ class ConversationEngine(val context: Context) {
     var policy = org.json.JSONObject(metadata?.getString("ExpoCallKitTelecomJoinPolicy") ?: "{}")
     private class Call(val state: MutableMap<String, Any?>) {
         val ready = CompletableDeferred<CallControlScope>()
+        val permitted = CompletableDeferred<Boolean>()
         var job: Job? = null
         var collectors: Job? = null
         var active = false
         var admitted = false
+        var visible = false
         var endpoint: CallEndpointCompat? = null
         var media: NativeMediaController? = null
         var timeout: Job? = null
         var endpoints: List<CallEndpointCompat> = emptyList()
     }
     private val calls = linkedMapOf<String, Call>()
-    private val recent = mutableMapOf<String, Pair<Long, String>>()
+    private val recent = mutableMapOf<String, Pair<Long, Map<String, Any?>>>()
+    private val incomingTasks = mutableMapOf<String, CompletableDeferred<Map<String, Any?>>>()
+    private val incomingPolicy = IncomingPolicy(context)
+    private var policyDirty = false
+    private var policyCheck: Job? = null
+    init {
+        ContextCompat.registerReceiver(context, object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) { recheckIncomingPolicy() }
+        }, IntentFilter(NotificationManager.ACTION_INTERRUPTION_FILTER_CHANGED).apply {
+            addAction(NotificationManager.ACTION_NOTIFICATION_POLICY_CHANGED)
+        }, ContextCompat.RECEIVER_NOT_EXPORTED)
+    }
     internal var incomingTimeoutMillis = (metadata?.getInt("ExpoCallKitTelecomIncomingCallTimeout", 45) ?: 45).coerceAtLeast(1).toLong()*1000
     internal var answerTimeoutMillis = (metadata?.getInt("ExpoCallKitTelecomFulfillAnswerCallTimeout", 30) ?: 30).coerceAtLeast(1).toLong() * 1000
     private var revision = 0L
@@ -69,7 +87,7 @@ class ConversationEngine(val context: Context) {
 
     fun audioRoutes() = routes
     private fun publish() {
-        val states = calls.filterValues { it.admitted }.map { (id, call) ->
+        val states = calls.filterValues { it.admitted && it.visible }.map { (id, call) ->
             buildMap<String, Any?> {
                 putAll(call.state.filterKeys { it != "endReason" }.filterValues { it != null })
                 actions.pending(id)?.let { put("pending", it) }
@@ -99,18 +117,76 @@ class ConversationEngine(val context: Context) {
         val now = android.os.SystemClock.elapsedRealtime()
         recent.entries.removeAll { now - it.value.first > 120_000 }
         val duplicate = recent["event:$eventId"] ?: recent["call:$serverId"]
-        if (duplicate != null) return mapOf("status" to "reported", "id" to duplicate.second)
+        if (duplicate != null) return duplicate.second
+        (incomingTasks["event:$eventId"] ?: incomingTasks["call:$serverId"])?.let { return it.await() }
         val id = CallIdentity.forServerCallId(serverId).toString()
         if (calls.containsKey(id)) { control(id); return mapOf("status" to "reported", "id" to id) }
-        return try {
+        val pending = CompletableDeferred<Map<String, Any?>>()
+        incomingTasks["event:$eventId"] = pending; incomingTasks["call:$serverId"] = pending
+        val outcome = try {
             add(id, caller, payload["hasVideo"] == true, payload)
-            recent["event:$eventId"] = now to id
-            recent["call:$serverId"] = now to id
-            mapOf("status" to "reported", "id" to id)
+            val appFilter = incomingPolicy.custom(payload)
+            val filter = appFilter ?: incomingPolicy.system(payload)
+            call(id).permitted.complete(filter == null)
+            // A DND-suppressed notification still records repeat-caller history when cancelled.
+            // App block-list/other rejections are never presented.
+            if (appFilter == null) ConversationService.show(context, id, call(id).state)
+            if (filter != null && call(id).state["status"] == "ringing") {
+                closeFiltered(id)
+                filtered(filter)
+            } else {
+                call(id).visible = true
+                publish()
+                prepareMedia(id, payload)
+                mapOf("status" to "reported", "id" to id)
+            }
         } catch (e: CallException) {
             if (e.code == CallException.ERROR_CALL_NOT_PERMITTED_AT_PRESENT_TIME) mapOf("status" to "atCapacity")
             else failure("conversation", e.code.toString())
-        } catch (e: Exception) { failure("conversation") }
+        } catch (e: Exception) {
+            withContext(NonCancellable) { if (calls.containsKey(id)) runCatching { finish(id, "failed") } }
+            failure("conversation")
+        }
+        if (outcome["status"] in setOf("reported", "filtered")) {
+            recent["event:$eventId"] = now to outcome; recent["call:$serverId"] = now to outcome
+        }
+        pending.complete(outcome)
+        incomingTasks.remove("event:$eventId"); incomingTasks.remove("call:$serverId")
+        deliverIncomingOutcome(payload, outcome)
+        return outcome
+    }
+    private fun filtered(filter: NativeIncomingFilter): Map<String, Any?> =
+        mapOf("status" to "filtered", "reason" to filter.reason.value, "nativeReason" to filter.nativeReason).filterValues { it != null }
+    private fun deliverIncomingOutcome(payload: Map<String, Any?>, outcome: Map<String, Any?>) {
+        NativeIncomingOutcomes.emit(payload, outcome)
+        emit("conversationEvent", mapOf("type" to "incomingConversationOutcome", "payload" to mapOf(
+            "eventId" to payload["eventId"], "serverCallId" to payload["serverCallId"], "outcome" to outcome)))
+    }
+    private suspend fun closeFiltered(id: String) {
+        call(id).media?.close("filtered")
+        finish(id, "local")
+    }
+    /** Also closes an already-prewarmed ringing call if the user's policy changes. */
+    fun recheckIncomingPolicy() {
+        policyDirty = true
+        if (policyCheck?.isActive == true) return
+        policyCheck = jobs.launch {
+            while (policyDirty) {
+                policyDirty = false
+                for ((id, current) in calls.toMap()) {
+                    if (!current.visible || current.state["status"] != "ringing") continue
+                    @Suppress("UNCHECKED_CAST") val payload = current.state["payload"] as? Map<String, Any?> ?: continue
+                    val filter = runCatching { incomingPolicy.evaluate(payload) }.getOrNull() ?: continue
+                    if (calls[id] !== current || current.state["status"] != "ringing") continue
+                    closeFiltered(id)
+                    val outcome = filtered(filter)
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    recent["event:${payload["eventId"]}"] = now to outcome
+                    recent["call:${payload["serverCallId"]}"] = now to outcome
+                    deliverIncomingOutcome(payload, outcome)
+                }
+            }
+        }
     }
     private fun failure(code: String, nativeCode: String? = null) = mapOf("status" to "failed",
         "error" to mapOf("code" to code, "message" to "Incoming report failed", "nativeCode" to nativeCode).filterValues { it != null })
@@ -129,6 +205,8 @@ class ConversationEngine(val context: Context) {
             "status" to if (incoming) "ringing" else "dialing", "members" to listOf(member),
             "isMuted" to false, "isVideo" to video, "payload" to payload?.filterKeys { it != "media" },
             "capabilities" to mapOf("hold" to true, "merge" to false, "tones" to true, "video" to true)))
+        call.visible = !incoming
+        if (!incoming) call.permitted.complete(true)
         calls[id] = call
         publish()
         val handle = (member["phoneNumber"] ?: member["email"] ?: member["id"]).toString()
@@ -140,16 +218,17 @@ class ConversationEngine(val context: Context) {
             try {
                 telecom.addCall(attributes,
                     onAnswer = { withTimeout(4500) {
+                        check(call.permitted.await()) { "Incoming call filtered" }
                         if (call.state["status"] == "ringing") { signal(call, NativeMediaStage.ANSWER_REQUESTED); call.timeout?.cancel(); action(id, "join", "system"); call.active = true; joined(id) }
                     } },
                     onDisconnect = { withTimeout(4500) { cleanupDecline(id); action(id, "end", "system"); terminal(id, "local") } },
-                    onSetActive = { withTimeout(4500) { hold(id, false, "system") } },
+                    onSetActive = { withTimeout(4500) { check(call.permitted.await()); hold(id, false, "system") } },
                     onSetInactive = { withTimeout(4500) { hold(id, true, "system") } }) {
                     call.admitted = true
                     signal(call, NativeMediaStage.REPORTED)
                     publish()
                     call.ready.complete(this)
-                    ConversationService.show(context, id, call.state)
+                    if (!incoming) ConversationService.show(context, id, call.state)
                     call.timeout = jobs.launch {
                         delay(if (incoming) incomingTimeoutMillis else
                             (metadata?.getInt("ExpoCallKitTelecomOutgoingCallTimeout", 60) ?: 60).coerceAtLeast(1).toLong()*1000)
@@ -176,8 +255,11 @@ class ConversationEngine(val context: Context) {
         }
         try { withTimeout(6000) { call.ready.await() } }
         catch (error: Exception) { call.job?.cancel(); throw error }
-        if (incoming && policy.optString("type", "native") == "native") {
-            call.media = NativeMediaController(context, payload!!, policy, jobs, failed = {
+    }
+    private fun prepareMedia(id: String, payload: Map<String, Any?>) {
+        val call = call(id)
+        if (policy.optString("type", "native") == "native") {
+            call.media = NativeMediaController(context, payload, policy, jobs, failed = {
                 terminateLater(id, "failed")
             }, connected = {
                 if (calls[id] === call) {
@@ -201,6 +283,7 @@ class ConversationEngine(val context: Context) {
     }
     suspend fun join(id: String) {
         require(call(id).state["status"] == "ringing") { "invalid_arguments" }
+        check(call(id).permitted.await()) { "Incoming call filtered" }
         signal(call(id), NativeMediaStage.ANSWER_REQUESTED)
         call(id).timeout?.cancel()
         try { action(id, "join", "app") }
@@ -305,6 +388,7 @@ class ConversationEngine(val context: Context) {
     }
     private fun terminal(id: String, reason: String) {
         val current = calls[id] ?: return
+        current.permitted.complete(false)
         current.timeout?.cancel()
         current.collectors?.cancel()
         current.state["status"] = "ended"
