@@ -94,8 +94,9 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             check(!closed)
             require(candidate.name == media["room"] && candidate.localParticipant.identity?.value == media["identity"])
             room = candidate
-            NativeMediaSignals.emit(serverId, NativeMediaStage.PREJOINED)
+            NativeMediaSignals.emit(serverId, NativeMediaStage.ROOM_CONNECTED)
             signal("prejoined")
+            NativeMediaSignals.emit(serverId, NativeMediaStage.PREJOINED)
         } catch (error: Throwable) {
             collector.cancel(); room = null
             runCatching { candidate.release() }
