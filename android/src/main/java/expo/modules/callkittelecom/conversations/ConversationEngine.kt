@@ -19,14 +19,33 @@ class ConversationEngine(val context: Context) {
     }
     val jobs = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     var emit: (String, Map<String, Any?>) -> Unit = { _, _ -> }
+    var bridgeOwner: Any? = null
+        private set
+    fun bind(owner: Any?, sender: (String, Map<String, Any?>) -> Unit) {
+        actions.resetBridge()
+        bridgeOwner = owner
+        emit = sender
+    }
+    private var tokenRevision = 0L
+    private var pushToken: String? = null
+    fun pushTokenSnapshot(): Map<String, Any?> = mapOf("revision" to tokenRevision, "token" to pushToken?.let { mapOf("type" to "fcm", "value" to it) })
+    fun updatePushToken(value: String?) { if (pushToken != value) { pushToken = value; tokenRevision++; emit("pushTokenUpdated", pushTokenSnapshot()) } }
+    suspend fun remoteEnd(payload: Map<String, Any?>) {
+        val serverId = payload["serverCallId"] as? String ?: return
+        val id = CallIdentity.forServerCallId(serverId).toString()
+        val reason = (payload["reason"] as? String)?.takeIf { it in setOf("remoteEnded", "failed", "unanswered", "answeredElsewhere", "declinedElsewhere") } ?: "remoteEnded"
+        if (calls.containsKey(id)) finish(id, reason)
+    }
     private val telecom = CallsManager(context).apply {
         registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE or CallsManager.CAPABILITY_SUPPORTS_VIDEO_CALLING)
     }
-    var policy = org.json.JSONObject()
+    var policy = org.json.JSONObject(context.packageManager.getApplicationInfo(context.packageName,
+        android.content.pm.PackageManager.GET_META_DATA).metaData?.getString("ExpoCallKitTelecomJoinPolicy") ?: "{}")
     private class Call(val state: MutableMap<String, Any?>) {
         val ready = CompletableDeferred<CallControlScope>()
         var job: Job? = null
         var media: NativeMediaController? = null
+        var timeout: Job? = null
         var endpoints: List<CallEndpointCompat> = emptyList()
     }
     private val calls = linkedMapOf<String, Call>()
@@ -42,7 +61,10 @@ class ConversationEngine(val context: Context) {
     fun audioRoutes() = routes
     private fun publish() {
         snapshot = mapOf("revision" to ++revision, "conversations" to calls.map { (id, call) ->
-            call.state.filterKeys { it != "endReason" } + ("pending" to actions.pending(id)) }.sortedBy { it["id"] as String })
+            buildMap<String, Any?> {
+                putAll(call.state.filterKeys { it != "endReason" }.filterValues { it != null })
+                actions.pending(id)?.let { put("pending", it) }
+            } }.sortedBy { it["id"] as String })
         emit("conversationsChanged", snapshot)
     }
     private fun call(id: String) = calls[id] ?: error("unknown_conversation")
@@ -74,7 +96,7 @@ class ConversationEngine(val context: Context) {
         } catch (e: Exception) { failure("conversation") }
     }
     private fun failure(code: String, nativeCode: String? = null) = mapOf("status" to "failed",
-        "error" to mapOf("code" to code, "message" to "Incoming report failed", "nativeCode" to nativeCode))
+        "error" to mapOf("code" to code, "message" to "Incoming report failed", "nativeCode" to nativeCode).filterValues { it != null })
 
     suspend fun start(options: Map<String, Any?>): String {
         @Suppress("UNCHECKED_CAST") val to = options["to"] as? Map<String, Any?> ?: error("invalid_arguments")
@@ -106,6 +128,10 @@ class ConversationEngine(val context: Context) {
                     onSetInactive = { hold(id, true, "system") }) {
                     call.ready.complete(this)
                     ConversationService.show(context, id, call.state)
+                    call.timeout = jobs.launch {
+                        delay(if (incoming) 45_000 else 60_000)
+                        if (calls[id] === call && call.state["connectedAt"] == null) finish(id, "unanswered")
+                    }
                     launch { availableEndpoints.collect { call.endpoints = it; updateRoutes(id, null) } }
                     launch { currentCallEndpoint.collect { updateRoutes(id, it) } }
                     launch { isMuted.collect { muted ->
@@ -121,27 +147,41 @@ class ConversationEngine(val context: Context) {
         try { withTimeout(6000) { call.ready.await() } }
         catch (error: Exception) { call.job?.cancel(); throw error }
         if (incoming && policy.optString("type", "native") == "native") {
-            call.media = NativeMediaController(context, payload!!, policy, jobs) {
+            call.media = NativeMediaController(context, payload!!, policy, jobs, failed = {
                 jobs.launch { if (calls.containsKey(id)) finish(id, "failed") }
-            }.also { it.prewarm() }
+            }, connected = {
+                if (calls[id] === call) {
+                    call.timeout?.cancel()
+                    call.state["connectedAt"] = call.state["connectedAt"] ?: Instant.now().toString()
+                    if (call.state["status"] != "held") call.state["status"] = "connected"
+                    publish()
+                }
+            }).also { it.prewarm() }
         }
     }
 
     private suspend fun action(id: String, kind: String, origin: String, args: Map<String, Any?> = emptyMap()) {
         val current = call(id)
-        if (kind != "join" || policy.optString("type", "native") == "handler")
+        actions.coldJoinBudgetMs = policy.optLong("coldLaunchJoinBudgetMs", 3500).coerceIn(1, 3500)
+        val nativeIncoming = policy.optString("type", "native") == "native" && current.state["direction"] == "incoming"
+        if (!nativeIncoming || kind !in setOf("join", "end", "hold", "mute"))
             actions.perform(current.state.toMap(), kind, origin, args)
         check(calls[id] === current) { "unknown_conversation" }
     }
     suspend fun join(id: String) {
-        action(id, "join", "app")
+        require(call(id).state["status"] == "ringing") { "invalid_arguments" }
+        try { action(id, "join", "app") }
+        catch (error: Exception) { if (calls.containsKey(id)) finish(id, "failed"); throw error }
         checked(control(id).answer(if (call(id).state["isVideo"] == true) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL))
         joined(id)
     }
     private fun joined(id: String) {
         val current = call(id)
         current.state["status"] = "connecting"
+        ConversationService.show(context, id, current.state)
         current.media?.answered {
+            yield() // The system callback returns, or the app's answer result has succeeded.
+            withContext(Dispatchers.IO) { audio.mode = AudioManager.MODE_IN_COMMUNICATION }
             withTimeout(1500) { while (audio.mode != AudioManager.MODE_IN_COMMUNICATION) delay(10) }
         }
         publish()
@@ -152,6 +192,7 @@ class ConversationEngine(val context: Context) {
         if ((current.state["status"] == "held") == held) return
         action(id, "hold", origin, mapOf("held" to held))
         if (origin == "app") checked(if (held) control(id).setInactive() else control(id).setActive())
+        current.media?.mute(held || current.state["isMuted"] == true)
         current.state["status"] = if (held) "held" else if (current.state["connectedAt"] != null) "connected" else "connecting"
         publish()
     }
@@ -173,7 +214,9 @@ class ConversationEngine(val context: Context) {
         when (report["type"]) {
             "connecting" -> if (current.state["status"] in listOf("dialing", "connecting")) current.state["status"] = "connecting"
             "connected" -> {
+                require(current.state["status"] != "ringing") { "invalid_arguments" }
                 if (current.state["status"] != "held") { checked(control(id).setActive()); current.state["status"] = "connected" }
+                current.timeout?.cancel()
                 current.state["connectedAt"] = current.state["connectedAt"] ?: Instant.now().toString()
             }
             "updated" -> { report["members"]?.let { current.state["members"] = it }; report["video"]?.let { current.state["isVideo"] = it } }
@@ -183,6 +226,7 @@ class ConversationEngine(val context: Context) {
         publish()
     }
     private suspend fun finish(id: String, reason: String) {
+        require(reason in setOf("local", "remoteEnded", "failed", "unanswered", "answeredElsewhere", "declinedElsewhere")) { "invalid_arguments" }
         val cause = when (reason) { "local", "failed" -> DisconnectCause.LOCAL; "unanswered" -> DisconnectCause.MISSED; else -> DisconnectCause.REMOTE }
         call(id).state["endReason"] = reason
         checked(control(id).disconnect(DisconnectCause(cause)))
@@ -190,6 +234,7 @@ class ConversationEngine(val context: Context) {
     }
     private fun terminal(id: String, reason: String) {
         val current = calls[id] ?: return
+        current.timeout?.cancel()
         current.state["status"] = "ended"
         current.state["ended"] = mapOf("at" to Instant.now().toString(), "reason" to reason)
         current.media?.close(if (reason == "local" && current.state["connectedAt"] == null) "declined" else "ended")

@@ -4,7 +4,13 @@ import pkg from "../../package.json";
 import { withExpoCallKitTelecomAndroid } from "./withExpoCallKitTelecomAndroid";
 import { withExpoCallKitTelecomIos } from "./withExpoCallKitTelecomIos";
 
+import type { JoinPolicy, MediaAdapter } from "../../build/conversations/types";
+
 export type ExpoCallKitTelecomPluginProps = {
+  /** Native answer and media/JS pre-warm are the default. */
+  joinPolicy?: JoinPolicy;
+  mediaAdapter?: MediaAdapter;
+  unhandledAction?: "fail" | "accept";
   /**
    * Custom message for microphone permission prompt. Set to false to skip.
    * @platform ios
@@ -99,10 +105,9 @@ export type ExpoCallKitTelecomPluginProps = {
   androidEventReceiver?: string;
 };
 
-const withExpoCallKitTelecom: ConfigPlugin<ExpoCallKitTelecomPluginProps | void> = (
-  config,
-  props,
-) => {
+const withExpoCallKitTelecom: ConfigPlugin<
+  ExpoCallKitTelecomPluginProps | void
+> = (config, props) => {
   const opts: ExpoCallKitTelecomPluginProps = props ?? {};
   config = withExpoCallKitTelecomAndroid(config, opts);
   config = withExpoCallKitTelecomIos(config, opts);
@@ -110,4 +115,8 @@ const withExpoCallKitTelecom: ConfigPlugin<ExpoCallKitTelecomPluginProps | void>
   return config;
 };
 
-export default createRunOncePlugin(withExpoCallKitTelecom, pkg.name, pkg.version);
+export default createRunOncePlugin(
+  withExpoCallKitTelecom,
+  pkg.name,
+  pkg.version
+);

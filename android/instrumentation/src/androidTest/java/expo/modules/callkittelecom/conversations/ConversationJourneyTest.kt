@@ -98,4 +98,40 @@ class ConversationJourneyTest {
             assertNull(coordinator.pending("test-conversation"))
         }
     }
+    @Test fun nativeAnswerDoesNotWaitForJavaScript() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val engine = ConversationEngine.get(context)
+            val order = mutableListOf<String>()
+            NativeMediaRegistry.factories["webrtc"] = {
+                object : NativeMediaSession {
+                    override suspend fun prewarm(payload: Map<String, Any?>) {
+                        val states = engine.snapshot["conversations"] as List<*>
+                        assertTrue(states.isNotEmpty())
+                        order += "prewarm-muted"
+                    }
+                    override suspend fun activate() { order += "activate" }
+                    override suspend fun setMuted(muted: Boolean) {}
+                    override suspend fun close(reason: String) { order += "close" }
+                }
+            }
+            engine.policy = JSONObject(mapOf("type" to "native", "media" to "webrtc", "prewarm" to true))
+            engine.actions.resetBridge()
+            engine.emit = { name, _ -> assertNotEquals("handlerAction", name) }
+            try {
+                val outcome = engine.incoming(mapOf("eventId" to "native-event", "serverCallId" to "native-call",
+                    "caller" to mapOf("id" to "native-caller"), "hasVideo" to false))
+                assertEquals("reported", outcome["status"])
+                val id = outcome["id"] as String
+                val began = android.os.SystemClock.elapsedRealtime()
+                engine.join(id)
+                assertTrue(android.os.SystemClock.elapsedRealtime() - began < 1500)
+                withTimeout(5000) { while (!order.contains("activate")) delay(10) }
+                assertEquals(listOf("prewarm-muted", "activate"), order)
+                engine.end(id)
+                withTimeout(3000) { while (!order.contains("close")) delay(10) }
+            } finally { NativeMediaRegistry.factories.remove("webrtc") }
+        }
+    }
+
 }

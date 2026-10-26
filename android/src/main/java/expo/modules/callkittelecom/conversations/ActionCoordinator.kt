@@ -16,7 +16,15 @@ class ActionCoordinator(private val emit: (String, Map<String, Any?>) -> Unit,
     private var generation = 0
     private var attached = false
     var acceptUnhandled = false
+    var coldJoinBudgetMs = 3500L
 
+    fun resetBridge() {
+        entries.values.forEach { entry -> entry.delivered?.let {
+            cancelEvent(entry.body["actionID"] as String, it, "handlerReplaced")
+        }; entry.delivered = null }
+        generation = 0
+        attached = false
+    }
     fun attach(value: Boolean, nextGeneration: Int) {
         if (nextGeneration <= generation) return
         for ((id, entry) in entries) {
@@ -36,7 +44,7 @@ class ActionCoordinator(private val emit: (String, Map<String, Any?>) -> Unit,
 
     fun pending(conversationId: String): Map<String, Any?>? = entries.values.firstOrNull {
         (it.body["conversation"] as? Map<*, *>)?.get("id") == conversationId
-    }?.body?.let { body -> body.filterKeys { it != "conversation" } + ("id" to body["actionID"]) }
+    }?.body?.let { body -> body.filterKeys { it != "conversation" && it != "actionID" } + ("id" to body["actionID"]) }
 
     fun cancel(conversationId: String) {
         entries.values.filter { (it.body["conversation"] as? Map<*, *>)?.get("id") == conversationId }
@@ -48,15 +56,16 @@ class ActionCoordinator(private val emit: (String, Map<String, Any?>) -> Unit,
 
     suspend fun perform(conversation: Map<String, Any?>, kind: String, origin: String,
                         arguments: Map<String, Any?> = emptyMap()) {
+        val budget = if (kind == "join" && !attached) coldJoinBudgetMs else 3500L
         val id = UUID.randomUUID().toString()
         val entry = Entry(mapOf("actionID" to id, "conversation" to conversation, "kind" to kind,
-            "origin" to origin, "deadline" to Instant.now().plusMillis(3500).toString()) + arguments,
-            SystemClock.elapsedRealtime() + 3500)
+            "origin" to origin, "deadline" to Instant.now().plusMillis(budget).toString()) + arguments,
+            SystemClock.elapsedRealtime() + budget)
         entries[id] = entry
         changed()
         if (attached) deliver(entry)
         try {
-            val accepted = withTimeoutOrNull(3500) { entry.result.await() }
+            val accepted = withTimeoutOrNull(budget) { entry.result.await() }
                 ?: (entry.delivered == null && acceptUnhandled)
             check(accepted) { "Conversation action rejected or expired" }
         } finally {

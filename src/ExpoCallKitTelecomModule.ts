@@ -1,4 +1,3 @@
 import { requireNativeModule } from "expo";
-
-// This call loads the native module object from the JSI.
-export default requireNativeModule("ExpoCallKitTelecom");
+import type { NativeTransport } from "./conversations/transport";
+export default requireNativeModule<NativeTransport>("ExpoCallKitTelecom");
