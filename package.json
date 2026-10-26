@@ -23,7 +23,7 @@
     "clean": "expo-module clean",
     "lint": "expo-module lint",
     "test": "expo-module test plugin",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p plugin && tsc -p tsconfig.contract.json",
+    "typecheck": "expo-module build && tsc --noEmit && tsc --noEmit -p plugin && tsc -p tsconfig.contract.json",
     "prepare": "expo-module prepare",
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module",

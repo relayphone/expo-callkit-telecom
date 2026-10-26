@@ -1,356 +1,70 @@
 package expo.modules.callkittelecom
 
-import expo.modules.callkittelecom.events.CallEventEmitter
-import expo.modules.callkittelecom.events.CallEvents
-import expo.modules.callkittelecom.managers.CallAudioManager
-import expo.modules.callkittelecom.managers.CallManager
-import expo.modules.callkittelecom.managers.CaptureSessionManager
-import expo.modules.callkittelecom.managers.VoIPPushManager
-import expo.modules.callkittelecom.models.CallEndedReason
-import expo.modules.callkittelecom.models.CallOptions
-import expo.modules.callkittelecom.models.CallParticipant
-import expo.modules.callkittelecom.models.IncomingCallEvent
-import expo.modules.callkittelecom.services.CallNotificationReceiver
-import expo.modules.callkittelecom.store.CallStore
+import android.content.pm.PackageManager
+import expo.modules.callkittelecom.conversations.ConversationEngine
+import expo.modules.kotlin.exception.CodedException
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import java.util.UUID
+import kotlinx.coroutines.*
+import org.json.JSONObject
 
 class ExpoCallKitTelecomModule : Module() {
-    /**
-     * Checks the current activity's launch intent for ACTION_ANSWER.
-     *
-     * On cold start from a notification answer action, the intent is delivered to onCreate() — not
-     * onNewIntent() — so OnNewIntent never fires. This method handles that case by checking the
-     * launch intent directly.
-     */
-    private fun handleLaunchIntent() {
-        val intent = appContext.currentActivity?.intent ?: return
-        handleAnswerIntent(intent)
-    }
-
-    /** Extracts the call ID from an ACTION_ANSWER intent and answers the call. */
-    private fun handleAnswerIntent(intent: android.content.Intent) {
-        if (intent.action != CallNotificationReceiver.ACTION_ANSWER) return
-
-        val callIdStr = intent.getStringExtra(CallNotificationReceiver.EXTRA_CALL_ID) ?: return
-        val callId =
-            try {
-                UUID.fromString(callIdStr)
-            } catch (_: IllegalArgumentException) {
-                return
+    private lateinit var engine: ConversationEngine
+    private val owner = Any()
+    private var epoch = 0L
+    private suspend fun <T> command(body: suspend () -> T): T = engine.jobs.async {
+        try { check(engine.bridgeOwner === owner); body() }
+        catch (error: Exception) {
+            if (error is TimeoutCancellationException) throw CodedException("deadline_exceeded", "Conversation deadline exceeded", null)
+            if (error is CancellationException) throw error
+            if (error is expo.modules.callkittelecom.conversations.ConversationFailure) {
+                val fields = mutableMapOf<String, Any>("code" to error.code, "message" to "Conversation operation failed")
+                error.nativeCode?.let { fields["nativeDomain"] = "androidx.core.telecom"; fields["nativeCode"] = it }
+                val details = JSONObject(fields).toString()
+                throw CodedException(error.code, "expo-conversation:$details", null)
             }
-
-        // Clear the action so it isn't re-processed on configuration changes
-        intent.action = null
-
-        CallManager.shared.answerCall(callId)
-    }
-
+            val code = error.message?.takeIf { it in setOf("invalid_arguments", "unknown_conversation", "unsupported") } ?: "conversation"
+            throw CodedException(code, "Conversation operation failed", null)
+        }
+    }.await()
     override fun definition() = ModuleDefinition {
         Name("ExpoCallKitTelecom")
-
-        // region Events
-
-        Events(
-            CallEvents.CALL_SESSION_ADDED,
-            CallEvents.CALL_SESSION_UPDATED,
-            CallEvents.CALL_SESSION_REMOVED,
-            CallEvents.AUDIO_SESSION_ACTIVATED,
-            CallEvents.AUDIO_SESSION_DEACTIVATED,
-            CallEvents.AUDIO_ROUTE_CHANGED,
-            CallEvents.INCOMING_CALL_REPORTED,
-            CallEvents.OUTGOING_CALL_STARTED,
-            CallEvents.CALL_ANSWERED,
-            CallEvents.CALL_ENDED,
-            CallEvents.CALL_REPORTED_ENDED,
-            CallEvents.SET_MUTED_ACTION,
-            CallEvents.VIDEO_CHANGED,
-            CallEvents.SET_HELD_ACTION,
-            CallEvents.DTMF,
-            CallEvents.CALL_INTENT_RECEIVED,
-            CallEvents.VOIP_PUSH_TOKEN_UPDATED,
-        )
-
-        // endregion
-
-        // region Lifecycle
-
+        Events("conversationsChanged", "audioRoutesChanged", "pushTokenUpdated", "handlerAction", "actionCancelled", "conversationEvent")
         OnCreate {
             val context = appContext.reactContext ?: return@OnCreate
-
-            CallManager.shared.initialize(context)
-
-            CallEventEmitter.setSender { eventName, body -> sendEvent(eventName, body) }
-
-            VoIPPushManager.register()
-
-            // Handle the launch intent for cold-start answer actions.
-            // OnNewIntent only fires when the activity is already running.
-            // On cold start the ACTION_ANSWER intent is the launch intent,
-            // so we must check it here.
-            handleLaunchIntent()
+            engine = ConversationEngine.get(context)
+            engine.jobs.launch {
+                engine.bind(owner) { name, body -> sendEvent(name, body) }
+                epoch = engine.actions.epoch
+                val metadata = context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA).metaData
+                engine.policy = JSONObject(metadata?.getString("ExpoCallKitTelecomJoinPolicy") ?: "{}")
+                runCatching { com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+                    engine.jobs.launch { engine.updatePushToken(token) }
+                } }
+                engine.actions.acceptUnhandled = metadata?.getString("ExpoCallKitTelecomUnhandledAction") == "accept"
+            }
         }
-
-        OnDestroy { CallEventEmitter.setSender(null) }
-
-        OnNewIntent { intent -> handleAnswerIntent(intent) }
-
-        // Register per-event observers
-        OnStartObserving(CallEvents.CALL_SESSION_ADDED) {
-            CallEventEmitter.startObserving(CallEvents.CALL_SESSION_ADDED)
+        OnDestroy { if (::engine.isInitialized) engine.jobs.launch { if (engine.bridgeOwner === owner) engine.bind(null) { _, _ -> } } }
+        Property("snapshot") { engine.snapshot }
+        Property("mediaAdapter") { engine.policy.optString("media", "webrtc") }
+        AsyncFunction("getConversations") Coroutine { -> command { engine.snapshot } }
+        AsyncFunction("getAudioRoutes") Coroutine { -> command { engine.audioRoutes() } }
+        AsyncFunction("getPushToken") Coroutine { -> command { engine.pushTokenSnapshot() } }
+        AsyncFunction("reportIncomingConversation") Coroutine { payload: Map<String, Any?> -> command { engine.incoming(payload) } }
+        AsyncFunction("startConversation") Coroutine { options: Map<String, Any?> -> command { engine.start(options) } }
+        AsyncFunction("joinConversation") Coroutine { id: String -> command { engine.join(id) } }
+        AsyncFunction("endConversation") Coroutine { id: String -> command { engine.end(id) } }
+        AsyncFunction("setHeld") Coroutine { id: String, value: Boolean -> command { engine.hold(id, value) } }
+        AsyncFunction("setMuted") Coroutine { id: String, value: Boolean -> command { engine.mute(id, value) } }
+        AsyncFunction("playTones") Coroutine { id: String, digits: String -> command { engine.tones(id, digits) } }
+        AsyncFunction("mergeConversations") Coroutine { _: String, _: String -> command<Unit> { error("unsupported") } }
+        AsyncFunction("reportConversation") Coroutine { id: String, report: Map<String, Any?> -> command { engine.report(id, report) } }
+        AsyncFunction("selectAudioRoute") Coroutine { id: String -> command { engine.selectRoute(id) } }
+        Function("setHandlerAttached") { attached: Boolean, generation: Int -> engine.jobs.launch { if (engine.bridgeOwner === owner) engine.actions.attach(attached, generation, epoch) }; Unit }
+        Function("setDialRequestListenerAttached") { _: Boolean, _: Int -> Unit }
+        Function("settleAction") { id: String, generation: Int, success: Boolean, _: Map<String, Any?>? ->
+            engine.jobs.launch { if (engine.bridgeOwner === owner) engine.actions.settle(id, generation, success, epoch) }; Unit
         }
-        OnStopObserving(CallEvents.CALL_SESSION_ADDED) {
-            CallEventEmitter.stopObserving(CallEvents.CALL_SESSION_ADDED)
-        }
-
-        OnStartObserving(CallEvents.CALL_SESSION_UPDATED) {
-            CallEventEmitter.startObserving(CallEvents.CALL_SESSION_UPDATED)
-        }
-        OnStopObserving(CallEvents.CALL_SESSION_UPDATED) {
-            CallEventEmitter.stopObserving(CallEvents.CALL_SESSION_UPDATED)
-        }
-
-        OnStartObserving(CallEvents.CALL_SESSION_REMOVED) {
-            CallEventEmitter.startObserving(CallEvents.CALL_SESSION_REMOVED)
-        }
-        OnStopObserving(CallEvents.CALL_SESSION_REMOVED) {
-            CallEventEmitter.stopObserving(CallEvents.CALL_SESSION_REMOVED)
-        }
-
-        OnStartObserving(CallEvents.AUDIO_SESSION_ACTIVATED) {
-            CallEventEmitter.startObserving(CallEvents.AUDIO_SESSION_ACTIVATED)
-        }
-        OnStopObserving(CallEvents.AUDIO_SESSION_ACTIVATED) {
-            CallEventEmitter.stopObserving(CallEvents.AUDIO_SESSION_ACTIVATED)
-        }
-
-        OnStartObserving(CallEvents.AUDIO_SESSION_DEACTIVATED) {
-            CallEventEmitter.startObserving(CallEvents.AUDIO_SESSION_DEACTIVATED)
-        }
-        OnStopObserving(CallEvents.AUDIO_SESSION_DEACTIVATED) {
-            CallEventEmitter.stopObserving(CallEvents.AUDIO_SESSION_DEACTIVATED)
-        }
-
-        OnStartObserving(CallEvents.AUDIO_ROUTE_CHANGED) {
-            CallEventEmitter.startObserving(CallEvents.AUDIO_ROUTE_CHANGED)
-        }
-        OnStopObserving(CallEvents.AUDIO_ROUTE_CHANGED) {
-            CallEventEmitter.stopObserving(CallEvents.AUDIO_ROUTE_CHANGED)
-        }
-
-        OnStartObserving(CallEvents.INCOMING_CALL_REPORTED) {
-            CallEventEmitter.startObserving(CallEvents.INCOMING_CALL_REPORTED)
-        }
-        OnStopObserving(CallEvents.INCOMING_CALL_REPORTED) {
-            CallEventEmitter.stopObserving(CallEvents.INCOMING_CALL_REPORTED)
-        }
-
-        OnStartObserving(CallEvents.OUTGOING_CALL_STARTED) {
-            CallEventEmitter.startObserving(CallEvents.OUTGOING_CALL_STARTED)
-        }
-        OnStopObserving(CallEvents.OUTGOING_CALL_STARTED) {
-            CallEventEmitter.stopObserving(CallEvents.OUTGOING_CALL_STARTED)
-        }
-
-        OnStartObserving(CallEvents.CALL_ANSWERED) {
-            CallEventEmitter.startObserving(CallEvents.CALL_ANSWERED)
-        }
-        OnStopObserving(CallEvents.CALL_ANSWERED) {
-            CallEventEmitter.stopObserving(CallEvents.CALL_ANSWERED)
-        }
-
-        OnStartObserving(CallEvents.CALL_ENDED) {
-            CallEventEmitter.startObserving(CallEvents.CALL_ENDED)
-        }
-        OnStopObserving(CallEvents.CALL_ENDED) {
-            CallEventEmitter.stopObserving(CallEvents.CALL_ENDED)
-        }
-
-        OnStartObserving(CallEvents.CALL_REPORTED_ENDED) {
-            CallEventEmitter.startObserving(CallEvents.CALL_REPORTED_ENDED)
-        }
-        OnStopObserving(CallEvents.CALL_REPORTED_ENDED) {
-            CallEventEmitter.stopObserving(CallEvents.CALL_REPORTED_ENDED)
-        }
-
-        OnStartObserving(CallEvents.SET_MUTED_ACTION) {
-            CallEventEmitter.startObserving(CallEvents.SET_MUTED_ACTION)
-        }
-        OnStopObserving(CallEvents.SET_MUTED_ACTION) {
-            CallEventEmitter.stopObserving(CallEvents.SET_MUTED_ACTION)
-        }
-
-        OnStartObserving(CallEvents.VIDEO_CHANGED) {
-            CallEventEmitter.startObserving(CallEvents.VIDEO_CHANGED)
-        }
-        OnStopObserving(CallEvents.VIDEO_CHANGED) {
-            CallEventEmitter.stopObserving(CallEvents.VIDEO_CHANGED)
-        }
-
-        OnStartObserving(CallEvents.SET_HELD_ACTION) {
-            CallEventEmitter.startObserving(CallEvents.SET_HELD_ACTION)
-        }
-        OnStopObserving(CallEvents.SET_HELD_ACTION) {
-            CallEventEmitter.stopObserving(CallEvents.SET_HELD_ACTION)
-        }
-
-        OnStartObserving(CallEvents.DTMF) { CallEventEmitter.startObserving(CallEvents.DTMF) }
-        OnStopObserving(CallEvents.DTMF) { CallEventEmitter.stopObserving(CallEvents.DTMF) }
-
-        OnStartObserving(CallEvents.CALL_INTENT_RECEIVED) {
-            CallEventEmitter.startObserving(CallEvents.CALL_INTENT_RECEIVED)
-        }
-        OnStopObserving(CallEvents.CALL_INTENT_RECEIVED) {
-            CallEventEmitter.stopObserving(CallEvents.CALL_INTENT_RECEIVED)
-        }
-
-        OnStartObserving(CallEvents.VOIP_PUSH_TOKEN_UPDATED) {
-            CallEventEmitter.startObserving(CallEvents.VOIP_PUSH_TOKEN_UPDATED)
-        }
-        OnStopObserving(CallEvents.VOIP_PUSH_TOKEN_UPDATED) {
-            CallEventEmitter.stopObserving(CallEvents.VOIP_PUSH_TOKEN_UPDATED)
-        }
-
-        // endregion
-
-        // region Call Session
-
-        // Returns the first active call session, if present.
-        AsyncFunction("getActiveCallSession") { CallStore.firstSession()?.toMap() }
-
-        // endregion
-
-        // region Audio Session
-
-        // Returns current audio session snapshot for diagnostics/UI state.
-        Function("getAudioSessionState") { CallAudioManager.getAudioSessionState() }
-
-        // Prepares audio session state before starting/reporting a call.
-        Function("prepareAudioSessionForCall") { hasVideo: Boolean ->
-            CallAudioManager.prepareAudioSessionForCall(hasVideo)
-        }
-
-        // Restores pre-call audio mode/route state.
-        Function("restoreAudioSession") { CallAudioManager.restoreAudioSession() }
-
-        // Overrides route to speaker (true) or clears override (false).
-        Function("setAudioSessionPortOverride") { enabled: Boolean ->
-            CallAudioManager.setAudioSessionPortOverride(enabled)
-        }
-
-        // endregion
-
-        // region Capture Session
-
-        // Returns capture session state (currently camera permission).
-        Function("getCaptureSessionState") { CaptureSessionManager.getCaptureSessionState() }
-
-        // endregion
-
-        // region Start Outgoing Call
-
-        // Starts a new outgoing call and returns the native call session ID.
-        AsyncFunction("startOutgoingCall") {
-            recipient: Map<String, Any?>,
-            options: Map<String, Any?> ->
-            val callId =
-                CallManager.shared.startOutgoingCall(
-                    recipient = CallParticipant.fromMap(recipient),
-                    options = CallOptions(hasVideo = options["hasVideo"] as? Boolean ?: false),
-                )
-            callId
-        }
-
-        // endregion
-
-        // region Report Incoming Call
-
-        // Reports an incoming call to Telecom from app/push events.
-        AsyncFunction("reportIncomingCall") { event: Map<String, Any?> ->
-            CallManager.shared.reportIncomingCall(IncomingCallEvent.fromMap(event))
-        }
-
-        // endregion
-
-        // region Answer Call
-
-        // Answers an existing incoming call session.
-        AsyncFunction("answerCall") { id: String ->
-            CallManager.shared.answerCall(UUID.fromString(id))
-        }
-
-        // Fulfills pending incoming-call answer once media is connected.
-        AsyncFunction("fulfillIncomingCallAnswered") { requestId: String ->
-            CallManager.shared.fulfillIncomingCallConnected(UUID.fromString(requestId))
-        }
-
-        // Reports outgoing call media connection established.
-        AsyncFunction("reportOutgoingCallConnected") { id: String ->
-            CallManager.shared.reportOutgoingCallConnected(UUID.fromString(id))
-        }
-
-        // endregion
-
-        // region End Call
-
-        // Ends an active call.
-        AsyncFunction("endCall") { id: String -> CallManager.shared.endCall(UUID.fromString(id)) }
-
-        // Reports an externally-ended call with explicit reason.
-        AsyncFunction("reportCallEnded") { id: String, reason: String ->
-            CallManager.shared.reportCallEnded(
-                UUID.fromString(id),
-                CallEndedReason.fromValue(reason),
-            )
-        }
-
-        // endregion
-
-        // region Mute Support
-
-        // Sets mute state for a call.
-        AsyncFunction("setMuted") { id: String, muted: Boolean ->
-            CallManager.shared.setMuted(UUID.fromString(id), muted)
-        }
-
-        // endregion
-
-        // region Video Support
-
-        // Reports call video enabled state changes.
-        AsyncFunction("reportVideo") { id: String, enabled: Boolean ->
-            CallManager.shared.reportVideo(UUID.fromString(id), enabled)
-        }
-
-        // endregion
-
-        // region Hold Support
-
-        // Sets call hold state.
-        AsyncFunction("setHeld") { id: String, onHold: Boolean ->
-            CallManager.shared.setHeld(UUID.fromString(id), onHold)
-        }
-
-        // endregion
-
-        // region DTMF Support
-
-        // Sends requested DTMF digits for a call.
-        AsyncFunction("playDTMF") { id: String, digits: String ->
-            CallManager.shared.playDTMF(UUID.fromString(id), digits)
-        }
-
-        // endregion
-
-        // region VoIP Push
-
-        // Registers for VoIP push by fetching the FCM token.
-        Function("registerVoIPPush") { VoIPPushManager.register() }
-
-        // Returns the current VoIP push token and its type.
-        Function("getVoIPPushToken") { mapOf("token" to VoIPPushManager.token, "type" to "FCM") }
-
-        // endregion
     }
 }

@@ -18,7 +18,9 @@ android {
 }
 
 dependencies {
+  compileOnly "com.facebook.react:react-android"
   implementation "androidx.core:core-telecom:1.0.1"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2"
   implementation "com.google.firebase:firebase-messaging:24.1.0"
 
   // expo-notifications may be included as a source project or as a prebuilt

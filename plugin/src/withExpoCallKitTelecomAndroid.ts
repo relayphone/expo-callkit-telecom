@@ -21,7 +21,7 @@ const ERROR_MSG_PREFIX = "An error occurred while configuring Android calls. ";
 function setMetaDataValue(app: any, key: string, value: string): void {
   const existing = app["meta-data"]?.find(
     // biome-ignore lint/suspicious/noExplicitAny: manifest meta-data items are untyped
-    (item: any) => item.$["android:name"] === key,
+    (item: any) => item.$["android:name"] === key
   );
   if (existing) {
     existing.$["android:value"] = value;
@@ -60,29 +60,29 @@ const withTimeouts: ConfigPlugin<{
   fulfillAnswerCallTimeout?: number;
 }> = (
   config,
-  { incomingCallTimeout, outgoingCallTimeout, fulfillAnswerCallTimeout },
+  { incomingCallTimeout, outgoingCallTimeout, fulfillAnswerCallTimeout }
 ) => {
   return withAndroidManifest(config, (config) => {
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(
-      config.modResults,
+      config.modResults
     );
 
     setMetaDataValue(
       app,
       "ExpoCallKitTelecomIncomingCallTimeout",
-      String(incomingCallTimeout ?? DEFAULT_INCOMING_CALL_TIMEOUT),
+      String(incomingCallTimeout ?? DEFAULT_INCOMING_CALL_TIMEOUT)
     );
 
     setMetaDataValue(
       app,
       "ExpoCallKitTelecomOutgoingCallTimeout",
-      String(outgoingCallTimeout ?? DEFAULT_OUTGOING_CALL_TIMEOUT),
+      String(outgoingCallTimeout ?? DEFAULT_OUTGOING_CALL_TIMEOUT)
     );
 
     setMetaDataValue(
       app,
       "ExpoCallKitTelecomFulfillAnswerCallTimeout",
-      String(fulfillAnswerCallTimeout ?? DEFAULT_FULFILL_ANSWER_CALL_TIMEOUT),
+      String(fulfillAnswerCallTimeout ?? DEFAULT_FULFILL_ANSWER_CALL_TIMEOUT)
     );
 
     return config;
@@ -94,7 +94,7 @@ const withTimeouts: ConfigPlugin<{
  */
 const withSounds: ConfigPlugin<{ sounds?: string[] }> = (
   config,
-  { sounds },
+  { sounds }
 ) => {
   if (!sounds || sounds.length === 0) {
     return config;
@@ -111,7 +111,7 @@ const withSounds: ConfigPlugin<{ sounds?: string[] }> = (
         "src",
         "main",
         "res",
-        "raw",
+        "raw"
       );
 
       mkdirSync(rawDir, { recursive: true });
@@ -122,7 +122,7 @@ const withSounds: ConfigPlugin<{ sounds?: string[] }> = (
 
         if (!existsSync(sourcePath)) {
           throw new Error(
-            `${ERROR_MSG_PREFIX}Sound file not found: ${sourcePath}`,
+            `${ERROR_MSG_PREFIX}Sound file not found: ${sourcePath}`
           );
         }
 
@@ -156,25 +156,25 @@ const withDefaultDialtone: ConfigPlugin<{
   if (soundFilenames.length === 0) {
     throw new Error(
       `${ERROR_MSG_PREFIX}"defaultDialtone" was specified but no ` +
-        `sounds were provided.`,
+        `sounds were provided.`
     );
   }
   if (!soundFilenames.includes(defaultDialtone)) {
     throw new Error(
       `${ERROR_MSG_PREFIX}"defaultDialtone" must be one of the provided ` +
-        `sounds (${soundFilenames.join(", ")}).`,
+        `sounds (${soundFilenames.join(", ")}).`
     );
   }
 
   return withAndroidManifest(config, (config) => {
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(
-      config.modResults,
+      config.modResults
     );
 
     setMetaDataValue(
       app,
       "ExpoCallKitTelecomDefaultDialtone",
-      toAndroidRawResourceName(defaultDialtone),
+      toAndroidRawResourceName(defaultDialtone)
     );
 
     return config;
@@ -201,26 +201,26 @@ const withDefaultRingtone: ConfigPlugin<{
   if (soundFilenames.length === 0) {
     throw new Error(
       `${ERROR_MSG_PREFIX}"defaultRingtone" was specified but no ` +
-        `sounds were provided.`,
+        `sounds were provided.`
     );
   }
   if (!soundFilenames.includes(defaultRingtone)) {
     throw new Error(
       `${ERROR_MSG_PREFIX}"defaultRingtone" must be one of the provided ` +
         `sounds (${soundFilenames.join(", ")}) or "default" for ` +
-        `system ringtone.`,
+        `system ringtone.`
     );
   }
 
   return withAndroidManifest(config, (config) => {
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(
-      config.modResults,
+      config.modResults
     );
 
     setMetaDataValue(
       app,
       "ExpoCallKitTelecomDefaultRingtone",
-      toAndroidRawResourceName(defaultRingtone),
+      toAndroidRawResourceName(defaultRingtone)
     );
 
     return config;
@@ -237,9 +237,9 @@ const withDefaultRingtone: ConfigPlugin<{
  * The service is declared in expo-notifications' library AndroidManifest.xml,
  * so we must use `tools:node="remove"` to tell the manifest merger to strip it.
  */
-const withFirebaseMessagingService: ConfigPlugin<ExpoCallKitTelecomPluginProps> = (
-  config,
-) => {
+const withFirebaseMessagingService: ConfigPlugin<
+  ExpoCallKitTelecomPluginProps
+> = (config) => {
   return withAndroidManifest(config, (config) => {
     const manifest = config.modResults.manifest;
 
@@ -249,7 +249,7 @@ const withFirebaseMessagingService: ConfigPlugin<ExpoCallKitTelecomPluginProps> 
     }
 
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(
-      config.modResults,
+      config.modResults
     );
 
     if (!app.service) {
@@ -261,7 +261,7 @@ const withFirebaseMessagingService: ConfigPlugin<ExpoCallKitTelecomPluginProps> 
 
     // Remove any existing entry first (idempotent across repeated prebuilds).
     app.service = app.service.filter(
-      (service) => service.$?.["android:name"] !== notificationsService,
+      (service) => service.$?.["android:name"] !== notificationsService
     );
 
     // Add a tools:node="remove" marker so the manifest merger strips the
@@ -287,7 +287,7 @@ const withFirebaseMessagingService: ConfigPlugin<ExpoCallKitTelecomPluginProps> 
  */
 const withEventReceiver: ConfigPlugin<{ androidEventReceiver?: string }> = (
   config,
-  { androidEventReceiver },
+  { androidEventReceiver }
 ) => {
   if (!androidEventReceiver) {
     return config;
@@ -295,12 +295,12 @@ const withEventReceiver: ConfigPlugin<{ androidEventReceiver?: string }> = (
 
   return withAndroidManifest(config, (config) => {
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(
-      config.modResults,
+      config.modResults
     );
 
     // Remove any existing entry first (idempotent across repeated prebuilds).
     app.receiver = (app.receiver ?? []).filter(
-      (receiver) => receiver.$["android:name"] !== androidEventReceiver,
+      (receiver) => receiver.$["android:name"] !== androidEventReceiver
     );
 
     app.receiver.push({
@@ -319,10 +319,40 @@ const withEventReceiver: ConfigPlugin<{ androidEventReceiver?: string }> = (
   });
 };
 
-export const withExpoCallKitTelecomAndroid: ConfigPlugin<ExpoCallKitTelecomPluginProps> = (
+const withConversationPolicy: ConfigPlugin<ExpoCallKitTelecomPluginProps> = (
   config,
-  props,
+  props
 ) => {
+  config = withAndroidManifest(config, (mod) => {
+    const app = AndroidConfig.Manifest.getMainApplicationOrThrow(
+      mod.modResults
+    );
+    setMetaDataValue(
+      app,
+      "ExpoCallKitTelecomJoinPolicy",
+      JSON.stringify(
+        props.joinPolicy ?? {
+          type: "native",
+          media: props.mediaAdapter === "livekit" ? "livekit" : "webrtc",
+          credentials: "fromPush",
+          prewarm: true,
+        }
+      )
+    );
+    setMetaDataValue(
+      app,
+      "ExpoCallKitTelecomUnhandledAction",
+      props.unhandledAction ?? "fail"
+    );
+    return mod;
+  });
+  return config;
+};
+
+export const withExpoCallKitTelecomAndroid: ConfigPlugin<
+  ExpoCallKitTelecomPluginProps
+> = (config, props) => {
+  config = withConversationPolicy(config, props);
   config = withTimeouts(config, props);
   config = withSounds(config, props);
   config = withDefaultRingtone(config, {

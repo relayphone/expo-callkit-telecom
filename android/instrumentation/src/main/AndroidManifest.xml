@@ -1,3 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <application android:label="Conversations tests" />
+  <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+  <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+  <application android:label="Conversations tests">
+    <activity android:name="expo.modules.callkittelecom.conversations.ConversationActivity" android:exported="false" />
+    <service android:name="expo.modules.callkittelecom.conversations.ConversationService" android:exported="false" android:foregroundServiceType="phoneCall" />
+    <receiver android:name="expo.modules.callkittelecom.conversations.ConversationReceiver" android:exported="false" />
+  </application>
 </manifest>

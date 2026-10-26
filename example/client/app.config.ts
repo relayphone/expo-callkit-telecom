@@ -1,4 +1,5 @@
 import type { ExpoConfig } from "expo/config";
+import { existsSync } from "node:fs";
 
 const BUNDLE_ID = "com.example.expocallkittelecom";
 
@@ -21,7 +22,9 @@ const config: ExpoConfig = {
     },
     predictiveBackGestureEnabled: false,
     package: BUNDLE_ID,
-    googleServicesFile: "./google-services.json",
+    ...(existsSync("./google-services.json")
+      ? { googleServicesFile: "./google-services.json" }
+      : {}),
   },
   web: {
     favicon: "./assets/favicon.png",
