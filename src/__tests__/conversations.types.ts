@@ -72,7 +72,7 @@ const handler: ConversationHandler = {
 };
 api.setConversationHandler(handler);
 api.setConversationHandler(null);
-// @ts-expect-error The three signaling callbacks are required when a handler attaches.
+// @ts-expect-error Attaching a handler still requires start/end signaling callbacks.
 api.setConversationHandler({ mute() {} });
 
 declare const native: NativeTransport;
@@ -112,16 +112,16 @@ const invitation: IncomingCallPayload = {
   },
 };
 void invitation;
-// @ts-expect-error Native credentials cannot depend on a JavaScript callback.
 const jsFetcher: JoinPolicy = {
   type: "native",
   media: "livekit",
+  // @ts-expect-error Native credentials cannot depend on a JavaScript callback.
   credentials: async () => invitation.media,
 };
 void jsFetcher;
-// @ts-expect-error Event-only media has no native engine to answer with.
 const eventOnly: JoinPolicy = {
   type: "native",
+  // @ts-expect-error Event-only media has no native engine to answer with.
   media: "none",
   credentials: "fromPush",
 };
