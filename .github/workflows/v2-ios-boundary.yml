@@ -1,0 +1,25 @@
+name: v2 iOS boundary
+
+on:
+  pull_request:
+    branches: [v2]
+    paths: ['apple/**', 'src/conversations/ios.ts', '.github/workflows/v2-ios-boundary.yml']
+  push:
+    branches: [v2]
+    paths: ['apple/**', 'src/conversations/ios.ts', '.github/workflows/v2-ios-boundary.yml']
+
+permissions:
+  contents: read
+concurrency:
+  group: v2-ios-boundary-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compile pinned SDK adapter for iOS simulator
+        working-directory: apple
+        run: xcodebuild -scheme ExpoConversationsBoundary -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/v2-ios-boundary" CODE_SIGNING_ALLOWED=NO build
