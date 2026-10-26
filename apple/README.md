@@ -14,9 +14,10 @@ remote manifest preview on Xcode26.6 evaluates it at `/Package.swift`, where
 `/VERSION` is absent. Checking out complete sources avoids that preview failure
 without modifying SDK sources. Local builds need the same pinned checkout there.
 The compile-only CI builds this adapter with the real SDK for a generic iOS
-simulator on `macos-26`; it does not boot a simulator. A parallel job prebuilds
-and compiles the v2 example for a generic iOS simulator. Native simulator journeys
-belong to the SDK repository.
+simulator on the standard `xcode-27` runner, because the pinned SDK requires
+an iOS27 SDK at build time. It does not boot a simulator. A parallel `macos-26`
+job prebuilds and compiles the v2 example for a generic iOS simulator. Native
+simulator journeys belong to the SDK repository.
 
 The TS `IOSConversationAdapter` interface is the required Expo Modules 2 port,
 using the same `NativeTransport` as Android. Full runtime composition remains
