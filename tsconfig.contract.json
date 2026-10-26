@@ -6,7 +6,7 @@
     "exactOptionalPropertyTypes": true
   },
   "include": [
-    "src/conversations/types.ts",
+    "src/conversations/**/*.ts",
     "src/__tests__/conversations.types.ts"
   ],
   "exclude": []

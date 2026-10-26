@@ -8,7 +8,8 @@ import type {
   ConversationsSnapshot,
   IncomingConversationOutcome,
   PendingAction,
-} from "../conversations/types";
+  NativeTransport,
+} from "../conversations";
 
 declare const api: ConversationsApi;
 declare const conversation: Conversation;
@@ -71,3 +72,12 @@ api.setConversationHandler(handler);
 api.setConversationHandler(null);
 // @ts-expect-error The three signaling callbacks are required when a handler attaches.
 api.setConversationHandler({ mute() {} });
+
+declare const native: NativeTransport;
+native.addListener("conversationsChanged", ({ revision, conversations }) => {
+  const latest: ConversationsSnapshot = { revision, conversations };
+  void latest;
+});
+// @ts-expect-error Versioned change events cannot omit the revision.
+const invalidSnapshot: ConversationsSnapshot = { conversations: [] };
+void invalidSnapshot;

@@ -13,8 +13,8 @@
     "./app.plugin.js": "./app.plugin.js",
     "./package.json": "./package.json",
     "./types": {
-      "types": "./build/conversations/types.d.ts",
-      "default": "./build/conversations/types.js"
+      "types": "./build/conversations/index.d.ts",
+      "default": "./build/conversations/index.js"
     }
   },
   "scripts": {

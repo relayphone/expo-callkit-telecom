@@ -1,6 +1,6 @@
 {
   "$schema": "https://typedoc-plugin-markdown.org/schema.json",
-  "entryPoints": ["src/index.ts", "src/conversations/types.ts"],
+  "entryPoints": ["src/index.ts", "src/conversations/index.ts"],
   "out": "docs/api",
   "name": "API Reference \u2014 expo-callkit-telecom",
   "plugin": ["typedoc-plugin-markdown"],
