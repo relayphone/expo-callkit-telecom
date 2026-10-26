@@ -6,6 +6,7 @@ const BUNDLE_ID = "com.example.expocallkittelecom";
 const config: ExpoConfig = {
   name: "CallKit Tel",
   slug: "expo-callkit-telecom-example",
+  scheme: "conversations-example",
   version: "1.0.0",
   orientation: "portrait",
   icon: "./assets/icon.png",
@@ -41,7 +42,7 @@ const config: ExpoConfig = {
     [
       "expo-build-properties",
       {
-        ios: { deploymentTarget: "16.4", enableSceneSupport: true },
+        ios: { deploymentTarget: "17.4", enableSceneSupport: true },
         android: { minSdkVersion: 26 },
       },
     ],
@@ -56,12 +57,9 @@ const config: ExpoConfig = {
         defaultRingtoneAndroid: "ringtone.wav",
         defaultDialtone: "dialtone.wav",
         iconTemplateIos: "./assets/callkit-icon.png",
-        androidEventReceiver: ".CallEndedReceiver",
+        joinPolicy: { type: "handler" },
       },
     ],
-    // Copies CallEndedReceiver.kt into the android project; the manifest <receiver>
-    // entry itself is registered by the plugin above via androidEventReceiver.
-    "./plugins/withCallEndedReceiver",
   ],
 };
 
