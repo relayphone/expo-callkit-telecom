@@ -3,10 +3,10 @@ name: v2 Android
 on:
   pull_request:
     branches: [v2]
-    paths: ['android/**', 'test/**', 'tools/check-call-identity.mjs', '.github/workflows/v2-android.yml']
+    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/check-call-identity.mjs', '.github/workflows/v2-android.yml']
   push:
     branches: [v2]
-    paths: ['android/**', 'test/**', 'tools/check-call-identity.mjs', '.github/workflows/v2-android.yml']
+    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/check-call-identity.mjs', '.github/workflows/v2-android.yml']
 
 permissions:
   contents: read
@@ -47,3 +47,30 @@ jobs:
           name: android-instrumentation-results
           path: android/instrumentation/build/outputs/androidTest-results
           if-no-files-found: error
+
+  native-bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: bun install --frozen-lockfile
+        working-directory: example/client
+      - run: bunx expo prebuild --platform android --no-install
+        working-directory: example/client
+        env:
+          CI: '1'
+      - run: ./gradlew :expo-callkit-telecom:compileDebugKotlin --no-daemon --max-workers=2 --stacktrace
+        working-directory: example/client/android
