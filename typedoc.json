@@ -1,12 +1,12 @@
 {
   "$schema": "https://typedoc-plugin-markdown.org/schema.json",
-  "entryPoints": ["src/index.ts"],
+  "entryPoints": ["src/index.ts", "src/conversations/types.ts"],
   "out": "docs/api",
-  "name": "API Reference — expo-callkit-telecom",
+  "name": "API Reference \u2014 expo-callkit-telecom",
   "plugin": ["typedoc-plugin-markdown"],
   "readme": "none",
   "githubPages": false,
-  "skipErrorChecking": true,
+  "skipErrorChecking": false,
   "excludePrivate": true,
   "excludeInternal": true,
   "hideBreadcrumbs": true,
@@ -32,5 +32,6 @@
     "Permissions",
     "Core",
     "*"
-  ]
+  ],
+  "treatWarningsAsErrors": true
 }
