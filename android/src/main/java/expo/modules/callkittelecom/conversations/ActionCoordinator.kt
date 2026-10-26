@@ -13,19 +13,24 @@ class ActionCoordinator(private val emit: (String, Map<String, Any?>) -> Unit,
                              val result: CompletableDeferred<Boolean> = CompletableDeferred(),
                              var delivered: Int? = null)
     private val entries = linkedMapOf<String, Entry>()
+    var epoch = 0L
+        private set
     private var generation = 0
     private var attached = false
     var acceptUnhandled = false
     var coldJoinBudgetMs = 3500L
+        set(value) { field = value.coerceIn(1, 3500) }
 
     fun resetBridge() {
+        epoch++
         entries.values.forEach { entry -> entry.delivered?.let {
             cancelEvent(entry.body["actionID"] as String, it, "handlerReplaced")
         }; entry.delivered = null }
         generation = 0
         attached = false
     }
-    fun attach(value: Boolean, nextGeneration: Int) {
+    fun attach(value: Boolean, nextGeneration: Int, ownerEpoch: Long) {
+        if (ownerEpoch != epoch) return
         if (nextGeneration <= generation) return
         for ((id, entry) in entries) {
             entry.delivered?.let { cancelEvent(id, it, "handlerReplaced") }
@@ -36,7 +41,8 @@ class ActionCoordinator(private val emit: (String, Map<String, Any?>) -> Unit,
         if (attached) entries.values.toList().forEach(::deliver)
     }
 
-    fun settle(id: String, owner: Int, accepted: Boolean) {
+    fun settle(id: String, owner: Int, accepted: Boolean, ownerEpoch: Long) {
+        if (ownerEpoch != epoch) return
         val entry = entries[id] ?: return
         if (entry.delivered == owner && owner == generation &&
             SystemClock.elapsedRealtime() < entry.expires) entry.result.complete(accepted)
