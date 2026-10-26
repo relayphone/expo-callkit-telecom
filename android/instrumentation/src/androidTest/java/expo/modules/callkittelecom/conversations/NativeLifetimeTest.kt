@@ -175,9 +175,8 @@ class NativeLifetimeTest {
                 }
             }
             try {
-                val payload = mapOf("media" to mapOf("expiresAt" to System.currentTimeMillis() / 1000 + 120))
                 val controller = NativeMediaController(InstrumentationRegistry.getInstrumentation().targetContext,
-                    payload, JSONObject(mapOf("media" to "webrtc")), owner, {}, { connected.complete(Unit) })
+                    emptyMap(), JSONObject(mapOf("media" to "webrtc")), owner, {}, { connected.complete(Unit) })
                 controller.prewarm(); controller.mute(); controller.answered {}
                 withTimeout(3000) { entered.await() }
                 assertTrue(nativeMuted)
@@ -201,19 +200,19 @@ class NativeLifetimeTest {
             var playing = false
             var active = false
             var activations = 0
+            var muted = false
             NativeMediaRegistry.factories["webrtc"] = {
                 object : NativeMediaSession {
-                    override suspend fun prewarm(payload: Map<String, Any?>) {}
+                    override suspend fun prewarm(payload: Map<String, Any?>) { assertFalse(payload.containsKey("media")) }
                     override suspend fun activate() { active = true; playing = true; activations++ }
                     override suspend fun setHeld(held: Boolean) { playing = active && !held }
-                    override suspend fun setMuted(muted: Boolean) {}
+                    override suspend fun setMuted(value: Boolean) { muted = value }
                     override suspend fun close(reason: String) { playing = false; closed.complete(Unit) }
                 }
             }
             try {
-                val payload = mapOf("media" to mapOf("expiresAt" to System.currentTimeMillis() / 1000 + 120))
                 val controller = NativeMediaController(InstrumentationRegistry.getInstrumentation().targetContext,
-                    payload, JSONObject(mapOf("media" to "webrtc")), owner, {}, { connected.complete(Unit) })
+                    emptyMap(), JSONObject(mapOf("media" to "webrtc")), owner, {}, { connected.complete(Unit) })
                 controller.prewarm(); controller.answered { waiting.complete(Unit); gate.await() }
                 withTimeout(3000) { waiting.await() }
                 controller.pause(); gate.complete(Unit)
@@ -223,8 +222,22 @@ class NativeLifetimeTest {
                 withTimeout(3000) { connected.await() }
                 assertTrue(playing); assertEquals(1, activations)
                 controller.pause(); assertFalse(playing)
-                controller.resume {}
+                val resumeWaiting = CompletableDeferred<Unit>()
+                val resumeGate = CompletableDeferred<Unit>()
+                controller.resume { resumeWaiting.complete(Unit); resumeGate.await() }
+                withTimeout(3000) { resumeWaiting.await() }
+                controller.mute()
+                resumeGate.complete(Unit)
                 withTimeout(3000) { while (!playing) delay(10) }
+                assertTrue(muted); assertEquals(1, activations)
+                controller.pause(); assertFalse(playing)
+                val unmuteWaiting = CompletableDeferred<Unit>()
+                val unmuteGate = CompletableDeferred<Unit>()
+                controller.resume { unmuteWaiting.complete(Unit); unmuteGate.await() }
+                withTimeout(3000) { unmuteWaiting.await() }
+                controller.unmute {}
+                unmuteGate.complete(Unit)
+                withTimeout(3000) { while (!playing || muted) delay(10) }
                 assertEquals(1, activations)
                 controller.close("ended")
                 withTimeout(3000) { closed.await() }
