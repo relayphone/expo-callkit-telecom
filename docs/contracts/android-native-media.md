@@ -37,5 +37,20 @@ carry a serverCallId, a monotonic timestamp and numeric measurements. Audio
 callbacks enqueue observations without running app code on the audio thread.
 `firstAudio` means the first decoded remote PCM16 frame with peak at least128
 (-48dBFS), after native activation; it is not a hardware/acoustic measurement.
-No raw audio or credentials are retained. Emulator timing qualification follows
-in a separate media-server journey slice; compilation alone proves no latency.
+No raw audio or credentials are retained.
+
+The Ubuntu/API35 journey uses the production FCM data entry with a synthetic
+high-priority envelope (it does not prove cloud FCM delivery), a real LiveKit
+server and a remote PCM publisher. Both pushed credentials and the HTTPS fetcher
+must prejoin without capture, playback or remote subscription. Native answer runs
+without a JS Join handler. Checked `native-media-results.json` records the report,
+prejoin, JS warm request, answer, audio authority and first PCM timestamps. Its
+3s emulator budget is separate from the 300ms product target; the artifact reports
+actual timing. The native harness records the JS warm request; the compiled Expo
+service invokes `ReactHost.start()`.
+
+The journey also requires capture to stop on hold and restart after resume, and
+room departure on decline/timeout. Missing credentials (404/410) spend one retry
+on answer and terminate without capture. Generated fixture credentials and the
+test CA stay in the CI workspace; only sanitized result JSON and JUnit are uploaded.
+The instrumentation application's test CA is never trusted by production code.

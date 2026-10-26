@@ -1,0 +1,3 @@
+livekit==1.1.21
+livekit-api==1.2.2
+aiohttp==3.14.5

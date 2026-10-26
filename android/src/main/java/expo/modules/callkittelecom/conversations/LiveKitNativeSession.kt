@@ -60,6 +60,10 @@ internal class LiveKitNativeSession(private val context: Context) : NativeMediaS
         val candidate = LiveKit.create(context, overrides = LiveKitOverrides(audioOptions = AudioOptions(
             audioHandler = NoAudioHandler(), disableAudioPrewarming = true, disableCommunicationModeWorkaround = true,
             javaAudioDeviceModuleCustomizer = { builder ->
+                builder.setAudioTrackStateCallback(object : JavaAudioDeviceModule.AudioTrackStateCallback {
+                    override fun onWebRtcAudioTrackStart() { NativeMediaSignals.emit(serverId, NativeMediaStage.PLAYBACK_STARTED) }
+                    override fun onWebRtcAudioTrackStop() { NativeMediaSignals.emit(serverId, NativeMediaStage.PLAYBACK_STOPPED) }
+                })
                 builder.setAudioRecordStateCallback(object : JavaAudioDeviceModule.AudioRecordStateCallback {
                     override fun onWebRtcAudioRecordStart() { NativeMediaSignals.emit(serverId, NativeMediaStage.CAPTURE_STARTED) }
                     override fun onWebRtcAudioRecordStop() { NativeMediaSignals.emit(serverId, NativeMediaStage.CAPTURE_STOPPED) }
@@ -71,6 +75,10 @@ internal class LiveKitNativeSession(private val context: Context) : NativeMediaS
                 is RoomEvent.TrackSubscribed -> (event.track as? RemoteAudioTrack)?.let { track ->
                     NativeMediaSignals.emit(serverId, NativeMediaStage.REMOTE_SUBSCRIBED)
                     tracks += track; track.enabled = active && !held; track.addSink(sink)
+                }
+                is RoomEvent.TrackUnsubscribed -> (event.track as? RemoteAudioTrack)?.let { track ->
+                    NativeMediaSignals.emit(serverId, NativeMediaStage.REMOTE_UNSUBSCRIBED)
+                    tracks.remove(track); runCatching { track.removeSink(sink) }
                 }
                 is RoomEvent.Disconnected -> if (!closed && room === candidate) {
                     room = null

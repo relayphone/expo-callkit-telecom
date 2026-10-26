@@ -55,6 +55,7 @@ class ConversationEngine(val context: Context) {
     }
     private val calls = linkedMapOf<String, Call>()
     private val recent = mutableMapOf<String, Pair<Long, String>>()
+    internal var incomingTimeoutMillis = (metadata?.getInt("ExpoCallKitTelecomIncomingCallTimeout", 45) ?: 45).coerceAtLeast(1).toLong()*1000
     internal var answerTimeoutMillis = (metadata?.getInt("ExpoCallKitTelecomFulfillAnswerCallTimeout", 30) ?: 30).coerceAtLeast(1).toLong() * 1000
     private var revision = 0L
     @Volatile var snapshot: Map<String, Any?> = mapOf("revision" to 0, "conversations" to emptyList<Any>())
@@ -141,7 +142,7 @@ class ConversationEngine(val context: Context) {
                     onAnswer = { withTimeout(4500) {
                         if (call.state["status"] == "ringing") { signal(call, NativeMediaStage.ANSWER_REQUESTED); call.timeout?.cancel(); action(id, "join", "system"); call.active = true; joined(id) }
                     } },
-                    onDisconnect = { withTimeout(4500) { action(id, "end", "system"); terminal(id, "local") } },
+                    onDisconnect = { withTimeout(4500) { cleanupDecline(id); action(id, "end", "system"); terminal(id, "local") } },
                     onSetActive = { withTimeout(4500) { hold(id, false, "system") } },
                     onSetInactive = { withTimeout(4500) { hold(id, true, "system") } }) {
                     call.admitted = true
@@ -150,8 +151,8 @@ class ConversationEngine(val context: Context) {
                     call.ready.complete(this)
                     ConversationService.show(context, id, call.state)
                     call.timeout = jobs.launch {
-                        delay((metadata?.getInt(if (incoming) "ExpoCallKitTelecomIncomingCallTimeout" else "ExpoCallKitTelecomOutgoingCallTimeout",
-                            if (incoming) 45 else 60) ?: if (incoming) 45 else 60).coerceAtLeast(1).toLong() * 1000)
+                        delay(if (incoming) incomingTimeoutMillis else
+                            (metadata?.getInt("ExpoCallKitTelecomOutgoingCallTimeout", 60) ?: 60).coerceAtLeast(1).toLong()*1000)
                         if (calls[id] === call && call.state["connectedAt"] == null) terminateLater(id, "unanswered")
                     }
                     val controls = this
@@ -231,7 +232,12 @@ class ConversationEngine(val context: Context) {
             signal(current, NativeMediaStage.AUDIO_AUTHORIZED)
         }
     }
+    private fun cleanupDecline(id: String) {
+        val current = call(id)
+        if (current.state["status"] == "ringing") current.media?.close("declined")
+    }
     suspend fun end(id: String) {
+        cleanupDecline(id)
         try { action(id, "end", "app") }
         catch (error: Exception) { if (calls.containsKey(id)) finish(id, "failed"); throw error }
         finish(id, "local")

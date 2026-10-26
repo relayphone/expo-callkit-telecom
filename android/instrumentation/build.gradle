@@ -18,7 +18,7 @@ android {
   }
   sourceSets {
     main.java.srcDirs = ['../src/main/java/expo/modules/callkittelecom/conversations']
-    androidTest.assets.srcDirs = ['../src/androidTest/assets']
+    androidTest.assets.srcDirs = ['../src/androidTest/assets', 'src/androidTest/assets']
   }
 }
 
