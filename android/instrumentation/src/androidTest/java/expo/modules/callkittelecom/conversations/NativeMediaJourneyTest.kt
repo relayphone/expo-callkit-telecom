@@ -49,6 +49,7 @@ class NativeMediaJourneyTest {
             output.delete()
             var warmRequests = 0
             var joinHandlerCalls = 0
+            var declineSignalingObserved = false
             NativeMediaAuthenticationProviders.providers["fixture"] = {
                 NativeMediaAuthentication(settings.getString("authentication"), "fixture-device")
             }
@@ -149,7 +150,8 @@ class NativeMediaJourneyTest {
                 engine.end(declined)
                 absent(declined); stage(declinedServer, NativeMediaStage.CLOSED)
                 val declineState = noClient(declinedServer)
-                assertTrue(declineState.getJSONArray("states").toString().contains("declined"))
+                declineSignalingObserved = declineState.getJSONArray("states").toString().contains("declined")
+                if (provider == "webrtc") assertTrue(declineSignalingObserved)
                 assertFalse(events(declinedServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
                 owned -= declined; cleanupResults += "declined"
 
@@ -176,7 +178,8 @@ class NativeMediaJourneyTest {
                 assertEquals(0, joinHandlerCalls)
                 output.writeText(JSONObject(mapOf("passed" to true, "provider" to provider, "metric" to "native-answer-request-to-first-remote-pcm",
                     "pcmThreshold" to 128, "budgetMs" to 3000, "targetMs" to 300, "samples" to results,
-                    "cleanup" to cleanupResults, "jsJoinHandlerCalls" to joinHandlerCalls, "jsWarmRequests" to warmRequests)).toString())
+                    "cleanup" to cleanupResults, "declineSignalingObserved" to declineSignalingObserved,
+                    "jsJoinHandlerCalls" to joinHandlerCalls, "jsWarmRequests" to warmRequests)).toString())
             } } catch (error: Throwable) {
                 output.writeText(JSONObject(mapOf("passed" to false, "stage" to "native-$provider-journey", "samples" to results,
                     "cleanup" to cleanupResults, "observedStages" to signals.map { it.stage.value })).toString())

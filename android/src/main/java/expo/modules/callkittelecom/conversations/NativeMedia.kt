@@ -51,8 +51,8 @@ internal class NativeMediaController(private val context: Context, private val p
             val adapter = policy.optString("media", "webrtc")
             session = NativeMediaRegistry.factories[adapter]?.invoke(context)
                 ?: when (adapter) {
-                    "livekit" -> LiveKitNativeSession(context)
-                    "webrtc" -> WebRTCNativeSession(context)
+                    "livekit" -> LiveKitNativeSession(context, payload["serverCallId"] as? String ?: error("Invalid media invitation"))
+                    "webrtc" -> WebRTCNativeSession(context, payload["serverCallId"] as? String ?: error("Invalid media invitation"))
                     else -> null
                 }
         }

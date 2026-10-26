@@ -19,7 +19,7 @@ import livekit.org.webrtc.*
 import livekit.org.webrtc.audio.JavaAudioDeviceModule
 
 /** Raw WebRTC over an explicit authenticated HTTPS SDP exchange, without a JS media gate. */
-internal class WebRTCNativeSession(private val context: Context) : NativeMediaSession {
+internal class WebRTCNativeSession(private val context: Context, invitationId: String) : NativeMediaSession {
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "ConversationWebRTC") }.asCoroutineDispatcher()
     private val scope = CoroutineScope(SupervisorJob() + worker)
     private var owner: Room? = null
@@ -33,7 +33,7 @@ internal class WebRTCNativeSession(private val context: Context) : NativeMediaSe
     @Volatile private var held = false
     @Volatile private var closed = false
     private var muted = false
-    private var serverId = ""
+    private var serverId = invitationId
     private var eventId = ""
     private var url = ""
     private var token = ""
@@ -205,6 +205,7 @@ internal class WebRTCNativeSession(private val context: Context) : NativeMediaSe
         withContext(worker) {
             if (closed) return@withContext
             closed = true
+            scope.coroutineContext.cancelChildren()
             try { if (exchangeAttempted) withTimeoutOrNull(500) { runCatching { signal(reason) } } }
             finally { dispose(); emit(NativeMediaStage.CLOSED) }
         }

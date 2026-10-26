@@ -170,6 +170,8 @@ async def raw_signaling(request):
         return web.json_response({"type": "answer", "sdp": peer.localDescription.sdp})
     if body.get("type") == "state":
         state = body.get("state")
+        if negotiation in closed_negotiations and state in ("prejoined", "answered"):
+            return web.Response(status=410)
         states.setdefault("native-ci-" + server_id, []).append(state)
         if state in ("declined", "ended", "filtered", "unanswered"):
             closed_negotiations.add(negotiation)
