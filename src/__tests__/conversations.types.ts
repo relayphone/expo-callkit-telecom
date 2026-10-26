@@ -1,3 +1,4 @@
+/* eslint-disable no-void -- Compile-only expressions exercise the public contract. */
 import type {
   ActionContext,
   Conversation,
