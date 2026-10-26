@@ -21,12 +21,32 @@ export interface Participant {
   readonly email?: string;
 }
 
+/**
+ * Short-lived credentials for a muted native pre-join, shared by APNs and FCM.
+ * The server must not treat prejoined as answered. Never log this object or its token.
+ * @category Reports
+ */
+export interface LiveKitMediaCredentials {
+  readonly provider: "livekit";
+  /** Secure WebSocket URL of the LiveKit server. */
+  readonly url: string;
+  readonly room: string;
+  /** Owner participant identity, scoped to this device. */
+  readonly identity: string;
+  /** Room-scoped JWT with roomJoin, canPublish and canSubscribe grants. */
+  readonly token: string;
+  /** Unix epoch seconds. Expired credentials require a native fetch, not a pre-join. */
+  readonly expiresAt: number;
+}
+
 /** Incoming invitation from push or foreground transport. @category Reports */
 export interface IncomingCallPayload {
   readonly eventId: string;
   readonly serverCallId: string;
   readonly caller: Participant;
   readonly hasVideo: boolean;
+  /** Optional native pre-warm credentials; keep this outside application metadata. */
+  readonly media?: LiveKitMediaCredentials;
   /** Original RFC 3339 wire timestamp, when supplied. */
   readonly startedAt?: string;
   readonly metadata?: { readonly [key: string]: JSONValue };
@@ -128,13 +148,15 @@ export type ActionHandler<Context extends ActionContext = ActionContext> = (
 ) => void | Promise<void>;
 
 /**
- * One handler object for system and app actions. Missing optional methods accept.
- * With no handler, native retains actions until the deadline (default policy: fail).
+ * One handler object for system and app actions. Missing hold/mute/tones methods accept.
+ * Under the handler join policy a missing join method fails; native policy bypasses it.
+ * For JS-gated actions with no handler, native waits until the deadline (default: fail).
  * Resolving start/join does not report media connected. Native suppresses no-op echoes.
  * @category Handler
  */
 export interface ConversationHandler {
-  readonly join: ActionHandler;
+  /** Required by the explicit handler join policy; never gates a native-policy Join. */
+  readonly join?: ActionHandler;
   readonly start: ActionHandler;
   readonly end: ActionHandler;
   readonly hold?: ActionHandler<ActionContext & { readonly held: boolean }>;
@@ -227,8 +249,48 @@ export interface AudioRoutes {
 /** Native audio integration, selected at build time. @category Configuration */
 export type MediaAdapter = "webrtc" | "livekit" | "none";
 
+/**
+ * Reference to an app-registered native fetcher, available without JavaScript.
+ * It POSTs media-credentials with eventId/deviceId and native-held device authentication.
+ * Fetchers return LiveKitMediaCredentials; 404/410 abandons this call's pre-warm.
+ * A JavaScript callback is deliberately not a credentials source.
+ * @category Configuration
+ */
+export interface NativeCredentialsFetcher {
+  readonly type: "nativeFetcher";
+  readonly name: string;
+}
+
+/**
+ * Default policy: report first, then pre-warm media and JS in parallel.
+ * Join fulfils natively; the microphone stays muted until native audio activation.
+ * A missing/expired push credential uses fallback, then retries once on answer.
+ * @category Configuration
+ */
+export interface NativeJoinPolicy {
+  readonly type: "native";
+  readonly media: Exclude<MediaAdapter, "none">;
+  readonly credentials: "fromPush" | NativeCredentialsFetcher;
+  /** Native fallback used when fromPush credentials are missing or expired. */
+  readonly fallback?: NativeCredentialsFetcher;
+  /** Defaults to true; covers both native media and the JS runtime. */
+  readonly prewarm?: boolean;
+}
+
+/** Explicit fallback for applications whose media remains in JS. @category Configuration */
+export interface HandlerJoinPolicy {
+  readonly type: "handler";
+  /** Positive native-enforced cold-launch budget; never extends the platform deadline. */
+  readonly coldLaunchJoinBudgetMs?: number;
+}
+
+/** Native policy is the default; handler gating requires explicit selection. @category Configuration */
+export type JoinPolicy = NativeJoinPolicy | HandlerJoinPolicy;
+
 /** Plugin configuration added to the existing v1 props. @category Configuration */
 export interface ConversationConfiguration {
+  /** Defaults to native answering with the configured media adapter and prewarm enabled. */
+  readonly joinPolicy?: JoinPolicy;
   readonly mediaAdapter?: MediaAdapter;
   readonly unhandledAction?: "fail" | "accept";
   /** Positive interval in milliseconds; native performs at most one recovery attempt. */
