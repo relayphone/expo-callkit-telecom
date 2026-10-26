@@ -40,12 +40,17 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: gradle -p android/instrumentation connectedDebugAndroidTest --stacktrace
+          script: |
+            gradle -p android/instrumentation connectedDebugAndroidTest --stacktrace
+            adb exec-out run-as expo.modules.callkittelecom.instrumentation cat files/journey-results.json > android/instrumentation/build/journey-results.json
+            python3 tools/check-android-journey.py android/instrumentation/build/journey-results.json
       - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: android-instrumentation-results
-          path: android/instrumentation/build/outputs/androidTest-results
+          path: |
+            android/instrumentation/build/outputs/androidTest-results
+            android/instrumentation/build/journey-results.json
           if-no-files-found: error
 
   native-bridge:

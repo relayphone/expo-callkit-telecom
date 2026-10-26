@@ -34,6 +34,7 @@ internal class NativeMediaController(private val context: Context, private val p
     private var preparation: Deferred<Unit>? = null
     private var answerJob: Job? = null
     private var unmuteJob: Job? = null
+    private var resumeJob: Job? = null
     @Volatile private var closed = false
     @Volatile private var desiredMuted = false
     @Volatile private var activated = false
@@ -48,7 +49,10 @@ internal class NativeMediaController(private val context: Context, private val p
         currentCoroutineContext().ensureActive(); check(!closed)
         val pushed = payload["media"] as? Map<String, Any?>
         val fresh = (pushed?.get("expiresAt") as? Number)?.toLong()?.let { it > System.currentTimeMillis() / 1000 } == true
-        val resolved = if (policy.opt("credentials") !is JSONObject && fresh) payload else {
+        // WebRTC sessions own native negotiation; only LiveKit has a push credential wire shape.
+        val nativeNegotiation = policy.optString("media", "webrtc") == "webrtc" &&
+            policy.opt("credentials") !is JSONObject && policy.opt("fallback") !is JSONObject
+        val resolved = if (nativeNegotiation || (policy.opt("credentials") !is JSONObject && fresh)) payload else {
             val source = policy.optJSONObject("credentials") ?: policy.optJSONObject("fallback")
             val fetcher = source?.optString("name")?.let { NativeMediaRegistry.fetchers[it] } ?: error("Native credentials unavailable")
             payload + ("media" to withTimeout(3000) { fetcher(payload) })
@@ -102,7 +106,7 @@ internal class NativeMediaController(private val context: Context, private val p
     fun clearMute() { check(!closed); desiredMuted = false; unmuteJob?.cancel() }
     suspend fun pause() {
         check(!closed)
-        held = true; answerJob?.cancel(); answerJob = null; unmuteJob?.cancel()
+        held = true; answerJob?.cancel(); answerJob = null; unmuteJob?.cancel(); resumeJob?.cancel()
         if (!activated && !activating) return
         val work = operations.async { withTimeout(1000) { serial.withLock { check(!closed); session?.setHeld(true) } } }
         try { work.await() } finally { work.cancel() }
@@ -111,8 +115,8 @@ internal class NativeMediaController(private val context: Context, private val p
         check(!closed)
         held = false
         if (!activated) { answerJob = null; answered(audioReady); return }
-        unmuteJob?.cancel()
-        unmuteJob = operations.launch {
+        resumeJob?.cancel()
+        resumeJob = operations.launch {
             try { withTimeout(3000) {
                 audioReady()
                 serial.withLock { ensureActive(); check(!closed && !held); session?.setHeld(false); session?.setMuted(desiredMuted) }

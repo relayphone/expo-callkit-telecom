@@ -20,6 +20,7 @@ class ConversationJourneyTest {
     @Test fun incomingAndOutgoingJourney() = runBlocking {
         withContext(Dispatchers.Main) {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
+            File(context.filesDir, "journey-results.json").delete()
             val engine = ConversationEngine.get(context)
             engine.policy = JSONObject(mapOf("type" to "handler"))
             val baselineJobs = engine.jobs.coroutineContext[Job]!!.children.count { it.isActive }
@@ -52,6 +53,17 @@ class ConversationJourneyTest {
                 expect(id, "connected")
                 engine.hold(id, true)
                 expect(id, "held")
+                val second = engine.incoming(payload + mapOf("eventId" to "second-event", "serverCallId" to "second-call"))
+                assertEquals("reported", second["status"])
+                val secondId = second["id"] as String
+                assertNotEquals(id, secondId)
+                assertEquals("ringing", status(secondId))
+                assertEquals("held", status(id))
+                assertEquals(2, (engine.snapshot["conversations"] as List<*>).size)
+                seen += "second-ringing"
+                engine.end(secondId)
+                assertNull(status(secondId)); assertEquals("held", status(id))
+                seen += "second-ended"
                 engine.hold(id, false)
                 expect(id, "connected")
                 engine.end(id)
@@ -68,7 +80,7 @@ class ConversationJourneyTest {
                 seen += "outgoing-ended"
                 withTimeout(5000) { while (engine.jobs.coroutineContext[Job]!!.children.count { it.isActive } > baselineJobs) delay(10) }
             }
-            assertEquals(listOf("ringing", "connecting", "connected", "held", "connected",
+            assertEquals(listOf("ringing", "connecting", "connected", "held", "second-ringing", "second-ended", "connected",
                 "incoming-ended", "dialing", "connecting", "connected", "outgoing-ended"), seen)
             File(context.filesDir, "journey-results.json").writeText(JSONObject(mapOf(
                 "passed" to true, "steps" to seen, "identityVectors" to "call-identity.json")).toString())
@@ -105,6 +117,8 @@ class ConversationJourneyTest {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val engine = ConversationEngine.get(context)
             val order = mutableListOf<String>()
+            val holding = CompletableDeferred<Unit>()
+            val holdGate = CompletableDeferred<Unit>()
             NativeMediaRegistry.factories["webrtc"] = {
                 object : NativeMediaSession {
                     override suspend fun prewarm(payload: Map<String, Any?>) {
@@ -113,7 +127,7 @@ class ConversationJourneyTest {
                         order += "prewarm-muted"
                     }
                     override suspend fun activate() { order += "activate" }
-                    override suspend fun setHeld(held: Boolean) {}
+                    override suspend fun setHeld(held: Boolean) { if (held) { holding.complete(Unit); holdGate.await() } }
                     override suspend fun setMuted(muted: Boolean) {}
                     override suspend fun close(reason: String) { order += "close" }
                 }
@@ -123,8 +137,7 @@ class ConversationJourneyTest {
             engine.emit = { name, _ -> assertNotEquals("handlerAction", name) }
             try {
                 val outcome = engine.incoming(mapOf("eventId" to "native-event", "serverCallId" to "native-call",
-                    "caller" to mapOf("id" to "native-caller"), "hasVideo" to false,
-                    "media" to mapOf("provider" to "livekit", "expiresAt" to System.currentTimeMillis() / 1000 + 120)))
+                    "caller" to mapOf("id" to "native-caller"), "hasVideo" to false))
                 assertEquals("reported", outcome["status"])
                 val id = outcome["id"] as String
                 val began = android.os.SystemClock.elapsedRealtime()
@@ -132,6 +145,17 @@ class ConversationJourneyTest {
                 assertTrue(android.os.SystemClock.elapsedRealtime() - began < 1500)
                 withTimeout(5000) { while (!order.contains("activate")) delay(10) }
                 assertEquals(listOf("prewarm-muted", "activate"), order)
+                engine.emit = { name, body ->
+                    if (name == "handlerAction") engine.actions.settle(body["actionID"] as String,
+                        body["generation"] as Int, true, engine.actions.epoch)
+                }
+                engine.actions.attach(true, 1, engine.actions.epoch)
+                val pause = async { engine.hold(id, true) }
+                withTimeout(3000) { holding.await() }
+                engine.report(id, mapOf("type" to "connected"))
+                assertEquals("held", ((engine.snapshot["conversations"] as List<*>).single() as Map<*, *>)["status"])
+                holdGate.complete(Unit); pause.await()
+                engine.hold(id, false)
                 engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                 withTimeout(3000) { while (!order.contains("close")) delay(10) }
             } finally { NativeMediaRegistry.factories.remove("webrtc") }

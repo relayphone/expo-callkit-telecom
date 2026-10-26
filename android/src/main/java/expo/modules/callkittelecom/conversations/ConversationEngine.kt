@@ -228,9 +228,10 @@ class ConversationEngine(val context: Context) {
         if (origin == "app") checked(if (held) control(id).setInactive() else control(id).setActive())
         current.active = !held
         refreshRoutes()
-        if (held) current.media?.pause() else current.media?.resume { awaitAudio(id, current) }
         current.state["status"] = if (held) "held" else if (current.state["connectedAt"] != null) "connected" else "connecting"
+        // Publish native authority before media suspension can yield to transport reports.
         publish()
+        if (held) current.media?.pause() else current.media?.resume { awaitAudio(id, current) }
     }
     suspend fun mute(id: String, muted: Boolean, origin: String = "app") {
         val current = call(id)
