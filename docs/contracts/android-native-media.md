@@ -55,7 +55,7 @@ on answer and terminate without capture. Generated fixture credentials and the
 test CA stay in the CI workspace; only sanitized result JSON and JUnit are uploaded.
 The instrumentation application's test CA is never trusted by production code.
 
-Room data state messages are best effort. In particular, queuing `declined` just
-before closing the room does not acknowledge backend delivery. The journey
-records that observation separately; required decline cleanup is Core call
-removal, native closure, no capture, and verified server participant departure.
+The LiveKit transport sends no application-specific room data messages. Native
+lifecycle hooks provide the app's backend integration boundary. Required decline
+cleanup is Core call removal, native closure, no capture, and verified server
+participant departure.

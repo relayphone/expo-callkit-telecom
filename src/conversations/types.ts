@@ -271,7 +271,9 @@ export interface HttpMediaCredentialsFetcher {
 }
 
 /** Named app fetcher or the built-in authenticated HTTPS client. @category Configuration */
-export type MediaCredentialsFetcher = NativeCredentialsFetcher | HttpMediaCredentialsFetcher;
+export type MediaCredentialsFetcher =
+  | NativeCredentialsFetcher
+  | HttpMediaCredentialsFetcher;
 
 /**
  * Default policy: report first, then pre-warm media and JS in parallel.

@@ -16,7 +16,6 @@ import kotlin.math.abs
 import kotlinx.coroutines.*
 import livekit.org.webrtc.AudioTrackSink
 import livekit.org.webrtc.audio.JavaAudioDeviceModule
-import org.json.JSONObject
 
 /** Telecom alone authorizes audio. A pre-join opens no capture, playback, focus or audio mode. */
 internal class LiveKitNativeSession(private val context: Context, invitationId: String) : NativeMediaSession {
@@ -95,7 +94,6 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             require(candidate.name == media["room"] && candidate.localParticipant.identity?.value == media["identity"])
             room = candidate
             NativeMediaSignals.emit(serverId, NativeMediaStage.ROOM_CONNECTED)
-            signal("prejoined")
             NativeMediaSignals.emit(serverId, NativeMediaStage.PREJOINED)
         } catch (error: Throwable) {
             collector.cancel(); room = null
@@ -109,7 +107,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         active = true; held = false; firstAudio.set(false)
         subscriptions(true)
         setMicrophone(!muted)
-        scope.launch { runCatching { signal("answered") } }; Unit
+        Unit
     }
     override suspend fun setHeld(held: Boolean): Unit = withContext(Dispatchers.Main.immediate) {
         check(!closed)
@@ -143,23 +141,16 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             participant.trackPublications.values.forEach { (it as? RemoteTrackPublication)?.setSubscribed(enabled) }
         }
     }
-    private suspend fun signal(state: String) {
-        val data = JSONObject(mapOf("state" to state, "serverCallId" to serverId)).toString()
-        room?.localParticipant?.publishData(data.toByteArray(Charsets.UTF_8), topic = "voip-sdk.call")?.getOrThrow()
-    }
     override suspend fun close(reason: String): Unit = withContext(Dispatchers.Main.immediate) {
         if (closed) return@withContext
         closed = true; active = false
-        try { withTimeoutOrNull(500) { signal(reason) } }
-        finally {
-            scope.cancel(); tracks.forEach { runCatching { it.removeSink(sink) } }; tracks.clear()
-            microphone?.let { track ->
-                runCatching { room?.localParticipant?.unpublishTrack(track) }
-                runCatching { track.stopPrewarm(); track.dispose() }
-            }
-            microphone = null; microphonePublished = false
-            runCatching { room?.release() }; room = null
-            NativeMediaSignals.emit(serverId, NativeMediaStage.CLOSED)
+        scope.cancel(); tracks.forEach { runCatching { it.removeSink(sink) } }; tracks.clear()
+        microphone?.let { track ->
+            runCatching { room?.localParticipant?.unpublishTrack(track) }
+            runCatching { track.stopPrewarm(); track.dispose() }
         }
+        microphone = null; microphonePublished = false
+        runCatching { room?.release() }; room = null
+        NativeMediaSignals.emit(serverId, NativeMediaStage.CLOSED)
     }
 }

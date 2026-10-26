@@ -1,6 +1,5 @@
 """CI-only TLS signaling proxy, credential endpoint and real LiveKit PCM publisher."""
 import asyncio
-import contextlib
 import datetime
 import json
 import math
@@ -30,12 +29,6 @@ def token(room, identity):
 
 async def publish(room_name):
     room = rtc.Room()
-
-    @room.on("data_received")
-    def observed(packet):
-        if packet.topic == "voip-sdk.call":
-            with contextlib.suppress(Exception):
-                states.setdefault(room_name, []).append(json.loads(packet.data)["state"])
 
     await room.connect("ws://127.0.0.1:7880", token(room_name, "fixture-publisher"))
     source = rtc.AudioSource(48000, 1)
