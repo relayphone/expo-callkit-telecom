@@ -9,6 +9,8 @@ import org.json.JSONObject
 
 /** Implementations honor cancellation; failed prewarm releases resources and remains retryable. */
 interface NativeMediaSession {
+    val isPrepared: Boolean get() = true
+    fun setFailureListener(listener: () -> Unit) {}
     suspend fun prewarm(payload: Map<String, Any?>)
     suspend fun activate()
     /** Suspend local capture AND remote playback; resume only after native audio authority. */
@@ -45,7 +47,15 @@ internal class NativeMediaController(private val context: Context, private val p
     @Suppress("UNCHECKED_CAST")
     private suspend fun prepare() = serial.withLock {
         currentCoroutineContext().ensureActive(); check(!closed)
-        if (session == null) session = NativeMediaRegistry.factories[policy.optString("media", "webrtc")]?.invoke(context)
+        if (session == null) {
+            val adapter = policy.optString("media", "webrtc")
+            session = NativeMediaRegistry.factories[adapter]?.invoke(context)
+                ?: if (adapter == "livekit") LiveKitNativeSession(context,
+                    payload["serverCallId"] as? String ?: error("Invalid media invitation")) else null
+        }
+        session?.setFailureListener {
+            operations.launch(Dispatchers.Main) { if (!closed) failed() }
+        }
         currentCoroutineContext().ensureActive(); check(!closed)
         val pushed = payload["media"] as? Map<String, Any?>
         val fresh = (pushed?.get("expiresAt") as? Number)?.toLong()?.let { it > System.currentTimeMillis() / 1000 } == true
@@ -54,22 +64,36 @@ internal class NativeMediaController(private val context: Context, private val p
             policy.opt("credentials") !is JSONObject && policy.opt("fallback") !is JSONObject
         val resolved = if (nativeNegotiation || (policy.opt("credentials") !is JSONObject && fresh)) payload else {
             val source = policy.optJSONObject("credentials") ?: policy.optJSONObject("fallback")
-            val fetcher = source?.optString("name")?.let { NativeMediaRegistry.fetchers[it] } ?: error("Native credentials unavailable")
-            payload + ("media" to withTimeout(3000) { fetcher(payload) })
+            val credentials = withTimeout(3000) {
+                if (source?.optString("type") == "http") NativeHttpCredentials().fetch(payload, source)
+                else {
+                    val fetcher = source?.optString("name")?.let { NativeMediaRegistry.fetchers[it] }
+                        ?: error("Native credentials unavailable")
+                    fetcher(payload)
+                }
+            }
+            payload + ("media" to credentials)
         }
         currentCoroutineContext().ensureActive(); check(!closed)
         session?.prewarm(resolved) ?: error("Native media adapter unavailable")
     }
     fun prewarm() {
         check(!closed)
-        if (policy.optBoolean("prewarm", true)) preparation = operations.async { withTimeout(8000) { prepare() } }
+        if (policy.optBoolean("prewarm", true)) preparation = operations.async {
+            (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.PREWARM_STARTED) }
+            withTimeout(8000) { prepare() }
+        }
     }
     fun answered(audioReady: suspend () -> Unit) {
         if (answerJob != null || closed) return
         answerJob = operations.launch {
+            var phase = 1L
             try {
                 withTimeout(5000) {
-                    try { preparation?.await() ?: error("No pre-warm") }
+                    try {
+                        preparation?.await() ?: error("No pre-warm")
+                        check(session?.isPrepared != false) { "Pre-warm disconnected" }
+                    }
                     catch (error: Exception) {
                         ensureActive(); check(!closed)
                         if (retried) throw error
@@ -77,7 +101,9 @@ internal class NativeMediaController(private val context: Context, private val p
                         preparation = operations.async { withTimeout(8000) { prepare() } }
                         preparation!!.await()
                     }
+                    phase = 2L
                     audioReady()
+                    phase = 3L
                     serial.withLock {
                         ensureActive(); check(!closed && !held)
                         session?.setHeld(false)
@@ -91,8 +117,12 @@ internal class NativeMediaController(private val context: Context, private val p
                     }
                 }
                 withContext(Dispatchers.Main) { if (!closed) connected() }
-            } catch (_: Exception) {
-                if (isActive && !closed && !held) withContext(Dispatchers.Main) { if (!closed) failed() }
+            } catch (error: Exception) {
+                if (isActive && !closed && !held) {
+                    (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.ANSWER_FAILED,
+                        mapOf("phase" to phase, "timeout" to if (error is TimeoutCancellationException) 1L else 0L)) }
+                    withContext(Dispatchers.Main) { if (!closed) failed() }
+                }
             }
         }
     }

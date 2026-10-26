@@ -55,6 +55,7 @@ class ConversationEngine(val context: Context) {
     }
     private val calls = linkedMapOf<String, Call>()
     private val recent = mutableMapOf<String, Pair<Long, String>>()
+    internal var incomingTimeoutMillis = (metadata?.getInt("ExpoCallKitTelecomIncomingCallTimeout", 45) ?: 45).coerceAtLeast(1).toLong()*1000
     internal var answerTimeoutMillis = (metadata?.getInt("ExpoCallKitTelecomFulfillAnswerCallTimeout", 30) ?: 30).coerceAtLeast(1).toLong() * 1000
     private var revision = 0L
     @Volatile var snapshot: Map<String, Any?> = mapOf("revision" to 0, "conversations" to emptyList<Any>())
@@ -77,6 +78,11 @@ class ConversationEngine(val context: Context) {
         if (snapshot["conversations"] == states) return
         snapshot = mapOf("revision" to ++revision, "conversations" to states)
         emit("conversationsChanged", snapshot)
+    }
+    @Suppress("UNCHECKED_CAST")
+    private fun signal(current: Call, stage: NativeMediaStage) {
+        ((current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String)
+            ?.let { NativeMediaSignals.emit(it, stage) }
     }
     private fun call(id: String) = calls[id] ?: error("unknown_conversation")
     private suspend fun control(id: String) = call(id).ready.await()
@@ -134,18 +140,19 @@ class ConversationEngine(val context: Context) {
             try {
                 telecom.addCall(attributes,
                     onAnswer = { withTimeout(4500) {
-                        if (call.state["status"] == "ringing") { call.timeout?.cancel(); action(id, "join", "system"); call.active = true; joined(id) }
+                        if (call.state["status"] == "ringing") { signal(call, NativeMediaStage.ANSWER_REQUESTED); call.timeout?.cancel(); action(id, "join", "system"); call.active = true; joined(id) }
                     } },
-                    onDisconnect = { withTimeout(4500) { action(id, "end", "system"); terminal(id, "local") } },
+                    onDisconnect = { withTimeout(4500) { cleanupDecline(id); action(id, "end", "system"); terminal(id, "local") } },
                     onSetActive = { withTimeout(4500) { hold(id, false, "system") } },
                     onSetInactive = { withTimeout(4500) { hold(id, true, "system") } }) {
                     call.admitted = true
+                    signal(call, NativeMediaStage.REPORTED)
                     publish()
                     call.ready.complete(this)
                     ConversationService.show(context, id, call.state)
                     call.timeout = jobs.launch {
-                        delay((metadata?.getInt(if (incoming) "ExpoCallKitTelecomIncomingCallTimeout" else "ExpoCallKitTelecomOutgoingCallTimeout",
-                            if (incoming) 45 else 60) ?: if (incoming) 45 else 60).coerceAtLeast(1).toLong() * 1000)
+                        delay(if (incoming) incomingTimeoutMillis else
+                            (metadata?.getInt("ExpoCallKitTelecomOutgoingCallTimeout", 60) ?: 60).coerceAtLeast(1).toLong()*1000)
                         if (calls[id] === call && call.state["connectedAt"] == null) terminateLater(id, "unanswered")
                     }
                     val controls = this
@@ -194,6 +201,7 @@ class ConversationEngine(val context: Context) {
     }
     suspend fun join(id: String) {
         require(call(id).state["status"] == "ringing") { "invalid_arguments" }
+        signal(call(id), NativeMediaStage.ANSWER_REQUESTED)
         call(id).timeout?.cancel()
         try { action(id, "join", "app") }
         catch (error: Exception) { if (calls.containsKey(id)) finish(id, "failed"); throw error }
@@ -203,6 +211,7 @@ class ConversationEngine(val context: Context) {
     }
     private fun joined(id: String) {
         val current = call(id)
+        signal(current, NativeMediaStage.ANSWER_ACCEPTED)
         current.state["status"] = "connecting"
         current.timeout?.cancel()
         current.timeout = jobs.launch {
@@ -217,12 +226,25 @@ class ConversationEngine(val context: Context) {
     private suspend fun awaitAudio(id: String, current: Call) {
         // Returning through main lets Core-Telecom finish a system callback before audio begins.
         withContext(Dispatchers.Main) { yield(); check(calls[id] === current && current.active) }
-        withTimeout(1500) {
+        signal(current, NativeMediaStage.AUDIO_WAIT_STARTED)
+        try { withTimeout(1500) {
             while (audio.mode != AudioManager.MODE_IN_COMMUNICATION || current.endpoint == null) delay(10)
             check(calls[id] === current && current.active)
+            signal(current, NativeMediaStage.AUDIO_AUTHORIZED)
+        } } catch (error: TimeoutCancellationException) {
+            @Suppress("UNCHECKED_CAST") val serverId = (current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String
+            serverId?.let { NativeMediaSignals.emit(it, NativeMediaStage.AUDIO_WAIT_EXPIRED, mapOf(
+                "audioMode" to audio.mode.toLong(), "hasEndpoint" to if (current.endpoint != null) 1L else 0L,
+                "active" to if (current.active) 1L else 0L)) }
+            throw error
         }
     }
+    private fun cleanupDecline(id: String) {
+        val current = call(id)
+        if (current.state["status"] == "ringing") current.media?.close("declined")
+    }
     suspend fun end(id: String) {
+        cleanupDecline(id)
         try { action(id, "end", "app") }
         catch (error: Exception) { if (calls.containsKey(id)) finish(id, "failed"); throw error }
         finish(id, "local")

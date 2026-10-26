@@ -245,4 +245,36 @@ class NativeLifetimeTest {
         }
     }
 
+    @Test fun invalidatedPrejoinRetriesOnceAtAnswer() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val owner = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            val prepared = CompletableDeferred<Unit>()
+            val connected = CompletableDeferred<Unit>()
+            val closed = CompletableDeferred<Unit>()
+            val ready = java.util.concurrent.atomic.AtomicBoolean(false)
+            val attempts = java.util.concurrent.atomic.AtomicInteger(0)
+            NativeMediaRegistry.factories["livekit"] = {
+                object : NativeMediaSession {
+                    override val isPrepared get() = ready.get()
+                    override suspend fun prewarm(payload: Map<String, Any?>) { attempts.incrementAndGet(); ready.set(true); prepared.complete(Unit) }
+                    override suspend fun activate() { assertTrue(ready.get()) }
+                    override suspend fun setHeld(held: Boolean) {}
+                    override suspend fun setMuted(muted: Boolean) {}
+                    override suspend fun close(reason: String) { closed.complete(Unit) }
+                }
+            }
+            try {
+                val controller = NativeMediaController(InstrumentationRegistry.getInstrumentation().targetContext,
+                    mapOf("media" to mapOf("expiresAt" to System.currentTimeMillis()/1000+120)),
+                    JSONObject(mapOf("media" to "livekit")), owner, { fail("Unexpected native failure") }, { connected.complete(Unit) })
+                controller.prewarm(); withTimeout(3000) { prepared.await() }
+                ready.set(false)
+                controller.answered {}
+                withTimeout(3000) { connected.await() }
+                assertEquals(2, attempts.get())
+                controller.close("ended"); withTimeout(3000) { closed.await() }
+            } finally { NativeMediaRegistry.factories.remove("livekit"); owner.cancel() }
+        }
+    }
+
 }

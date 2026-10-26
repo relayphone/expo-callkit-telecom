@@ -261,6 +261,20 @@ export interface NativeCredentialsFetcher {
   readonly name: string;
 }
 
+/** Built-in native HTTPS POST fetcher; authentication is resolved by registered native code. @category Configuration */
+export interface HttpMediaCredentialsFetcher {
+  readonly type: "http";
+  /** HTTPS origin/base path; the native client appends /v1/calls/{serverCallId}/media-credentials. */
+  readonly baseUrl: string;
+  /** NativeMediaAuthenticationProviders entry registered in Application.onCreate. */
+  readonly authentication: string;
+}
+
+/** Named app fetcher or the built-in authenticated HTTPS client. @category Configuration */
+export type MediaCredentialsFetcher =
+  | NativeCredentialsFetcher
+  | HttpMediaCredentialsFetcher;
+
 /**
  * Default policy: report first, then pre-warm media and JS in parallel.
  * Join fulfils natively; the microphone stays muted until native audio activation.
@@ -270,9 +284,9 @@ export interface NativeCredentialsFetcher {
 export interface NativeJoinPolicy {
   readonly type: "native";
   readonly media: Exclude<MediaAdapter, "none">;
-  readonly credentials: "fromPush" | NativeCredentialsFetcher;
+  readonly credentials: "fromPush" | MediaCredentialsFetcher;
   /** Native fallback used when fromPush credentials are missing or expired. */
-  readonly fallback?: NativeCredentialsFetcher;
+  readonly fallback?: MediaCredentialsFetcher;
   /** Defaults to true; covers both native media and the JS runtime. */
   readonly prewarm?: boolean;
 }
