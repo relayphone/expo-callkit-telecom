@@ -83,6 +83,8 @@ class NativeMediaJourneyTest {
             val prefix = if (provider == "webrtc") "rtc-" else ""
             try { withTimeout(120_000) {
                 for ((index, source) in sources.withIndex()) {
+                    // Isolate each measurement from the previous test/call's audio teardown.
+                    withTimeout(5000) { while (context.getSystemService(android.media.AudioManager::class.java).mode != android.media.AudioManager.MODE_NORMAL) delay(25) }
                     val serverId = "${prefix}timing-$source-$stamp"
                     val id = incoming(serverId, source != "fetcher")
                     val prejoined = stage(serverId, NativeMediaStage.PREJOINED)
@@ -182,7 +184,8 @@ class NativeMediaJourneyTest {
                     "jsJoinHandlerCalls" to joinHandlerCalls, "jsWarmRequests" to warmRequests)).toString())
             } } catch (error: Throwable) {
                 output.writeText(JSONObject(mapOf("passed" to false, "stage" to "native-$provider-journey", "samples" to results,
-                    "cleanup" to cleanupResults, "observedStages" to signals.map { it.stage.value })).toString())
+                    "cleanup" to cleanupResults, "observedStages" to signals.map { mapOf("stage" to it.stage.value,
+                        "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) })).toString())
                 throw error
             } finally {
                 for (id in owned) runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "failed")) }

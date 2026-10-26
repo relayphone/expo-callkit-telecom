@@ -226,10 +226,17 @@ class ConversationEngine(val context: Context) {
     private suspend fun awaitAudio(id: String, current: Call) {
         // Returning through main lets Core-Telecom finish a system callback before audio begins.
         withContext(Dispatchers.Main) { yield(); check(calls[id] === current && current.active) }
-        withTimeout(1500) {
+        signal(current, NativeMediaStage.AUDIO_WAIT_STARTED)
+        try { withTimeout(1500) {
             while (audio.mode != AudioManager.MODE_IN_COMMUNICATION || current.endpoint == null) delay(10)
             check(calls[id] === current && current.active)
             signal(current, NativeMediaStage.AUDIO_AUTHORIZED)
+        } } catch (error: TimeoutCancellationException) {
+            @Suppress("UNCHECKED_CAST") val serverId = (current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String
+            serverId?.let { NativeMediaSignals.emit(it, NativeMediaStage.AUDIO_WAIT_EXPIRED, mapOf(
+                "audioMode" to audio.mode.toLong(), "hasEndpoint" to if (current.endpoint != null) 1L else 0L,
+                "active" to if (current.active) 1L else 0L)) }
+            throw error
         }
     }
     private fun cleanupDecline(id: String) {

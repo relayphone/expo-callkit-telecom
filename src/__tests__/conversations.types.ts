@@ -21,8 +21,17 @@ declare const snapshot: ConversationsSnapshot;
 declare const action: PendingAction;
 declare const outcome: IncomingConversationOutcome;
 const webRTCCredentials: NativeMediaCredentials = {
-  provider: "webrtc", url: "https://media.invalid/sdp", token: "test-fixture",
-  expiresAt: 2000000000, iceServers: [{ urls: ["turns:relay.invalid:443"], username: "device", credential: "test-fixture" }],
+  provider: "webrtc",
+  url: "https://media.invalid/sdp",
+  token: "test-fixture",
+  expiresAt: 2000000000,
+  iceServers: [
+    {
+      urls: ["turns:relay.invalid:443"],
+      username: "device",
+      credential: "test-fixture",
+    },
+  ],
 };
 void webRTCCredentials;
 
@@ -134,7 +143,13 @@ const eventOnly: JoinPolicy = {
 void eventOnly;
 
 const nativeHttpPolicy: JoinPolicy = {
-  type: "native", media: "livekit", credentials: "fromPush",
-  fallback: { type: "http", baseUrl: "https://api.example.invalid", authentication: "device-auth" },
+  type: "native",
+  media: "livekit",
+  credentials: "fromPush",
+  fallback: {
+    type: "http",
+    baseUrl: "https://api.example.invalid",
+    authentication: "device-auth",
+  },
 };
 void nativeHttpPolicy;

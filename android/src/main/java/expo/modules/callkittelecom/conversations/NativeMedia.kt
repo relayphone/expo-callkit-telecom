@@ -91,6 +91,7 @@ internal class NativeMediaController(private val context: Context, private val p
     fun answered(audioReady: suspend () -> Unit) {
         if (answerJob != null || closed) return
         answerJob = operations.launch {
+            var phase = 1L
             try {
                 withTimeout(5000) {
                     try {
@@ -104,7 +105,9 @@ internal class NativeMediaController(private val context: Context, private val p
                         preparation = operations.async { withTimeout(8000) { prepare() } }
                         preparation!!.await()
                     }
+                    phase = 2L
                     audioReady()
+                    phase = 3L
                     serial.withLock {
                         ensureActive(); check(!closed && !held)
                         session?.setHeld(false)
@@ -118,8 +121,12 @@ internal class NativeMediaController(private val context: Context, private val p
                     }
                 }
                 withContext(Dispatchers.Main) { if (!closed) connected() }
-            } catch (_: Exception) {
-                if (isActive && !closed && !held) withContext(Dispatchers.Main) { if (!closed) failed() }
+            } catch (error: Exception) {
+                if (isActive && !closed && !held) {
+                    (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.ANSWER_FAILED,
+                        mapOf("phase" to phase, "timeout" to if (error is TimeoutCancellationException) 1L else 0L)) }
+                    withContext(Dispatchers.Main) { if (!closed) failed() }
+                }
             }
         }
     }

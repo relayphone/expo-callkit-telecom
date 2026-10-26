@@ -55,7 +55,9 @@ export interface WebRTCMediaCredentials {
 }
 
 /** Native credential fetcher result; the push media wire object remains LiveKit-only. @category Configuration */
-export type NativeMediaCredentials = LiveKitMediaCredentials | WebRTCMediaCredentials;
+export type NativeMediaCredentials =
+  | LiveKitMediaCredentials
+  | WebRTCMediaCredentials;
 
 /** Incoming invitation from push or foreground transport. @category Reports */
 export interface IncomingCallPayload {
@@ -289,7 +291,9 @@ export interface HttpMediaCredentialsFetcher {
 }
 
 /** Named app fetcher or the built-in authenticated HTTPS client. @category Configuration */
-export type MediaCredentialsFetcher = NativeCredentialsFetcher | HttpMediaCredentialsFetcher;
+export type MediaCredentialsFetcher =
+  | NativeCredentialsFetcher
+  | HttpMediaCredentialsFetcher;
 
 /**
  * Default policy: report first, then pre-warm media and JS in parallel.

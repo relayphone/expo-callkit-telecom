@@ -6,9 +6,11 @@ import android.os.SystemClock
 import java.util.concurrent.CopyOnWriteArraySet
 
 enum class NativeMediaStage(val value: String) {
-    PUSH_RECEIVED("pushReceived"), REPORTED("reported"), PREWARM_STARTED("prewarmStarted"), PREJOINED("prejoined"),
+    PUSH_RECEIVED("pushReceived"), REPORTED("reported"), PREWARM_STARTED("prewarmStarted"),
+    ROOM_CONNECTED("roomConnected"), PREJOINED("prejoined"),
     JS_WARM_STARTED("jsWarmStarted"), ANSWER_REQUESTED("answerRequested"),
-    ANSWER_ACCEPTED("answerAccepted"), AUDIO_AUTHORIZED("audioAuthorized"),
+    ANSWER_ACCEPTED("answerAccepted"), AUDIO_WAIT_STARTED("audioWaitStarted"), AUDIO_WAIT_EXPIRED("audioWaitExpired"),
+    ANSWER_FAILED("answerFailed"), AUDIO_AUTHORIZED("audioAuthorized"),
     FIRST_AUDIO("firstAudio"), CAPTURE_STARTED("captureStarted"),
     CAPTURE_STOPPED("captureStopped"), PLAYBACK_STARTED("playbackStarted"),
     PLAYBACK_STOPPED("playbackStopped"), REMOTE_SUBSCRIBED("remoteSubscribed"),
