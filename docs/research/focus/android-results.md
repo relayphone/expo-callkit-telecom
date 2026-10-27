@@ -116,11 +116,17 @@ alive. Total-DND/alarms-only controls remain covered separately by the existing
 
 ## iPhone comparison and host-controlled breakthrough
 
-The pinned iPhone13/iOS27 LCK pass observed call UI when the app was allowed in
-Focus. Caller-only allowance did not admit its tested calls, and its second call
-69.4 seconds later remained filtered with repeats enabled. That source has one
-sample per measured row, no acoustic/haptic qualification and no CallKit run.
-It does not share this Android protocol, provider or sample count. See the
+| Allowance | Android Core-Telecom, API35 emulator | iPhone13/iOS27, LCK |
+| --- | --- | --- |
+| Contact/person allowed | Matching contacts rang under Contacts/Anyone; starred contacts also rang under Starred (3/3 per cell in each lane). | Caller-only People allowance did not admit the call; filtered with no call UI (F13–F14). |
+| Repeat callers enabled | The second genuine call from an otherwise excluded caller rang (3/3 per cell in each lane). | The second call, 69.4 seconds later, remained filtered with no call UI (C02). |
+
+The pinned iPhone pass observed call UI when the **app** was allowed in Focus
+(F11–F12, F15–F16). Its person and repeat allowances did not provide breakthrough
+in that setup. Android has 216 reports and three samples per cell in each lane;
+the iPhone source has one sample per measured row, no acoustic/haptic
+qualification and no CallKit run. These protocols, providers and sample counts
+differ; neither result establishes universal platform behavior. See the
 [source results and limitations](https://github.com/ziahamza/ios-voip-sdk/blob/41b5de1787a59fd16a9493b5d4366c98768bd25a/docs/research/focus/results.md).
 
 The [merged host-controlled breakthrough RFC](https://github.com/ziahamza/ios-voip-sdk/blob/9fa1fa73164dc36a608b05e495ff05c2c0885888/docs/research/focus/app-breakthrough.md)
