@@ -51,6 +51,10 @@ for sample in result["samples"]:
     assert 0 <= elapsed <= result["budgetMs"]
     assert sample["pcm"]["frames"] > 0 and sample["pcm"]["peak"] >= 128
     assert sample["preanswerCapture"] is False
+    assert sample["platformActiveCalls"] == 1
+    assert sample["audioAuthority"]["coreActive"] == 1
+    assert sample["audioAuthority"]["audioMode"] == 3
+    assert sample["audioAuthority"]["endpointObserved"] in (0, 1)
     if benchmark or samples_per_path > 1:
         assert sample["platformCallsBefore"] == 0
         assert sample["preanswerRecording"]["newObservedCount"] == 0

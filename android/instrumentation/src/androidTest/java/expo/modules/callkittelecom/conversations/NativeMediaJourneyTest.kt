@@ -169,6 +169,11 @@ class NativeMediaJourneyTest {
                                 .mapNotNull { it.measurements["role"] }.containsAll(roles)) delay(10)
                         }
                         withTimeout(3000) { while (recording.activeNewCount() == 0) delay(10) }
+                        val platformCalls = TelecomEvidence.calls()
+                        assertEquals(1, platformCalls.size)
+                        assertTrue("Platform call must be ACTIVE after native answer", "state=ACTIVE" in platformCalls.single())
+                        assertEquals(1L, authorized.measurements["coreActive"])
+                        assertEquals(android.media.AudioManager.MODE_IN_COMMUNICATION.toLong(), authorized.measurements["audioMode"])
                         val activeRecording = recording.snapshot()
                         recordingObservation = activeRecording
                         assertTrue(reported.elapsedRealtimeNanos <= prewarm.elapsedRealtimeNanos)
@@ -189,7 +194,8 @@ class NativeMediaJourneyTest {
                         assertTrue("Native answer-to-PCM exceeded bound", elapsedMs in 0.0..3000.0)
                         results += mapOf("credentials" to source, "sampleIndex" to sampleIndex,
                             "processAgeMs" to processAgeMs, "platformCallsBefore" to 0, "preanswerAudioMode" to preanswerAudioMode, "preanswerRecording" to preanswerRecording,
-                            "activeRecording" to activeRecording,
+                            "activeRecording" to activeRecording, "platformActiveCalls" to 1,
+                            "audioAuthority" to authorized.measurements,
                             "events" to events(serverId).map { mapOf("stage" to it.stage.value,
                                 "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) }, "pushNanos" to pushed.elapsedRealtimeNanos,
                             "highPriority" to true, "reportedNanos" to reported.elapsedRealtimeNanos, "prejoinedNanos" to prejoined.elapsedRealtimeNanos,

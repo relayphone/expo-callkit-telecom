@@ -22,16 +22,25 @@ while ringing. These barriers are outside timed phases. Each dedicated sample
 also verifies native media closure, zero server clients, recording-session cleanup
 and, for raw WebRTC, an acknowledged terminal state before its process exits.
 
-Earlier profiling attempts kept one process alive across ten calls per provider.
-Those runs exposed missing Core-Telecom current-endpoint callbacks after several
-raw calls, including when the platform reported zero prior calls. They failed the
-unchanged audio-authority deadline and remain failed diagnostic evidence. Process
-isolation controls this history variable; it does not claim that the repeated-call
-platform issue is fixed. Neither the 1.5 s audio-authority deadline nor the 3 s
-answer-to-PCM failure bound is relaxed.
+Earlier profiling attempts exposed missing Core-Telecom current-endpoint
+callbacks, including with fresh app processes and zero prior platform calls.
+Those failed runs remain diagnostic evidence. The extra endpoint prerequisite
+was incorrect: API35's answer/setActive transaction verifies call focus and moves
+the call to ACTIVE before reporting success. System callbacks follow the same
+focus transaction. Endpoint flows describe route state for observation and UI;
+they are not another activation acknowledgment. Media still requires that same
+live active call and observed MODE_IN_COMMUNICATION within the unchanged 1.5 s
+audio-authority deadline. The adapter never sets mode/focus itself or invents an
+endpoint. Checked samples additionally require one independently observed ACTIVE
+platform call; missing endpoint observations stay null. Both profiles use this
+corrected gate and the same 3 s answer-to-PCM failure bound.
+
+Primary contract: [Core-Telecom call/audio lifecycle](https://developer.android.com/develop/connectivity/telecom/voip-app/telecom),
+[CallControl transactions](https://developer.android.com/reference/android/telecom/CallControl).
 
 The baseline profile preserves the existing media behavior. Production signaling,
-subscription, capture, playout and route choices are unchanged. The receive-only
+subscription, capture, playout and route choices are unchanged. Both measured
+profiles share the corrected Core activation gate described above. The receive-only
 probe observes decoder PCM independently of the answer gate. Callback-entry
 elapsedRealtimeNanos is captured before checking eligibility or scanning PCM.
 A fresh gate per answer/resume prevents pre-answer or previous-generation frames
@@ -71,7 +80,8 @@ muted microphone using recordingless buffers; raw WebRTC negotiates the sender
 once during pre-warm. Fake capture buffers are paced at their audio duration and
 do not open the microphone. A cached public Core starting-endpoint preference
 preselects the route without delaying initial call reporting; the observed current
-endpoint and communication mode still authorize audio.
+endpoint remains nullable route metadata; successful Core activation/focus and
+observed communication mode authorize audio.
 
 After that authority, Answer releases native output mute and arms the same decoded
 PCM gate. It enables physical recording and unmutes the existing sender without
