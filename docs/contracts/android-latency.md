@@ -69,10 +69,15 @@ by profile/provider/credential path and reports count, minimum, median and maxim
 Missing phase observations stay null with an observed count. The full DND and
 pre-warmed cleanup journeys remain part of the same CI qualification.
 
-The baseline and optimized before/after measurements will be recorded here from
-completed CI artifacts, including commit/run references and any measured emulator
-floor. The 300 ms goal remains separate from the 3 s failure bound until the measured
-results establish which part of the path meets it.
+The [completed before/after comparison](./android-latency-results.md) and
+[checked JSON](./android-latency-results.json) retain all five values per path,
+phase statistics and artifact hashes. All 20 primary-comparison optimized samples
+meet 300 ms: LiveKit 159.65–186.27 ms and WebRTC 160.39–189.06 ms. A separate
+merged-source verification also passes all 20 attempts, spanning 150.30–251.31 ms;
+its values remain separate from the comparison. No fundamental emulator floor is inferred. The 3 s failure bound is
+unchanged. Raw WebRTC already met the target in this controlled baseline, so no
+raw median improvement is claimed. Earlier answers still wait for preparation;
+this result applies after PREJOINED.
 
 The optimized profile keeps the remote subscription and decoder enabled and the
 native playback track running behind ADM speaker mute. LiveKit prepublishes a
