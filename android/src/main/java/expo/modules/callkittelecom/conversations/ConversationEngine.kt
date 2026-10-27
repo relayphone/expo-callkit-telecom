@@ -98,9 +98,9 @@ class ConversationEngine(val context: Context) {
         emit("conversationsChanged", snapshot)
     }
     @Suppress("UNCHECKED_CAST")
-    private fun signal(current: Call, stage: NativeMediaStage) {
+    private fun signal(current: Call, stage: NativeMediaStage, measurements: Map<String, Long> = emptyMap()) {
         ((current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String)
-            ?.let { NativeMediaSignals.emit(it, stage) }
+            ?.let { NativeMediaSignals.emit(it, stage, measurements) }
     }
     private fun call(id: String) = calls[id] ?: error("unknown_conversation")
     private suspend fun control(id: String) = call(id).ready.await()
@@ -216,6 +216,7 @@ class ConversationEngine(val context: Context) {
             CallAttributesCompat.SUPPORTS_SET_INACTIVE)
         call.job = jobs.launch {
             try {
+                signal(call, NativeMediaStage.CORE_ADD_REQUESTED)
                 telecom.addCall(attributes,
                     onAnswer = { withTimeout(4500) {
                         check(call.permitted.await()) { "Incoming call filtered" }
@@ -225,6 +226,7 @@ class ConversationEngine(val context: Context) {
                     onSetActive = { withTimeout(4500) { check(call.permitted.await()); hold(id, false, "system") } },
                     onSetInactive = { withTimeout(4500) { hold(id, true, "system") } }) {
                     call.admitted = true
+                    signal(call, NativeMediaStage.CORE_ADMITTED)
                     signal(call, NativeMediaStage.REPORTED)
                     publish()
                     call.ready.complete(this)
@@ -306,15 +308,21 @@ class ConversationEngine(val context: Context) {
         refreshRoutes()
         publish()
     }
-    private suspend fun awaitAudio(id: String, current: Call) {
+    private suspend fun awaitAudio(id: String, current: Call): Unit = withContext(Dispatchers.Main) {
         // Returning through main lets Core-Telecom finish a system callback before audio begins.
-        withContext(Dispatchers.Main) { yield(); check(calls[id] === current && current.active) }
+        yield(); check(calls[id] === current && current.active)
         signal(current, NativeMediaStage.AUDIO_WAIT_STARTED)
-        try { withTimeout(1500) {
-            while (audio.mode != AudioManager.MODE_IN_COMMUNICATION || current.endpoint == null) delay(10)
+        try {
+            // Telecom's successful answer/setActive transaction already verifies this
+            // call owns focus. Endpoint callbacks describe route/UI state and may be absent;
+            // they are not another audio activation acknowledgment. Mode changes are async.
+            NativeAudioAuthority.await({ calls[id] === current && current.active }, { audio.mode })
+            signal(current, NativeMediaStage.AUDIO_MODE_READY)
             check(calls[id] === current && current.active)
-            signal(current, NativeMediaStage.AUDIO_AUTHORIZED)
-        } } catch (error: TimeoutCancellationException) {
+            signal(current, NativeMediaStage.AUDIO_AUTHORIZED, mapOf(
+                "audioMode" to AudioManager.MODE_IN_COMMUNICATION.toLong(), "coreActive" to 1L,
+                "endpointObserved" to if (current.endpoint != null) 1L else 0L))
+        } catch (error: TimeoutCancellationException) {
             @Suppress("UNCHECKED_CAST") val serverId = (current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String
             serverId?.let { NativeMediaSignals.emit(it, NativeMediaStage.AUDIO_WAIT_EXPIRED, mapOf(
                 "audioMode" to audio.mode.toLong(), "hasEndpoint" to if (current.endpoint != null) 1L else 0L,
@@ -406,7 +414,11 @@ class ConversationEngine(val context: Context) {
             CallEndpointCompat.TYPE_BLUETOOTH -> "bluetoothHFP"; CallEndpointCompat.TYPE_WIRED_HEADSET -> "headphones"; else -> "unknown" })
     private fun updateRoutes(id: String, endpoint: CallEndpointCompat?) {
         val current = calls[id] ?: return
-        if (endpoint != null) current.endpoint = endpoint
+        if (endpoint != null) {
+            current.endpoint = endpoint
+            @Suppress("UNCHECKED_CAST") val serverId = (current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String
+            serverId?.let { NativeMediaSignals.emit(it, NativeMediaStage.ENDPOINT_READY, mapOf("type" to endpoint.type.toLong())) }
+        }
         refreshRoutes()
     }
     private fun refreshRoutes() {

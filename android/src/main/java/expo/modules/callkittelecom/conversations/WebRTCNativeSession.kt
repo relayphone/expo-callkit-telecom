@@ -7,13 +7,9 @@ import io.livekit.android.audio.NoAudioHandler
 import io.livekit.android.dagger.DaggerLiveKitComponent
 import io.livekit.android.dagger.OverridesModule
 import io.livekit.android.room.Room
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlin.math.abs
 import kotlinx.coroutines.*
 import livekit.org.webrtc.*
 import livekit.org.webrtc.audio.JavaAudioDeviceModule
@@ -23,6 +19,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "ConversationWebRTC") }.asCoroutineDispatcher()
     private val scope = CoroutineScope(SupervisorJob() + worker)
     private var owner: Room? = null
+    private var transportProbe: Job? = null
     private var peer: PeerConnection? = null
     private var source: AudioSource? = null
     private var microphone: AudioTrack? = null
@@ -42,18 +39,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
     private var failed: () -> Unit = {}
     override val isPrepared get() = prepared
     override fun setFailureListener(listener: () -> Unit) { failed = listener }
-    private val firstAudio = AtomicBoolean(false)
-    private val sink = object : AudioTrackSink {
-        override fun onData(data: ByteBuffer, bits: Int, rate: Int, channels: Int, frames: Int, capturedAt: Long) {
-            if (!active || held || closed || bits != 16 || firstAudio.get()) return
-            val pcm = data.duplicate().order(ByteOrder.nativeOrder())
-            var peak = 0
-            while (pcm.remaining() >= 2) peak = maxOf(peak, abs(pcm.short.toInt()))
-            if (peak >= 128 && firstAudio.compareAndSet(false, true))
-                NativeMediaSignals.emit(serverId, NativeMediaStage.FIRST_AUDIO, mapOf("frames" to frames.toLong(),
-                    "sampleRate" to rate.toLong(), "channels" to channels.toLong(), "peak" to peak.toLong(), "threshold" to 128L))
-        }
-    }
+    private val pcm = NativePcmProbe(invitationId)
 
     @Suppress("UNCHECKED_CAST")
     override suspend fun prewarm(payload: Map<String, Any?>): Unit = withContext(worker) {
@@ -75,6 +61,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
             PeerConnection.IceServer.builder(urls).setUsername(server["username"] as? String ?: "")
                 .setPassword(server["credential"] as? String ?: "").createIceServer()
         }
+        emit(NativeMediaStage.MEDIA_CONNECT_STARTED)
         val connected = CompletableDeferred<Unit>()
         // The pinned SDK owns global libwebrtc initialization and factory disposal. Reuse its
         // runtime rather than reinitializing libwebrtc while another call's factory is alive.
@@ -97,10 +84,15 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
             lateinit var candidate: PeerConnection
             val observer = object : PeerConnection.Observer {
                 override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
+                    val observedAt = android.os.SystemClock.elapsedRealtimeNanos()
                     scope.launch {
                         if (peer !== candidate || closed) return@launch
                         when (state) {
-                            PeerConnection.PeerConnectionState.CONNECTED -> connected.complete(Unit)
+                            PeerConnection.PeerConnectionState.CONNECTED -> {
+                                NativeMediaSignals.emit(serverId, NativeMediaStage.TRANSPORT_CONNECTED,
+                                    mapOf("role" to 0L, "sampled" to 0L), observedAt)
+                                connected.complete(Unit)
+                            }
                             PeerConnection.PeerConnectionState.DISCONNECTED, PeerConnection.PeerConnectionState.FAILED, PeerConnection.PeerConnectionState.CLOSED -> {
                                 connected.completeExceptionally(Exception("WebRTC connection failed"))
                                 val wasActive = active
@@ -112,7 +104,15 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
                     }
                 }
                 override fun onSignalingChange(state: PeerConnection.SignalingState) {}
-                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {}
+                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
+                    if (closed) return
+                    val stage = when (state) {
+                        PeerConnection.IceConnectionState.CHECKING -> NativeMediaStage.ICE_CHECKING
+                        PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> NativeMediaStage.ICE_CONNECTED
+                        else -> null
+                    }
+                    stage?.let { NativeMediaSignals.emit(serverId, it, mapOf("role" to 0L, "sampled" to 0L)) }
+                }
                 override fun onIceConnectionReceivingChange(receiving: Boolean) {}
                 override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {}
                 override fun onIceCandidate(candidate: IceCandidate) {}
@@ -126,6 +126,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
                 sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             }, observer) ?: error("WebRTC unavailable")
             peer = candidate
+            transportProbe = NativeTransportProbe(serverId, scope).watch(0L, candidate::getStats)
             candidate.setAudioPlayout(false); candidate.setAudioRecording(false)
             source = factory.createAudioSource(MediaConstraints())
             microphone = factory.createAudioTrack("native-microphone", source).also { it.setEnabled(false); candidate.addTrack(it) }
@@ -133,6 +134,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
             sdp { candidate.setLocalDescription(it, offer) }
             withTimeout(4000) { while (candidate.iceGatheringState() != PeerConnection.IceGatheringState.COMPLETE) delay(10) }
             exchangeAttempted = true
+            NativeMediaSignals.emit(serverId, NativeMediaStage.SUBSCRIPTION_REQUESTED, mapOf("role" to 0L))
             val answer = NativeHttpCredentials().post(url, token, mapOf("type" to "offer", "sdp" to candidate.localDescription.description,
                 "eventId" to eventId, "serverCallId" to serverId, "negotiationId" to negotiationId))
             require(answer["type"] == "answer")
@@ -142,11 +144,14 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
             // transceiver wrapper is transient and must not escape onto another executor.
             candidate.receivers.forEach { receiver -> (receiver.track() as? AudioTrack)?.let { track ->
                 remote += track; track.setEnabled(false)
+                emit(NativeMediaStage.REMOTE_TRACK_AVAILABLE)
+                track.addSink(pcm.decoderSink)
             } }
             check(remote.isNotEmpty()) { "SDP answer has no audio" }
             connected.await()
             check(!closed && peer === candidate)
             prepared = true
+            emit(NativeMediaStage.MEDIA_CONNECT_COMPLETED)
             emit(NativeMediaStage.PREJOINED)
             signal("prejoined")
         } catch (error: Throwable) { dispose(); throw error }
@@ -162,14 +167,14 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
     }
     override suspend fun activate(): Unit = withContext(worker) {
         check(!closed && prepared)
-        active = true; held = false; firstAudio.set(false)
-        applyAudio()
+        active = true; held = false
+        applyAudio(); pcm.arm()
         scope.launch { runCatching { signal("answered") } }; Unit
     }
     override suspend fun setHeld(held: Boolean): Unit = withContext(worker) {
         check(!closed)
         this@WebRTCNativeSession.held = held
-        if (active) { if (!held) firstAudio.set(false); applyAudio() }
+        if (active) { pcm.disarm(); applyAudio(); if (!held) pcm.arm() }
     }
     override suspend fun setMuted(muted: Boolean): Unit = withContext(worker) {
         check(!closed)
@@ -183,8 +188,8 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
         peer?.setAudioPlayout(enabled)
         for (track in remote) {
             track.setEnabled(enabled)
-            if (enabled && subscribed.add(track)) { track.addSink(sink); emit(NativeMediaStage.REMOTE_SUBSCRIBED) }
-            else if (!enabled && subscribed.remove(track)) { track.removeSink(sink); emit(NativeMediaStage.REMOTE_UNSUBSCRIBED) }
+            if (enabled && subscribed.add(track)) { track.addSink(pcm.answerSink); emit(NativeMediaStage.REMOTE_SUBSCRIBED) }
+            else if (!enabled && subscribed.remove(track)) { track.removeSink(pcm.answerSink); emit(NativeMediaStage.REMOTE_UNSUBSCRIBED) }
         }
     }
     private fun emit(stage: NativeMediaStage) = NativeMediaSignals.emit(serverId, stage)
@@ -194,7 +199,8 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
     }
     private fun dispose() {
         prepared = false; active = false
-        remote.forEach { runCatching { it.removeSink(sink) } }; remote.clear(); subscribed.clear()
+        transportProbe?.cancel(); transportProbe = null
+        remote.forEach { runCatching { it.removeSink(pcm.answerSink); it.removeSink(pcm.decoderSink) } }; remote.clear(); subscribed.clear()
         runCatching { peer?.close(); peer?.dispose() }; peer = null
         runCatching { microphone?.dispose() }; microphone = null
         runCatching { source?.dispose() }; source = null
@@ -205,7 +211,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
         try {
             withContext(worker) {
                 if (closed) return@withContext
-                closed = true
+                closed = true; pcm.close()
                 val targetServer = serverId
                 val targetUrl = url
                 val authorization = token

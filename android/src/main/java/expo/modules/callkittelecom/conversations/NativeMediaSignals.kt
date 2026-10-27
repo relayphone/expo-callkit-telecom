@@ -15,7 +15,15 @@ enum class NativeMediaStage(val value: String) {
     CAPTURE_STOPPED("captureStopped"), PLAYBACK_STARTED("playbackStarted"),
     PLAYBACK_STOPPED("playbackStopped"), REMOTE_SUBSCRIBED("remoteSubscribed"),
     REMOTE_UNSUBSCRIBED("remoteUnsubscribed"), CLOSED("closed"),
-    TERMINAL_SIGNAL_COMPLETED("terminalSignalCompleted")
+    TERMINAL_SIGNAL_COMPLETED("terminalSignalCompleted"),
+    CORE_ADD_REQUESTED("coreAddRequested"), CORE_ADMITTED("coreAdmitted"),
+    CREDENTIALS_STARTED("credentialsStarted"), CREDENTIALS_RESOLVED("credentialsResolved"),
+    MEDIA_CONNECT_STARTED("mediaConnectStarted"), MEDIA_CONNECT_COMPLETED("mediaConnectCompleted"),
+    ICE_CHECKING("iceChecking"), ICE_CONNECTED("iceConnected"), DTLS_CONNECTED("dtlsConnected"),
+    TRANSPORT_CONNECTED("transportConnected"), SUBSCRIPTION_REQUESTED("subscriptionRequested"),
+    REMOTE_TRACK_AVAILABLE("remoteTrackAvailable"), DECODER_FIRST_PCM("decoderFirstPcm"),
+    MICROPHONE_PUBLISH_STARTED("microphonePublishStarted"), MICROPHONE_PUBLISHED("microphonePublished"),
+    PREPARATION_READY("preparationReady"), AUDIO_MODE_READY("audioModeReady"), ENDPOINT_READY("endpointReady")
 }
 
 /** Native lifecycle observations contain timings/counts, never credentials or audio samples. */
@@ -28,8 +36,9 @@ fun interface NativeMediaObserver { fun onSignal(signal: NativeMediaSignal) }
 object NativeMediaSignals {
     val observers = CopyOnWriteArraySet<NativeMediaObserver>()
     private val main = Handler(Looper.getMainLooper())
-    fun emit(serverCallId: String, stage: NativeMediaStage, measurements: Map<String, Long> = emptyMap()) {
-        val signal = NativeMediaSignal(serverCallId, stage, SystemClock.elapsedRealtimeNanos(), measurements)
+    fun emit(serverCallId: String, stage: NativeMediaStage, measurements: Map<String, Long> = emptyMap(),
+        observedAtNanos: Long = SystemClock.elapsedRealtimeNanos()) {
+        val signal = NativeMediaSignal(serverCallId, stage, observedAtNanos, measurements)
         main.post { observers.forEach { observer -> runCatching { observer.onSignal(signal) } } }
     }
 }
