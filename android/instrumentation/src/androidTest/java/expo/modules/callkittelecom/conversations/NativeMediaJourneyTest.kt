@@ -45,6 +45,8 @@ class NativeMediaJourneyTest {
             val results = mutableListOf<Map<String, Any?>>()
             val cleanupResults = mutableListOf<String>()
             var declineObservation: JSONObject? = null
+            var declineFirstZeroObservation: JSONObject? = null
+            var declinePendingObserved = false
             val owned = mutableSetOf<String>()
             val output = File(context.filesDir, if (provider == "livekit") "native-media-results.json" else "native-webrtc-results.json")
             output.delete()
@@ -74,9 +76,21 @@ class NativeMediaJourneyTest {
                 assertEquals("reported", result["status"])
                 return (result["id"] as String).also { owned += it }
             }
-            suspend fun noClient(serverId: String): JSONObject = withTimeout(7000) {
+            suspend fun noClient(serverId: String, terminalState: String? = null): JSONObject = withTimeout(7000) {
+                fun received(value: JSONObject): Boolean = terminalState == null || value.getJSONArray("states").let { states ->
+                    (0 until states.length()).any { states.getString(it) == terminalState }
+                }
+                fun observe(value: JSONObject) {
+                    if (terminalState == null) return
+                    declineObservation = value
+                    if (value.getInt("clients") == 0 && declineFirstZeroObservation == null) declineFirstZeroObservation = value
+                    if (value.optBoolean("terminalPending")) declinePendingObserved = true
+                }
                 var value = fixture("/fixture/observations/$serverId")
-                while (value.getInt("clients") != 0) { delay(30); value = fixture("/fixture/observations/$serverId") }
+                observe(value)
+                while (value.getInt("clients") != 0 || !received(value)) {
+                    delay(30); value = fixture("/fixture/observations/$serverId"); observe(value)
+                }
                 value
             }
             val stamp = android.os.SystemClock.elapsedRealtime().toString()
@@ -151,9 +165,15 @@ class NativeMediaJourneyTest {
                 stage(declinedServer, NativeMediaStage.PREJOINED)
                 engine.end(declined)
                 absent(declined); stage(declinedServer, NativeMediaStage.CLOSED)
-                val declineState = noClient(declinedServer)
-                declineObservation = declineState
-                if (provider == "webrtc") assertTrue(declineState.getJSONArray("states").toString().contains("declined"))
+                val declineState = noClient(declinedServer, if (provider == "webrtc") "declined" else null)
+                if (provider == "webrtc") {
+                    assertTrue(declineState.getJSONArray("states").toString().contains("declined"))
+                    assertFalse(declineFirstZeroObservation!!.getJSONArray("states").toString().contains("declined"))
+                    assertTrue(declinePendingObserved)
+                    val times = declineState.getJSONObject("terminalTimes")
+                    assertTrue(times.getLong("receivedNanos") <= times.getLong("releasedNanos"))
+                    assertTrue(times.getLong("releasedNanos") <= times.getLong("recordedNanos"))
+                }
                 assertFalse(events(declinedServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
                 owned -= declined; cleanupResults += "declined"
 
@@ -181,10 +201,12 @@ class NativeMediaJourneyTest {
                 output.writeText(JSONObject(mapOf("passed" to true, "provider" to provider, "metric" to "native-answer-request-to-first-remote-pcm",
                     "pcmThreshold" to 128, "budgetMs" to 3000, "targetMs" to 300, "samples" to results,
                     "cleanup" to cleanupResults, "declineObservation" to declineObservation,
+                    "declineFirstZeroObservation" to declineFirstZeroObservation, "declinePendingObserved" to declinePendingObserved,
                     "jsJoinHandlerCalls" to joinHandlerCalls, "jsWarmRequests" to warmRequests)).toString())
             } } catch (error: Throwable) {
                 output.writeText(JSONObject(mapOf("passed" to false, "stage" to "native-$provider-journey", "samples" to results,
-                    "cleanup" to cleanupResults, "declineObservation" to declineObservation, "observedStages" to signals.map { mapOf("stage" to it.stage.value,
+                    "cleanup" to cleanupResults, "declineObservation" to declineObservation,
+                    "declineFirstZeroObservation" to declineFirstZeroObservation, "declinePendingObserved" to declinePendingObserved, "observedStages" to signals.map { mapOf("stage" to it.stage.value,
                         "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) })).toString())
                 throw error
             } finally {
