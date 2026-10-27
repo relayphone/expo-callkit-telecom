@@ -12,7 +12,9 @@ import android.os.Bundle
 /** Platform ranking evidence from the test application, separate from library policy decisions. */
 class DndObservationService : NotificationListenerService() {
     companion object {
-        data class Observation(val matchesFilter: Boolean, val soundConfigured: Boolean, val category: String?)
+        data class Observation(val matchesFilter: Boolean, val soundConfigured: Boolean, val category: String?,
+            val personUri: String? = null, val personKey: String? = null,
+            val channelBypass: Boolean? = null, val importance: Int? = null)
         val observations = ConcurrentHashMap<String, Observation>()
         @Volatile var connected = false
     }
@@ -29,7 +31,8 @@ class DndObservationService : NotificationListenerService() {
         val ranking = Ranking()
         if (!map.getRanking(value.key, ranking)) return
         val channel = getSystemService(android.app.NotificationManager::class.java).getNotificationChannel(value.notification.channelId)
-        observations[name] = Observation(ranking.matchesInterruptionFilter(), channel?.sound != null, value.notification.category)
+        observations[name] = Observation(ranking.matchesInterruptionFilter(), channel?.sound != null,
+            value.notification.category, person.uri, person.key, channel?.canBypassDnd(), ranking.importance)
     }
 }
 
