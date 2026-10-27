@@ -24,6 +24,8 @@ states = {}
 lock = asyncio.Lock()
 raw_peers = {}
 closed_negotiations = set()
+terminal_gates = {}
+terminal_times = {}
 
 
 class ToneTrack(AudioStreamTrack):
@@ -125,8 +127,17 @@ async def observations(request):
         client_count = sum(p.identity.startswith("device-") for p in bots[room_name][0].remote_participants.values())
     if server_id in raw_peers:
         client_count = int(raw_peers[server_id][0].connectionState == "connected")
-    return web.json_response({"clients": client_count, "states": states.get(room_name, []),
-                              "fetches": fetches.get(server_id, 0)})
+    gate = terminal_gates.get(server_id)
+    # Freeze this observation before releasing delayed application processing.
+    # The first zero-client observation intentionally cannot prove receipt.
+    response = web.json_response({"clients": client_count, "states": list(states.get(room_name, [])),
+                                  "fetches": fetches.get(server_id, 0),
+                                  "terminalPending": gate is not None and not gate.is_set(),
+                                  "terminalTimes": dict(terminal_times.get(server_id, {}))})
+    if client_count == 0 and gate is not None and not gate.is_set():
+        terminal_times[server_id]["releasedNanos"] = time.monotonic_ns()
+        gate.set()
+    return response
 
 
 async def raw_signaling(request):
@@ -163,6 +174,18 @@ async def raw_signaling(request):
         return web.json_response({"type": "answer", "sdp": peer.localDescription.sdp})
     if body.get("type") == "state":
         state = body.get("state")
+        if state == "declined" and server_id.startswith("rtc-decline-"):
+            # A deterministic async server receipt, independent of transport disposal.
+            gate = asyncio.Event()
+            terminal_gates[server_id] = gate
+            terminal_times[server_id] = {"receivedNanos": time.monotonic_ns()}
+            try:
+                await asyncio.wait_for(gate.wait(), timeout=6)
+            except asyncio.TimeoutError:
+                return web.Response(status=504)
+            finally:
+                terminal_gates.pop(server_id, None)
+            terminal_times[server_id]["recordedNanos"] = time.monotonic_ns()
         if negotiation in closed_negotiations and state in ("prejoined", "answered"):
             return web.Response(status=410)
         states.setdefault("native-ci-" + server_id, []).append(state)

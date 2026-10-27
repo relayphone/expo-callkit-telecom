@@ -35,7 +35,18 @@ Each preparation attempt has a distinct negotiationId. The server must correlate
 cleanup with that id, honor cleanup arriving before a late offer completes, and
 expire unused negotiations. A retry closes the previous attempt first. Cleanup
 is best effort over the network and always disposes local peer/audio resources.
+Local disposal happens first. A separate IO job owns one terminal POST for the
+immutable negotiation, bounded to three seconds independently of the cancelled
+session/controller and its closed executor. The native `terminalSignalCompleted`
+observation reports `delivered: 1` only after successful HTTP completion, plus
+numeric `httpErrorStatus` and `deadlineExpired` diagnostics; it may arrive after
+CLOSED. Delivery failure does not retain local media resources.
 The CI signaling fixture implements this contract with an independent aiortc peer.
+Transport disposal and application receipt are observed independently: the decline
+fixture gates terminal processing until after a zero-client observation. The
+journey then waits for both zero clients and the actual declined receipt, retaining
+sanitized request/release/recording timestamps. Local CLOSED does not prove server
+receipt.
 
 Before setting descriptions, the adapter disables PeerConnection audio recording
 and playout and disables its local track. Only native audio authority enables

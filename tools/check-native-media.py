@@ -28,3 +28,16 @@ for sample in result["samples"]:
 assert result["jsJoinHandlerCalls"] == 0
 assert result["jsWarmRequests"] == len(expected_sources) + 4
 assert set(result["cleanup"]) == {"hold-capture-stopped-resumed", "declined", "unanswered", "404", "410"}
+
+if provider == "webrtc":
+    first = result["declineFirstZeroObservation"]
+    receipt = result["declineObservation"]
+    assert first["clients"] == 0 and "declined" not in first["states"]
+    assert result["declinePendingObserved"] is True
+    assert receipt["clients"] == 0 and "declined" in receipt["states"]
+    times = receipt["terminalTimes"]
+    assert 0 < times["receivedNanos"] <= times["releasedNanos"] <= times["recordedNanos"]
+    acknowledgment = result["declineTerminalSignal"]
+    assert acknowledgment["delivered"] == 1 and acknowledgment["httpErrorStatus"] == 0
+    assert acknowledgment["nanos"] >= result["declineClosedNanos"] > 0
+    print("WebRTC decline: local closure precedes independently acknowledged server receipt")
