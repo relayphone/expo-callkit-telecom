@@ -82,8 +82,26 @@ Completion requires terminal SDK state, the correlated event, notification
 removal, Core call removal, and visible card removal. UI absence must be observed
 in two consecutive valid SystemUI accessibility roots; a missing or unrelated
 root is not evidence of dismissal. The result records monotonic timestamps for
-all six samples, together with actual native disconnect code and reason. The
-1,000 ms signal-to-cleanup bound is an engineering acceptance budget, separate
-from physical-device UI dismissal or DND measurements. A successful boolean
-return, SDK snapshot, or notification-manager query alone does not prove visible
-UI dismissal.
+all six samples, together with actual native disconnect code and reason. Native
+SDK state/event, notification-manager removal and verified Core removal retain
+the 1,000 ms engineering budget. Visible-card removal has a separate bound:
+the runtime SystemUI `heads_up_notification_minimum_time` resource plus 1,000 ms
+for observation. The test reads that integer with public package/resources APIs;
+it does not change notification policy or simulate a dismissal.
+
+API35 configures a [2,000 ms heads-up minimum](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/packages/SystemUI/res/values/config.xml#158).
+Incoming notifications carry a full-screen intent, making heads-up entries
+[sticky](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/packages/SystemUI/src/com/android/systemui/statusbar/policy/BaseHeadsUpManager.java#836);
+[SystemUI may retain a cancelled entry until its earliest removal time](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/packages/SystemUI/src/com/android/systemui/statusbar/notification/collection/coordinator/HeadsUpCoordinator.kt#662).
+An initial diagnostic observed SDK termination at 45.8 ms, notification-manager
+absence at 90.9 ms, verified Core removal at 233.6 ms and visible absence at
+1,941 ms. This does not establish a universal floor or physical-device timing.
+The original one-second UI bound was an engineering assumption, not a user
+requirement or a measured platform guarantee.
+
+Each sample collapses the shade before posting its invitation, then requires the
+actual caller and incoming actions before signalling. Receipts include incoming,
+report, visible-before-signal, first-absence and per-scan timings so card age and
+observer cost remain visible. No artificial wait consumes the heads-up minimum.
+A successful boolean, SDK snapshot or notification-manager query alone never
+proves visible UI dismissal; physical-device and DND measurements remain separate.

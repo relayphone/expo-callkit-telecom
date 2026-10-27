@@ -16,6 +16,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -32,15 +33,17 @@ class AnsweredElsewhereJourneyTest {
     private fun now() = SystemClock.elapsedRealtimeNanos()
     @Volatile private var lastUi: Map<String, Any?> = emptyMap()
     @Volatile private var lastPlatform: Map<String, Any?> = emptyMap()
+    @Volatile private var uiSummary: Map<String, Any?> = emptyMap()
+    private val uiScans = ConcurrentLinkedQueue<Map<String, Any?>>()
     private var expansionAttempts = 0
     private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
         instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }
 
     private data class VisibleRing(val packageName: String, val windowId: Int,
-        val caller: Boolean, val answer: Boolean, val decline: Boolean) {
+        val caller: Boolean, val answer: Boolean, val decline: Boolean, val complete: Boolean) {
         val present get() = caller && answer && decline
         fun json() = mapOf("packageName" to packageName, "windowId" to windowId, "callerVisible" to caller,
-            "answerVisible" to answer, "declineVisible" to decline)
+            "answerVisible" to answer, "declineVisible" to decline, "traversalComplete" to complete)
     }
 
     private fun displayState(): Map<String, Any?> = mapOf(
@@ -82,9 +85,12 @@ class AnsweredElsewhereJourneyTest {
         return NodeScan(nodes, complete && pending.isEmpty())
     }
 
-    private fun notificationStack(root: AccessibilityNodeInfo): AccessibilityNodeInfo? =
-        nodeTree(root, "com.android.systemui:id/notification_stack_scroller").nodes
-        .firstOrNull { it.viewIdResourceName == "com.android.systemui:id/notification_stack_scroller" }
+    private fun notificationStack(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val id = "com.android.systemui:id/notification_stack_scroller"
+        // This SystemUI container is outside the RemoteViews root-namespace boundary.
+        return root.findAccessibilityNodeInfosByViewId(id).firstOrNull { it.windowId == root.windowId && it.isVisibleToUser }
+            ?: nodeTree(root, id).nodes.firstOrNull { it.viewIdResourceName == id }
+    }
 
     private fun visibleRing(label: String): VisibleRing? {
         val root = instrumentation.uiAutomation.rootInActiveWindow
@@ -105,7 +111,7 @@ class AnsweredElsewhereJourneyTest {
             node.isVisibleToUser && !bounds.isEmpty &&
                 (node.text?.toString()?.contains(value) == true || node.contentDescription?.toString()?.contains(value) == true)
         }
-        val observed = VisibleRing(root.packageName.toString(), root.windowId, visible(label), visible("Answer"), visible("Decline"))
+        val observed = VisibleRing(root.packageName.toString(), root.windowId, visible(label), visible("Answer"), visible("Decline"), scan.complete)
         lastUi = lastUi + observed.json()
         // Partial trees can prove visible presence, never absence of a still-visible card.
         if (!observed.caller && !scan.complete) return null
@@ -192,12 +198,28 @@ class AnsweredElsewhereJourneyTest {
         }
     }
 
-    private data class UiGone(val observedNanos: Long, val windowId: Int, val observations: Int)
+    private data class UiGone(val observedNanos: Long, val windowId: Int, val observations: Int,
+        val firstAbsentNanos: Long, val scans: Int, val completeScans: Int, val maximumScanNanos: Long)
     private suspend fun ringGone(label: String, expectedWindowId: Int): UiGone = withContext(Dispatchers.IO) {
         var absent = 0
         var observedWindow = -1
+        var firstAbsent = 0L
+        var scans = 0
+        var completeScans = 0
+        var maximumScan = 0L
         while (absent < 2) {
+            val requested = now()
             val observation = visibleRing(label)
+            val returned = now()
+            scans++; maximumScan = maxOf(maximumScan, returned - requested)
+            val sameWindow = observation?.windowId == expectedWindowId
+            if (sameWindow && observation?.complete == true) completeScans++
+            if (sameWindow && observation?.caller == false && firstAbsent == 0L) firstAbsent = returned
+            if (uiScans.size >= 128) uiScans.poll()
+            uiScans.add(mapOf("requestedNanos" to requested, "returnedNanos" to returned,
+                "sameWindow" to sameWindow, "complete" to observation?.complete, "callerPresent" to observation?.caller))
+            uiSummary = mapOf("scans" to scans, "completeScans" to completeScans,
+                "firstAbsentNanos" to firstAbsent, "maximumScanNanos" to maximumScan)
             if (observation == null || observation.windowId != expectedWindowId) {
                 absent = 0
                 shell("cmd statusbar expand-notifications")
@@ -207,7 +229,7 @@ class AnsweredElsewhereJourneyTest {
             }
             if (absent < 2) delay(20)
         }
-        UiGone(now(), observedWindow, absent)
+        UiGone(now(), observedWindow, absent, firstAbsent, scans, completeScans, maximumScan)
     }
 
     private fun notificationPresent(label: String): Boolean = context.getSystemService(NotificationManager::class.java)
@@ -217,6 +239,8 @@ class AnsweredElsewhereJourneyTest {
         }
 
     private data class NativeEnd(val observedNanos: Long, val code: Int, val reason: String)
+    private data class NativeCompletion(val terminal: Long, val event: Long, val empty: Long,
+        val notification: Long, val native: NativeEnd)
     private data class Completion(val terminal: Long, val event: Long, val empty: Long,
         val notification: Long, val ui: UiGone, val native: NativeEnd)
     private suspend fun platformGone(callId: String): NativeEnd = withContext(Dispatchers.IO) {
@@ -269,6 +293,10 @@ class AnsweredElsewhereJourneyTest {
             var timings = ConcurrentHashMap<String, Long>()
             var observerErrors = ConcurrentHashMap<String, String>()
             var postFailure: Map<String, Any?> = emptyMap()
+            val nativeBudgetMs = 1000L
+            val uiObserverAllowanceMs = 1000L
+            var headsUpMinimumMs = 0L
+            var uiBudgetMs = 0L
             fun mark(key: String): Long {
                 timings.putIfAbsent(key, now())
                 return timings[key]!!
@@ -300,16 +328,27 @@ class AnsweredElsewhereJourneyTest {
             val oldServiceFlags = automation.serviceInfo.flags
             automation.serviceInfo = automation.serviceInfo.apply { flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS }
             try {
+                phase = "system-ui-policy"
+                val systemUi = context.packageManager.getResourcesForApplication("com.android.systemui")
+                val minimumId = systemUi.getIdentifier("heads_up_notification_minimum_time", "integer", "com.android.systemui")
+                check(minimumId != 0) { "Missing SystemUI heads-up minimum resource" }
+                headsUpMinimumMs = systemUi.getInteger(minimumId).toLong()
+                check(headsUpMinimumMs >= 0)
+                uiBudgetMs = headsUpMinimumMs + uiObserverAllowanceMs
                 for (source in listOf("host", "push")) for (index in 1..3) {
                     expansionAttempts = 0
+                    uiScans.clear(); uiSummary = emptyMap()
                     phase = "$source/$index display-ready"
                     prepareDisplay()
+                    withContext(Dispatchers.IO) { shell("timeout -k 1 1 cmd statusbar collapse") }
                     phase = "$source/$index incoming"
                     withTimeout(5000) { while (TelecomEvidence.calls().isNotEmpty()) delay(25) }
                     val key = "elsewhere-$source-$index-${SystemClock.elapsedRealtime()}"
                     val payload = mapOf("eventId" to "incoming-$key", "serverCallId" to key,
                         "caller" to mapOf("handleType" to "generic", "value" to key, "displayName" to key), "hasVideo" to false)
+                    val incomingAt = now()
                     val incoming = engine.incoming(payload)
+                    val reportedAt = now()
                     assertEquals("reported", incoming["status"])
                     val id = incoming["id"] as String
                     owned = id; currentId = id; currentEvent = "ended-$key"; currentServer = key
@@ -322,6 +361,7 @@ class AnsweredElsewhereJourneyTest {
                     assertTrue(notificationPresent(key))
                     phase = "$source/$index visible-ring"
                     val uiBefore = showRing(key)
+                    val visibleBefore = now()
                     val end = mapOf("eventId" to currentEvent, "serverCallId" to key, "reason" to "answeredElsewhere")
                     val signal = now()
                     timings["signalNanos"] = signal
@@ -350,8 +390,13 @@ class AnsweredElsewhereJourneyTest {
                             now().also { timings["notificationGoneNanos"] = it }
                         }
                         try {
-                            withTimeout(1000) { Completion(terminal.await(), correlated.await(), empty.await(),
-                                notification.await(), ui.await(), native.await()) }
+                            phase = "$source/$index native-completion"
+                            val completed = withTimeout(nativeBudgetMs) { NativeCompletion(terminal.await(), correlated.await(), empty.await(),
+                                notification.await(), native.await()) }
+                            phase = "$source/$index ui-removal"
+                            val remainingUiMs = (uiBudgetMs - (now() - signal) / 1_000_000).coerceAtLeast(1)
+                            val removed = withTimeout(remainingUiMs) { ui.await() }
+                            Completion(completed.terminal, completed.event, completed.empty, completed.notification, removed, completed.native)
                         } catch (error: Throwable) {
                             // The strict verdict has already failed. Keep these same observers
                             // alive briefly to measure completion rather than hiding the slow stage.
@@ -374,28 +419,36 @@ class AnsweredElsewhereJourneyTest {
                     assertEquals(1, eventCount); assertEquals(0, handlerCalls)
                     assertFalse((engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id })
                     assertTrue(terminalAt >= signal && eventAt >= terminalAt && completion.empty >= eventAt)
-                    for (at in listOf(terminalAt, eventAt, completion.empty, notificationAt, uiAt, native.observedNanos))
-                        assertTrue("Signal-to-completion exceeded the 1000 ms engineering budget", at - signal in 0..1_000_000_000L)
+                    for (at in listOf(terminalAt, eventAt, completion.empty, notificationAt, native.observedNanos))
+                        assertTrue("Native completion exceeded the 1000 ms engineering budget", at - signal in 0..nativeBudgetMs * 1_000_000)
+                    assertTrue("Visible removal exceeded SystemUI minimum plus observer allowance", uiAt - signal in 0..uiBudgetMs * 1_000_000)
                     assertFalse(engine.receiveCallEnded(end))
                     delay(25); assertEquals(1, eventCount)
                     samples += mapOf("source" to source, "sampleIndex" to index, "conversationId" to id,
                         "serverCallId" to key, "eventId" to currentEvent, "uiBefore" to uiBefore.json(),
+                        "incomingNanos" to incomingAt, "reportedNanos" to reportedAt, "visibleBeforeNanos" to visibleBefore,
                         "signalNanos" to signal, "acceptedNanos" to accepted, "terminalSnapshotNanos" to terminalAt,
                         "eventNanos" to eventAt, "emptyHookNanos" to completion.empty,
                         "notificationGoneNanos" to notificationAt, "uiGoneNanos" to uiAt,
                         "platformGoneNanos" to native.observedNanos, "nativeCode" to native.code, "nativeReason" to native.reason,
                         "nativeEvidence" to "telecom-historical-SET_DISCONNECTED", "correlatedEvents" to eventCount,
                         "endHandlerCalls" to handlerCalls, "uiAbsenceObservations" to completion.ui.observations,
-                        "uiAbsentWindowId" to completion.ui.windowId)
+                        "uiAbsentWindowId" to completion.ui.windowId, "firstUiCallerAbsentNanos" to completion.ui.firstAbsentNanos,
+                        "uiScans" to completion.ui.scans, "uiCompleteScans" to completion.ui.completeScans,
+                        "maximumUiScanNanos" to completion.ui.maximumScanNanos, "uiScanTimings" to uiScans.toList())
                     owned = null
                 }
-                output.writeText(JSONObject(mapOf("passed" to true, "budgetMs" to 1000, "samples" to samples,
+                output.writeText(JSONObject(mapOf("passed" to true, "nativeBudgetMs" to nativeBudgetMs,
+                    "uiBudgetMs" to uiBudgetMs, "headsUpMinimumMs" to headsUpMinimumMs,
+                    "uiObserverAllowanceMs" to uiObserverAllowanceMs, "samples" to samples,
                     "pushEntry" to "NativeCallPush.handle (not cloud FCM)")).toString())
             } catch (error: Throwable) {
                 val current = (engine.snapshot["conversations"] as List<*>).filterIsInstance<Map<*, *>>()
                     .firstOrNull { it["id"] == currentId }
                 output.writeText(JSONObject(mapOf("passed" to false, "samples" to samples,
                     "phase" to phase, "failure" to error.javaClass.simpleName,
+                    "nativeBudgetMs" to nativeBudgetMs, "uiBudgetMs" to uiBudgetMs, "headsUpMinimumMs" to headsUpMinimumMs,
+                    "uiScanTimings" to uiScans.toList(), "uiSummary" to uiSummary,
                     "partialTimings" to timings.toMap(), "observerErrors" to observerErrors.toMap(),
                     "postFailure" to postFailure, "platformObservation" to lastPlatform,
                     "sdkObservation" to mapOf("present" to (current != null), "status" to current?.get("status"),
