@@ -10,7 +10,9 @@ push and fetcher; raw WebRTC fetcher and fallback despite fresh LiveKit push
 credentials. Sources are deterministically interleaved. Each call gets a fresh
 room/peer; the application process remains alive. Process age is retained, so
 these samples must not be presented as five process-cold launches. Answer follows
-PREJOINED plus 150 ms, with prior call cleanup and MODE_NORMAL required.
+PREJOINED plus 150 ms. Prior call cleanup must restore MODE_NORMAL before the
+next invitation; Core may enter MODE_RINGTONE while ringing. Communication mode
+remains gated by native answer/audio authority.
 
 The baseline profile preserves the existing media behavior. Production signaling,
 subscription, capture, playout and route choices are unchanged. The receive-only

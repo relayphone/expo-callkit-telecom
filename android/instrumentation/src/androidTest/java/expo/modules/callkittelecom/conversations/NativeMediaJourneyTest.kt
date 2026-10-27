@@ -118,7 +118,9 @@ class NativeMediaJourneyTest {
                         val preanswerRecording = recording.snapshot()
                         recordingObservation = preanswerRecording
                         assertEquals(0, preanswerRecording["newObservedCount"])
-                        assertEquals(android.media.AudioManager.MODE_NORMAL, audio.mode)
+                        assertTrue("Core may use NORMAL or RINGTONE before answer", audio.mode in setOf(
+                            android.media.AudioManager.MODE_NORMAL, android.media.AudioManager.MODE_RINGTONE))
+                        val preanswerAudioMode = audio.mode
                         val processAgeMs = android.os.SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime()
                         engine.join(id)
                         val first = stage(serverId, NativeMediaStage.FIRST_AUDIO)
@@ -152,7 +154,7 @@ class NativeMediaJourneyTest {
                         val elapsedMs = (first.elapsedRealtimeNanos - requested.elapsedRealtimeNanos) / 1_000_000.0
                         assertTrue("Native answer-to-PCM exceeded bound", elapsedMs in 0.0..3000.0)
                         results += mapOf("credentials" to source, "sampleIndex" to sampleIndex,
-                            "processAgeMs" to processAgeMs, "preanswerRecording" to preanswerRecording,
+                            "processAgeMs" to processAgeMs, "preanswerAudioMode" to preanswerAudioMode, "preanswerRecording" to preanswerRecording,
                             "activeRecording" to activeRecording,
                             "events" to events(serverId).map { mapOf("stage" to it.stage.value,
                                 "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) }, "pushNanos" to pushed.elapsedRealtimeNanos,
