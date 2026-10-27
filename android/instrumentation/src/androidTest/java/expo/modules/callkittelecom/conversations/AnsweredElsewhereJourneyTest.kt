@@ -15,6 +15,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -30,6 +31,7 @@ class AnsweredElsewhereJourneyTest {
     private val context get() = instrumentation.targetContext
     private fun now() = SystemClock.elapsedRealtimeNanos()
     @Volatile private var lastUi: Map<String, Any?> = emptyMap()
+    @Volatile private var lastPlatform: Map<String, Any?> = emptyMap()
     private var expansionAttempts = 0
     private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
         instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }
@@ -220,9 +222,14 @@ class AnsweredElsewhereJourneyTest {
     private suspend fun platformGone(callId: String): NativeEnd = withContext(Dispatchers.IO) {
         while (true) {
             // Telecom's own historical event contains the cause installed on the actual call.
+            val requested = now()
             val dump = shell("dumpsys -t 5 telecom timeline")
             val event = dump.lineSequence().firstOrNull { it.contains(",$callId,SET_DISCONNECTED,") }
             val current = dump.lineSequence().any { it.trimStart().startsWith("[Call id=$callId,") }
+            lastPlatform = mapOf("requestedNanos" to requested, "returnedNanos" to now(),
+                "trackedCall" to current, "disconnectEventFound" to (event != null),
+                "remoteCodeFound" to (event?.contains("Code: (REMOTE)") == true),
+                "answeredReasonFound" to (event?.contains("Reason: (answeredElsewhere)") == true))
             if (!current && event != null) {
                 val code = when {
                     event.contains("Code: (REMOTE)") -> android.telecom.DisconnectCause.REMOTE
@@ -231,6 +238,8 @@ class AnsweredElsewhereJourneyTest {
                 }
                 val reason = Regex("Reason: \\(([^)]*)\\)").find(event)?.groupValues?.get(1)
                     ?: error("Missing platform disconnect reason")
+                lastPlatform = lastPlatform + mapOf("nativeCode" to code,
+                    "nativeReasonMatchesExpected" to (reason == "answeredElsewhere"))
                 return@withContext NativeEnd(now(), code, reason)
             }
             delay(20)
@@ -257,6 +266,13 @@ class AnsweredElsewhereJourneyTest {
             var eventCount = 0
             var handlerCalls = 0
             var phase = "prepare"
+            var timings = ConcurrentHashMap<String, Long>()
+            var observerErrors = ConcurrentHashMap<String, String>()
+            var postFailure: Map<String, Any?> = emptyMap()
+            fun mark(key: String): Long {
+                timings.putIfAbsent(key, now())
+                return timings[key]!!
+            }
             engine.policy = JSONObject(mapOf("type" to "handler", "prewarm" to false))
             engine.actions.resetBridge(); engine.actions.attach(true, 1, engine.actions.epoch)
             engine.actions.acceptUnhandled = false
@@ -267,9 +283,9 @@ class AnsweredElsewhereJourneyTest {
                         it["id"] == currentId && it["status"] == "ended" &&
                             (it["ended"] as? Map<*, *>)?.get("reason") == "answeredElsewhere"
                     }
-                    if (ended != null) terminal.complete(now())
+                    if (ended != null) terminal.complete(mark("terminalSnapshotNanos"))
                     if (terminal.isCompleted && (body["conversations"] as List<*>).none { (it as Map<*, *>)["id"] == currentId })
-                        empty.complete(now())
+                        empty.complete(mark("emptyHookNanos"))
                 }
                 if (name == "conversationEvent" && body["type"] == "answeredElsewhere") {
                     val payload = body["payload"] as Map<*, *>
@@ -277,7 +293,7 @@ class AnsweredElsewhereJourneyTest {
                     assertEquals(currentEvent, payload["eventId"])
                     assertEquals(currentServer, payload["serverCallId"])
                     assertTrue("Terminal SDK snapshot must precede the correlated event", terminal.isCompleted)
-                    eventCount++; correlated.complete(now())
+                    eventCount++; correlated.complete(mark("eventNanos"))
                 }
             }
             val automation = instrumentation.uiAutomation
@@ -298,6 +314,8 @@ class AnsweredElsewhereJourneyTest {
                     val id = incoming["id"] as String
                     owned = id; currentId = id; currentEvent = "ended-$key"; currentServer = key
                     terminal = CompletableDeferred(); correlated = CompletableDeferred(); empty = CompletableDeferred(); eventCount = 0
+                    timings = ConcurrentHashMap(); observerErrors = ConcurrentHashMap(); postFailure = emptyMap()
+                    lastPlatform = emptyMap()
                     val before = TelecomEvidence.calls()
                     assertEquals(1, before.size); assertTrue(before.single().contains("state=RINGING"))
                     val platformId = Regex("\\[Call id=([^,\\]]+)").find(before.single())!!.groupValues[1]
@@ -306,20 +324,48 @@ class AnsweredElsewhereJourneyTest {
                     val uiBefore = showRing(key)
                     val end = mapOf("eventId" to currentEvent, "serverCallId" to key, "reason" to "answeredElsewhere")
                     val signal = now()
+                    timings["signalNanos"] = signal
                     phase = "$source/$index signal-to-dismissal"
                     if (source == "host") assertTrue(engine.receiveCallEnded(end))
                     else NativeCallPush(engine) {}.handle(mapOf("messageType" to "callEnded", "callEnded" to JSONObject(end).toString()), true)
                     val accepted = now()
-                    val completion = withTimeout(1000) { coroutineScope {
-                        val ui = async { ringGone(key, uiBefore.windowId) }
-                        val native = async { platformGone(platformId) }
+                    timings["acceptedNanos"] = accepted
+                    val completion = supervisorScope {
+                        val ui = async {
+                            try { ringGone(key, uiBefore.windowId).also { timings["uiGoneNanos"] = it.observedNanos } }
+                            catch (error: Exception) {
+                                if (error !is CancellationException) observerErrors["ui"] = error.javaClass.simpleName
+                                throw error
+                            }
+                        }
+                        val native = async {
+                            try { platformGone(platformId).also { timings["platformGoneNanos"] = it.observedNanos } }
+                            catch (error: Exception) {
+                                if (error !is CancellationException) observerErrors["platform"] = error.javaClass.simpleName
+                                throw error
+                            }
+                        }
                         val notification = async(Dispatchers.IO) {
                             while (notificationPresent(key)) delay(10)
-                            now()
+                            now().also { timings["notificationGoneNanos"] = it }
                         }
-                        Completion(terminal.await(), correlated.await(), empty.await(),
-                            notification.await(), ui.await(), native.await())
-                    } }
+                        try {
+                            withTimeout(1000) { Completion(terminal.await(), correlated.await(), empty.await(),
+                                notification.await(), ui.await(), native.await()) }
+                        } catch (error: Throwable) {
+                            // The strict verdict has already failed. Keep these same observers
+                            // alive briefly to measure completion rather than hiding the slow stage.
+                            timings["strictFailureNanos"] = now()
+                            val settled = withTimeoutOrNull(5000) { joinAll(ui, native, notification); true } == true
+                            val core = runCatching { withTimeout(2000) { TelecomEvidence.calls() } }
+                            postFailure = mapOf("observerBudgetMs" to 5000, "allObserversFinished" to settled,
+                                "observedNanos" to now(), "coreCallsRemaining" to core.getOrNull()?.size,
+                                "ownedCoreCallRemaining" to core.getOrNull()?.any { it.contains("[Call id=$platformId,") },
+                                "coreProbeError" to core.exceptionOrNull()?.javaClass?.simpleName,
+                                "notificationPresent" to notificationPresent(key))
+                            throw error
+                        } finally { ui.cancel(); native.cancel(); notification.cancel() }
+                    }
                     val native = completion.native
                     val terminalAt = completion.terminal; val eventAt = completion.event
                     val notificationAt = completion.notification; val uiAt = completion.ui.observedNanos
@@ -346,9 +392,16 @@ class AnsweredElsewhereJourneyTest {
                 output.writeText(JSONObject(mapOf("passed" to true, "budgetMs" to 1000, "samples" to samples,
                     "pushEntry" to "NativeCallPush.handle (not cloud FCM)")).toString())
             } catch (error: Throwable) {
+                val current = (engine.snapshot["conversations"] as List<*>).filterIsInstance<Map<*, *>>()
+                    .firstOrNull { it["id"] == currentId }
                 output.writeText(JSONObject(mapOf("passed" to false, "samples" to samples,
                     "phase" to phase, "failure" to error.javaClass.simpleName,
-                    "uiObservation" to lastUi)).toString())
+                    "partialTimings" to timings.toMap(), "observerErrors" to observerErrors.toMap(),
+                    "postFailure" to postFailure, "platformObservation" to lastPlatform,
+                    "sdkObservation" to mapOf("present" to (current != null), "status" to current?.get("status"),
+                        "endedReason" to (current?.get("ended") as? Map<*, *>)?.get("reason"),
+                        "terminalObserved" to terminal.isCompleted, "eventObserved" to correlated.isCompleted,
+                        "emptyObserved" to empty.isCompleted), "uiObservation" to lastUi)).toString())
                 throw error
             } finally {
                 owned?.let { id -> runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) } }
