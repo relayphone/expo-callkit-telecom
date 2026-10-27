@@ -44,6 +44,7 @@ class NativeMediaJourneyTest {
             NativeMediaSignals.observers += observer
             val results = mutableListOf<Map<String, Any?>>()
             val cleanupResults = mutableListOf<String>()
+            var declineObservation: JSONObject? = null
             val owned = mutableSetOf<String>()
             val output = File(context.filesDir, if (provider == "livekit") "native-media-results.json" else "native-webrtc-results.json")
             output.delete()
@@ -151,6 +152,7 @@ class NativeMediaJourneyTest {
                 engine.end(declined)
                 absent(declined); stage(declinedServer, NativeMediaStage.CLOSED)
                 val declineState = noClient(declinedServer)
+                declineObservation = declineState
                 if (provider == "webrtc") assertTrue(declineState.getJSONArray("states").toString().contains("declined"))
                 assertFalse(events(declinedServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
                 owned -= declined; cleanupResults += "declined"
@@ -178,11 +180,11 @@ class NativeMediaJourneyTest {
                 assertEquals(0, joinHandlerCalls)
                 output.writeText(JSONObject(mapOf("passed" to true, "provider" to provider, "metric" to "native-answer-request-to-first-remote-pcm",
                     "pcmThreshold" to 128, "budgetMs" to 3000, "targetMs" to 300, "samples" to results,
-                    "cleanup" to cleanupResults,
+                    "cleanup" to cleanupResults, "declineObservation" to declineObservation,
                     "jsJoinHandlerCalls" to joinHandlerCalls, "jsWarmRequests" to warmRequests)).toString())
             } } catch (error: Throwable) {
                 output.writeText(JSONObject(mapOf("passed" to false, "stage" to "native-$provider-journey", "samples" to results,
-                    "cleanup" to cleanupResults, "observedStages" to signals.map { mapOf("stage" to it.stage.value,
+                    "cleanup" to cleanupResults, "declineObservation" to declineObservation, "observedStages" to signals.map { mapOf("stage" to it.stage.value,
                         "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) })).toString())
                 throw error
             } finally {
