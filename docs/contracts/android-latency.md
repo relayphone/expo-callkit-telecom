@@ -5,17 +5,30 @@ PCM callback, with PCM16 peak at least 128. It uses the same real LiveKit publis
 and independent aiortc peer as the native media journeys. It measures decoded
 media on an API 35 x86_64 emulator, not acoustic output or FCM cloud delivery.
 
-Each profile contains five fresh calls for each provider/credential path: LiveKit
-push and fetcher; raw WebRTC fetcher and fallback despite fresh LiveKit push
-credentials. Sources are deterministically interleaved. Each call gets a fresh
-room/peer; the application process remains alive. Process age is retained, so
-these samples must not be presented as five process-cold launches. Answer follows
-PREJOINED plus 150 ms. Prior call cleanup must restore MODE_NORMAL before the
-next invitation; Core may enter MODE_RINGTONE while ringing. Communication mode
-remains gated by native answer/audio authority. Before PUSH_RECEIVED and after
-cleanup, a bounded platform CallsManager dump must show zero calls. This separates
-app snapshot/media teardown from asynchronous platform removal. The same isolation
-barrier applies to baseline and optimized profiles; it is outside timed phases.
+Each profile contains five measured calls for each provider/credential path:
+LiveKit push and fetcher; raw WebRTC fetcher and fallback despite fresh LiveKit
+push credentials. Each measurement starts a fresh application process and creates
+a fresh room/peer. All twenty attempts are required; failures are not retried,
+skipped or filtered. The app is already running when its native incoming-push
+entry receives the fixture invitation, so this does not measure OS process launch
+or FCM delivery. Answer follows PREJOINED plus 150 ms. The same process regime
+applies to baseline and optimized profiles.
+
+The full native media journeys still run separately, including hold/resume,
+decline, timeout and terminal-credential cleanup. Before PUSH_RECEIVED and after
+cleanup, a bounded platform CallsManager dump must show zero calls; audio mode
+must return to MODE_NORMAL before the invitation. Core may use MODE_RINGTONE
+while ringing. These barriers are outside timed phases. Each dedicated sample
+also verifies native media closure, zero server clients, recording-session cleanup
+and, for raw WebRTC, an acknowledged terminal state before its process exits.
+
+Earlier profiling attempts kept one process alive across ten calls per provider.
+Those runs exposed missing Core-Telecom current-endpoint callbacks after several
+raw calls, including when the platform reported zero prior calls. They failed the
+unchanged audio-authority deadline and remain failed diagnostic evidence. Process
+isolation controls this history variable; it does not claim that the repeated-call
+platform issue is fixed. Neither the 1.5 s audio-authority deadline nor the 3 s
+answer-to-PCM failure bound is relaxed.
 
 The baseline profile preserves the existing media behavior. Production signaling,
 subscription, capture, playout and route choices are unchanged. The receive-only

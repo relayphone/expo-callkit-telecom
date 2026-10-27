@@ -39,6 +39,11 @@ METRICS = {
     "audioWaitToModeMs": ("audioWaitStarted", "audioModeReady"),
     "endpointReadyRelativeToAnswerMs": ("answer", "endpointReady"),
     "decoderFirstPcmRelativeToAnswerMs": ("answer", "decoderFirstPcm"),
+    "playbackStartRelativeToAnswerMs": ("answer", "playbackStarted"),
+    "microphonePublishRelativeToAnswerMs": ("answer", "microphonePublished"),
+    "authorizedToCaptureCallbackMs": ("authorized", "captureStarted"),
+    "authorizedToOutputMs": ("authorized", "outputFirstNonzero"),
+    "answerToOutputMs": ("answer", "outputFirstNonzero"),
 }
 EVENT_STAGES = {stage for pair in METRICS.values() for stage in pair} | {
     stage for _, stage in TIMESTAMPS.values()
