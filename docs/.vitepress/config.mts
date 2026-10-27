@@ -173,27 +173,35 @@ export default defineConfig({
     },
 
     nav: [
-      { text: "Guide", link: "/getting-started" },
-      { text: "API", link: "/api/" },
+      { text: "v2 migration", link: "/migrating-v1-to-v2" },
+      { text: "v1 guide", link: "/getting-started" },
+      { text: "v2 API", link: "/api/" },
       { text: "vs callkeep", link: "/vs-callkeep" },
       { text: "npm", link: "https://www.npmjs.com/package/expo-callkit-telecom" },
     ],
 
     sidebar: [
       {
-        text: "Introduction",
+        text: "Fork v2 rollout",
+        items: [
+          { text: "v1 → v2 migration", link: "/migrating-v1-to-v2" },
+          { text: "Android quick-start", link: "/android-quick-start" },
+          { text: "v2 API reference", link: "/api/" },
+        ],
+      },
+      {
+        text: "Upstream v1 introduction",
         items: [
           { text: "Overview", link: "/" },
           { text: "Getting started", link: "/getting-started" },
         ],
       },
       {
-        text: "Reference",
+        text: "Upstream v1 reference",
         items: [
           { text: "VoIP push payload", link: "/voip-push" },
           { text: "Platform notes", link: "/platform-notes" },
           { text: "Verified against", link: "/verified-against" },
-          { text: "API reference", link: "/api/" },
         ],
       },
       {

@@ -1,5 +1,42 @@
 # 📞 expo-callkit-telecom — CallKit & Core-Telecom for React Native + Expo (with VoIP push)
 
+## Fork v2 rollout
+
+This fork's **`v2` branch** replaces the v1 session/listener API with typed
+conversations. Use the fork source and its lockfiles for evaluation; the inherited
+package version and `bun add expo-callkit-telecom` instructions below do not
+identify a published v2 release.
+
+| Platform | v2 status |
+| --- | --- |
+| Android | Implemented on this branch: Core-Telecom, native FCM intake, native answer/pre-warm, typed incoming outcomes and server-end signals. Emulator and release Expo journeys are checked in CI. |
+| iOS | **Pending M3.5.** [Draft adapter spike #33](https://github.com/ziahamza/expo-callkit-telecom/pull/33) validates native/contract seams; full Expo/media composition is unmerged. The legacy iOS module is not a shipped v2 implementation. |
+
+Start with the [v1 → v2 migration guide](docs/migrating-v1-to-v2.md) and
+[Android quick-start](docs/android-quick-start.md). They cover:
+
+- `Conversation` snapshots and hooks, a module-scope handler, and separate
+  commands versus transport reports. Handler completion does not report media
+  connected.
+- Required typed `Caller { handleType, value, displayName, hostContactID? }`,
+  stable server-call identity and `receiveCallEnded` for answered-elsewhere
+  signals.
+- Native report-first pre-warm and answer, with physical audio gated by Android
+  authority; the example's handler policy is a separate media-free flow.
+- Typed DND/filter outcomes and the measured Android/iOS LCK allowance contrast.
+  `reported` alone does not prove ringing.
+
+The [checked latency comparison](docs/contracts/android-latency-results.md)
+records 40 optimized emulator samples across two runs, all below 300 ms after
+completed pre-warm. This measures decoded remote PCM, excludes cloud push/process
+launch/acoustic latency, and does not establish production percentiles.
+
+## Upstream v1 reference
+
+The remaining README preserves upstream v1 installation, API and platform
+examples. They are not v2 instructions. **iOS v2 remains pending M3.5** in
+[#33](https://github.com/ziahamza/expo-callkit-telecom/pull/33).
+
 > An Expo module — written in Swift and Kotlin — that wraps **CallKit** on iOS and **Jetpack Core-Telecom** on Android with API parity. It owns the system call UI, the audio session, and VoIP push — your app owns the media (LiveKit, plain WebRTC, etc.).
 
 📖 **Full documentation:** [expo-callkit-telecom.mfairley.com](https://expo-callkit-telecom.mfairley.com/)
