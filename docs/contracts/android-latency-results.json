@@ -1,0 +1,428 @@
+{
+  "schemaVersion": 1,
+  "environment": {
+    "runner": "ubuntu-latest",
+    "acceleration": "KVM",
+    "apiLevel": 35,
+    "architecture": "x86_64",
+    "imageTarget": "google_apis",
+    "emulatorProfile": "pixel_6",
+    "provenance": "Workflow-declared benchmark environment; host performance is not normalized."
+  },
+  "method": {
+    "metric": "native-answer-request-to-first-remote-pcm",
+    "unit": "ms",
+    "pcmThreshold": 128,
+    "targetMs": 300,
+    "failureBoundMs": 3000,
+    "attemptsPerProfile": 20,
+    "samplesPerPath": 5,
+    "answerMsOrder": "sampleIndex 1..5",
+    "processRegime": "fresh app process per call; media prejoined before Answer",
+    "answerTrigger": "PREJOINED plus 150 ms requested delay; actual delay is summarized per path",
+    "authority": "Same live Core-active call plus observed MODE_IN_COMMUNICATION; endpoint observation is descriptive.",
+    "recording": "No observed new pre-answer recording session; active recording observed after authorization.",
+    "exclusions": "Not acoustic output, OS process-launch latency, or FCM delivery latency.",
+    "timingCaveat": "Transport timestamps are first-observed states, not exact handshake completion. Stats polling is 25 ms and the stats cache may be 50 ms; retained per-observation poll/cache and request-to-callback statistics describe additional uncertainty. Callbacks and stats observations are counted separately. Intervals overlap and must not be summed. Missing observations remain null with n=0.",
+    "comparisonCaveat": "Historical Stop2/repeated-process samples use a different regime and cannot establish causal improvement against this baseline.",
+    "provenance": "Commit/run references are supplied by the caller; SHA256 binds exact checked aggregate and summary bytes."
+  },
+  "profiles": [
+    {
+      "profile": "baseline",
+      "commit": "682471b36c49b213f5ed9abd2c012058a2c76533",
+      "run": "https://github.com/ziahamza/expo-callkit-telecom/actions/runs/40445076518",
+      "artifactSha256": {
+        "native-latency-livekit.json": "92441f3209dbf9ea04dbbc6243cac255b3fdf7aa1526dddc4631219d134244a1",
+        "native-latency-webrtc.json": "b32735635e8e826de58d55b1992dec42a32deebcf1e18efc67bc5d53477972c9",
+        "native-latency-summary.json": "9008f5f831c25d5e08b7ebbdee8e6b878b13041c49644aca51ab627a3d54c475"
+      },
+      "paths": [
+        {
+          "provider": "livekit",
+          "credentials": "fetcher",
+          "sampleIndexes": [1, 2, 3, 4, 5],
+          "answerMs": [1123.165203, 954.034004, 993.133071, 965.165431, 954.54419],
+          "endpointAbsentAtAuthorizationCount": 0,
+          "processAgeMs": {"observedCount": 5, "min": 2373, "median": 2732, "max": 2789},
+          "phasesMs": {
+            "pushToReportedMs": {"observedCount": 5, "min": 35.767178, "median": 44.404531, "max": 77.022963},
+            "pushToPrewarmMs": {"observedCount": 5, "min": 63.062951, "median": 96.667218, "max": 118.571384},
+            "pushToPrejoinedMs": {"observedCount": 5, "min": 1175.090702, "median": 1560.934043, "max": 1639.719074},
+            "answerToAcceptedMs": {"observedCount": 5, "min": 10.173965, "median": 12.563849, "max": 15.046488},
+            "acceptedToAuthorizedMs": {"observedCount": 5, "min": 129.690253, "median": 134.65966, "max": 144.965536},
+            "authorizedToFirstAudioMs": {"observedCount": 5, "min": 805.153407, "median": 812.409911, "max": 974.205074},
+            "answerToFirstAudioMs": {"observedCount": 5, "min": 954.034004, "median": 965.165431, "max": 1123.165203},
+            "coreAddMs": {"observedCount": 5, "min": 34.154002, "median": 42.425439, "max": 75.35896},
+            "credentialsMs": {"observedCount": 5, "min": 669.628226, "median": 726.201928, "max": 765.868787},
+            "subscriptionToRemoteTrackMs": {"observedCount": 5, "min": 23.728062, "median": 27.373248, "max": 30.556116},
+            "remoteTrackToDecoderMs": {"observedCount": 5, "min": 774.061983, "median": 785.526358, "max": 949.424683},
+            "microphonePublishMs": {"observedCount": 5, "min": 7.980709, "median": 13.031186, "max": 15.160613},
+            "audioWaitToModeMs": {"observedCount": 5, "min": 118.527348, "median": 123.866021, "max": 128.848447},
+            "endpointReadyRelativeToAnswerMs": {"observedCount": 5, "min": -1761.088902, "median": -1675.0491, "max": -1281.878576},
+            "decoderFirstPcmRelativeToAnswerMs": {"observedCount": 5, "min": 953.943909, "median": 965.076859, "max": 1122.886488},
+            "playbackStartRelativeToAnswerMs": {"observedCount": 5, "min": 177.669741, "median": 186.463187, "max": 199.354225},
+            "microphonePublishRelativeToAnswerMs": {"observedCount": 5, "min": 159.232502, "median": 165.01059, "max": 178.82878},
+            "authorizedToCaptureCallbackMs": {"observedCount": 5, "min": 52.313147, "median": 67.424666, "max": 93.149956},
+            "authorizedToOutputMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "answerToOutputMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "answerToAuthorizedMs": {"observedCount": 5, "min": 141.624093, "median": 145.125696, "max": 160.012024},
+            "authorizedToPlaybackCallbackMs": {"observedCount": 5, "min": 31.71842, "median": 39.342201, "max": 43.959647},
+            "authorizedToSubscriptionRequestMs": {"observedCount": 5, "min": 0.773614, "median": 2.227652, "max": 2.551325},
+            "authorizedToRemoteSubscribedMs": {"observedCount": 5, "min": 24.489247, "median": 29.910763, "max": 32.763938},
+            "remoteSubscribedToFirstAudioMs": {"observedCount": 5, "min": 774.165978, "median": 785.630634, "max": 949.715827},
+            "decoderToFirstAudioMs": {"observedCount": 5, "min": 0.088572, "median": 0.091687, "max": 0.278715},
+            "prejoinedToAnswerMs": {"observedCount": 5, "min": 157.396863, "median": 160.412571, "max": 163.631593}
+          },
+          "transports": {
+            "publisher": {
+              "iceChecking": {"observedCount": 1, "sampledCount": 1, "callbackCount": 0, "fromPushMs": {"observedCount": 1, "min": 1664.121166, "median": 1664.121166, "max": 1664.121166}, "fromAnswerMs": {"observedCount": 1, "min": -54.20974, "median": -54.20974, "max": -54.20974}, "pollIntervalMs": {"observedCount": 1, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 1, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 1, "min": 1.495176, "median": 1.495176, "max": 1.495176}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1263.680948, "median": 1658.05646, "max": 1754.211364}, "fromAnswerMs": {"observedCount": 5, "min": -71.609773, "median": -70.419954, "max": -0.958249}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 0.534538, "median": 0.879928, "max": 4.190841}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1317.519961, "median": 1703.989596, "max": 1754.211364}, "fromAnswerMs": {"observedCount": 5, "min": -71.609773, "median": -17.606616, "max": -0.958249}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 0.534538, "median": 0.744931, "max": 0.896678}}
+            },
+            "subscriber": {
+              "iceChecking": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1628.3864, "median": 1730.060582, "max": 2112.503019}, "fromAnswerMs": {"observedCount": 5, "min": -101.279833, "median": 123.547115, "max": 391.278036}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 1.667817, "median": 26.712022, "max": 145.271678}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1232.294274, "median": 1647.730108, "max": 1783.431436}, "fromAnswerMs": {"observedCount": 5, "min": -102.832303, "median": -71.293181, "max": -19.919231}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 0.593279, "median": 17.802934, "max": 29.397973}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 2251.961692, "median": 2649.033104, "max": 2964.551642}, "fromAnswerMs": {"observedCount": 5, "min": 909.733868, "median": 930.702198, "max": 1161.200975}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 1.186259, "median": 24.435667, "max": 100.073003}}
+            }
+          }
+        },
+        {
+          "provider": "livekit",
+          "credentials": "push",
+          "sampleIndexes": [1, 2, 3, 4, 5],
+          "answerMs": [1048.333921, 1039.066247, 1057.946447, 950.849699, 919.324668],
+          "endpointAbsentAtAuthorizationCount": 0,
+          "processAgeMs": {"observedCount": 5, "min": 2157, "median": 2229, "max": 2348},
+          "phasesMs": {
+            "pushToReportedMs": {"observedCount": 5, "min": 35.786717, "median": 51.757348, "max": 66.379708},
+            "pushToPrewarmMs": {"observedCount": 5, "min": 77.340847, "median": 117.304014, "max": 122.254137},
+            "pushToPrejoinedMs": {"observedCount": 5, "min": 823.267725, "median": 949.714445, "max": 1012.618405},
+            "answerToAcceptedMs": {"observedCount": 5, "min": 9.44027, "median": 10.056881, "max": 24.993314},
+            "acceptedToAuthorizedMs": {"observedCount": 5, "min": 118.010577, "median": 127.770925, "max": 137.217801},
+            "authorizedToFirstAudioMs": {"observedCount": 5, "min": 766.377326, "median": 901.855052, "max": 925.143326},
+            "answerToFirstAudioMs": {"observedCount": 5, "min": 919.324668, "median": 1039.066247, "max": 1057.946447},
+            "coreAddMs": {"observedCount": 5, "min": 34.543593, "median": 49.549906, "max": 64.358013},
+            "credentialsMs": {"observedCount": 5, "min": 0.009885, "median": 0.011117, "max": 0.016585},
+            "subscriptionToRemoteTrackMs": {"observedCount": 5, "min": 21.320155, "median": 23.512209, "max": 29.135767},
+            "remoteTrackToDecoderMs": {"observedCount": 5, "min": 737.383296, "median": 878.55966, "max": 900.281845},
+            "microphonePublishMs": {"observedCount": 5, "min": 7.675773, "median": 9.589263, "max": 15.395563},
+            "audioWaitToModeMs": {"observedCount": 5, "min": 110.025097, "median": 119.143707, "max": 127.288081},
+            "endpointReadyRelativeToAnswerMs": {"observedCount": 5, "min": -1132.711888, "median": -1042.184082, "max": -950.34153},
+            "decoderFirstPcmRelativeToAnswerMs": {"observedCount": 5, "min": 919.240563, "median": 1038.991365, "max": 1057.863934},
+            "playbackStartRelativeToAnswerMs": {"observedCount": 5, "min": 166.106193, "median": 173.258897, "max": 198.212788},
+            "microphonePublishRelativeToAnswerMs": {"observedCount": 5, "min": 146.491127, "median": 157.313364, "max": 171.1725},
+            "authorizedToCaptureCallbackMs": {"observedCount": 5, "min": 60.049145, "median": 64.908143, "max": 81.925149},
+            "authorizedToOutputMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "answerToOutputMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "answerToAuthorizedMs": {"observedCount": 5, "min": 132.803121, "median": 141.634574, "max": 152.947342},
+            "authorizedToPlaybackCallbackMs": {"observedCount": 5, "min": 30.255006, "median": 33.303072, "max": 45.265446},
+            "authorizedToSubscriptionRequestMs": {"observedCount": 5, "min": 0.977778, "median": 1.900355, "max": 2.867156},
+            "authorizedToRemoteSubscribedMs": {"observedCount": 5, "min": 23.20739, "median": 23.907779, "max": 31.983995},
+            "remoteSubscribedToFirstAudioMs": {"observedCount": 5, "min": 737.48729, "median": 878.647662, "max": 901.235547},
+            "decoderToFirstAudioMs": {"observedCount": 5, "min": 0.074882, "median": 0.084105, "max": 0.298486},
+            "prejoinedToAnswerMs": {"observedCount": 5, "min": 154.621083, "median": 162.024566, "max": 165.796186}
+          },
+          "transports": {
+            "publisher": {
+              "iceChecking": {"observedCount": 0, "sampledCount": 0, "callbackCount": 0, "fromPushMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "fromAnswerMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "pollIntervalMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "statsCacheMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "requestToCallbackMs": {"observedCount": 0, "min": null, "median": null, "max": null}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 905.001464, "median": 1056.834008, "max": 1128.841671}, "fromAnswerMs": {"observedCount": 5, "min": -84.927563, "median": -73.236555, "max": -41.893035}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 0.70754, "median": 1.13296, "max": 7.154912}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 905.001464, "median": 1056.834008, "max": 1184.959538}, "fromAnswerMs": {"observedCount": 5, "min": -84.927563, "median": -54.905003, "max": 14.224832}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 0.70754, "median": 0.901294, "max": 3.877068}}
+            },
+            "subscriber": {
+              "iceChecking": {"observedCount": 4, "sampledCount": 4, "callbackCount": 0, "fromPushMs": {"observedCount": 4, "min": 989.868236, "median": 1253.9295940000002, "max": 1677.014862}, "fromAnswerMs": {"observedCount": 4, "min": -104.266969, "median": 174.935488, "max": 532.004606}, "pollIntervalMs": {"observedCount": 4, "min": 25, "median": 25.0, "max": 25}, "statsCacheMs": {"observedCount": 4, "min": 50, "median": 50.0, "max": 50}, "requestToCallbackMs": {"observedCount": 4, "min": 16.479454, "median": 33.7020105, "max": 42.036854}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 877.923116, "median": 1038.862783, "max": 1154.403767}, "fromAnswerMs": {"observedCount": 5, "min": -109.33039, "median": -97.190643, "max": -16.330939}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 0.686935, "median": 10.400613, "max": 26.502455}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 2014.376009, "median": 2117.493052, "max": 2154.752926}, "fromAnswerMs": {"observedCount": 5, "min": 902.636998, "median": 984.01822, "max": 1046.833833}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 0.643831, "median": 2.166762, "max": 3.380397}}
+            }
+          }
+        },
+        {
+          "provider": "webrtc",
+          "credentials": "fetcher",
+          "sampleIndexes": [1, 2, 3, 4, 5],
+          "answerMs": [175.448193, 162.602412, 257.909883, 212.363132, 175.073749],
+          "endpointAbsentAtAuthorizationCount": 1,
+          "processAgeMs": {"observedCount": 5, "min": 1897, "median": 2386, "max": 4023},
+          "phasesMs": {
+            "pushToReportedMs": {"observedCount": 5, "min": 50.481025, "median": 66.963729, "max": 2052.027778},
+            "pushToPrewarmMs": {"observedCount": 5, "min": 97.281855, "median": 106.256295, "max": 2074.806643},
+            "pushToPrejoinedMs": {"observedCount": 5, "min": 983.05544, "median": 1220.761878, "max": 2869.472383},
+            "answerToAcceptedMs": {"observedCount": 5, "min": 8.674028, "median": 10.967919, "max": 14.270425},
+            "acceptedToAuthorizedMs": {"observedCount": 5, "min": 126.843837, "median": 131.407509, "max": 139.7754},
+            "authorizedToFirstAudioMs": {"observedCount": 5, "min": 23.965746, "median": 30.010112, "max": 113.128756},
+            "answerToFirstAudioMs": {"observedCount": 5, "min": 162.602412, "median": 175.448193, "max": 257.909883},
+            "coreAddMs": {"observedCount": 5, "min": 49.245141, "median": 64.829326, "max": 2050.922269},
+            "credentialsMs": {"observedCount": 5, "min": 546.786298, "median": 653.057901, "max": 707.15997},
+            "subscriptionToRemoteTrackMs": {"observedCount": 5, "min": 12.659402, "median": 16.601287, "max": 19.881504},
+            "remoteTrackToDecoderMs": {"observedCount": 5, "min": 29.17788, "median": 30.58265, "max": 31.624259},
+            "microphonePublishMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "audioWaitToModeMs": {"observedCount": 5, "min": 112.168058, "median": 117.904008, "max": 124.485585},
+            "endpointReadyRelativeToAnswerMs": {"observedCount": 4, "min": -1320.142819, "median": -1261.2299899999998, "max": -1087.869063},
+            "decoderFirstPcmRelativeToAnswerMs": {"observedCount": 5, "min": -149.391382, "median": -146.757805, "max": -144.756615},
+            "playbackStartRelativeToAnswerMs": {"observedCount": 5, "min": 160.853834, "median": 173.609766, "max": 213.504491},
+            "microphonePublishRelativeToAnswerMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "authorizedToCaptureCallbackMs": {"observedCount": 5, "min": 6.096679, "median": 9.219472, "max": 9.566334},
+            "authorizedToOutputMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "answerToOutputMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "answerToAuthorizedMs": {"observedCount": 5, "min": 138.636666, "median": 144.781127, "max": 150.743319},
+            "authorizedToPlaybackCallbackMs": {"observedCount": 5, "min": 22.217168, "median": 24.536292, "max": 68.723364},
+            "authorizedToSubscriptionRequestMs": {"observedCount": 5, "min": -344.143463, "median": -335.953417, "max": -334.981528},
+            "authorizedToRemoteSubscribedMs": {"observedCount": 5, "min": 15.088996, "median": 23.031413, "max": 61.518007},
+            "remoteSubscribedToFirstAudioMs": {"observedCount": 5, "min": 0.934333, "median": 14.921116, "max": 51.610749},
+            "decoderToFirstAudioMs": {"observedCount": 5, "min": 309.360217, "median": 323.300175, "max": 407.301265},
+            "prejoinedToAnswerMs": {"observedCount": 5, "min": 154.033267, "median": 157.359788, "max": 160.209007}
+          },
+          "transports": {
+            "raw": {
+              "iceChecking": {"observedCount": 5, "sampledCount": 0, "callbackCount": 5, "fromPushMs": {"observedCount": 5, "min": 959.983587, "median": 1197.615289, "max": 2843.614259}, "fromAnswerMs": {"observedCount": 5, "min": -183.217912, "median": -180.837061, "max": -180.49462}, "pollIntervalMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "statsCacheMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "requestToCallbackMs": {"observedCount": 0, "min": null, "median": null, "max": null}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 4, "callbackCount": 1, "fromPushMs": {"observedCount": 5, "min": 968.028356, "median": 1204.484209, "max": 2862.622591}, "fromAnswerMs": {"observedCount": 5, "min": -176.486676, "median": -172.449851, "max": -155.026728}, "pollIntervalMs": {"observedCount": 4, "min": 25, "median": 25.0, "max": 25}, "statsCacheMs": {"observedCount": 4, "min": 50, "median": 50.0, "max": 50}, "requestToCallbackMs": {"observedCount": 4, "min": 0.852051, "median": 0.8990485, "max": 0.938801}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1021.743985, "median": 1259.543242, "max": 2915.609953}, "fromAnswerMs": {"observedCount": 5, "min": -154.680822, "median": -118.734222, "max": -111.222218}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 0.784059, "median": 1.263109, "max": 7.061112}}
+            }
+          }
+        },
+        {
+          "provider": "webrtc",
+          "credentials": "livekitPush",
+          "sampleIndexes": [1, 2, 3, 4, 5],
+          "answerMs": [162.057905, 161.988738, 172.888189, 194.572788, 210.133947],
+          "endpointAbsentAtAuthorizationCount": 0,
+          "processAgeMs": {"observedCount": 5, "min": 2003, "median": 2245, "max": 2270},
+          "phasesMs": {
+            "pushToReportedMs": {"observedCount": 5, "min": 50.046942, "median": 53.986439, "max": 57.629206},
+            "pushToPrewarmMs": {"observedCount": 5, "min": 81.755597, "median": 87.201699, "max": 116.048711},
+            "pushToPrejoinedMs": {"observedCount": 5, "min": 1009.26937, "median": 1064.064988, "max": 1082.20516},
+            "answerToAcceptedMs": {"observedCount": 5, "min": 8.863731, "median": 11.208077, "max": 15.191439},
+            "acceptedToAuthorizedMs": {"observedCount": 5, "min": 121.974524, "median": 129.516364, "max": 132.24236},
+            "authorizedToFirstAudioMs": {"observedCount": 5, "min": 18.884878, "median": 37.799484, "max": 64.310842},
+            "answerToFirstAudioMs": {"observedCount": 5, "min": 161.988738, "median": 172.888189, "max": 210.133947},
+            "coreAddMs": {"observedCount": 5, "min": 47.818187, "median": 52.403116, "max": 56.00925},
+            "credentialsMs": {"observedCount": 5, "min": 557.497004, "median": 590.639671, "max": 639.03125},
+            "subscriptionToRemoteTrackMs": {"observedCount": 5, "min": 13.208015, "median": 16.009189, "max": 33.149845},
+            "remoteTrackToDecoderMs": {"observedCount": 5, "min": 26.000796, "median": 31.640663, "max": 46.198026},
+            "microphonePublishMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "audioWaitToModeMs": {"observedCount": 5, "min": 108.861417, "median": 121.451965, "max": 122.288473},
+            "endpointReadyRelativeToAnswerMs": {"observedCount": 5, "min": -1180.527427, "median": -1166.072682, "max": -1116.091503},
+            "decoderFirstPcmRelativeToAnswerMs": {"observedCount": 5, "min": -149.558963, "median": -143.372911, "max": -138.384876},
+            "playbackStartRelativeToAnswerMs": {"observedCount": 5, "min": 149.264459, "median": 160.806739, "max": 171.02528},
+            "microphonePublishRelativeToAnswerMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "authorizedToCaptureCallbackMs": {"observedCount": 5, "min": 5.664629, "median": 7.772714, "max": 11.499817},
+            "authorizedToOutputMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "answerToOutputMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "answerToAuthorizedMs": {"observedCount": 5, "min": 130.838255, "median": 140.724441, "max": 145.823105},
+            "authorizedToPlaybackCallbackMs": {"observedCount": 5, "min": 13.058538, "median": 18.681154, "max": 35.936575},
+            "authorizedToSubscriptionRequestMs": {"observedCount": 5, "min": -358.767556, "median": -340.894777, "max": -321.861018},
+            "authorizedToRemoteSubscribedMs": {"observedCount": 5, "min": 13.899542, "median": 17.651623, "max": 36.852246},
+            "remoteSubscribedToFirstAudioMs": {"observedCount": 5, "min": 0.947238, "median": 3.681841, "max": 50.4113},
+            "decoderToFirstAudioMs": {"observedCount": 5, "min": 300.373614, "median": 322.447152, "max": 356.184868},
+            "prejoinedToAnswerMs": {"observedCount": 5, "min": 156.567316, "median": 157.767501, "max": 160.492962}
+          },
+          "transports": {
+            "raw": {
+              "iceChecking": {"observedCount": 5, "sampledCount": 0, "callbackCount": 5, "fromPushMs": {"observedCount": 5, "min": 980.41718, "median": 1030.374903, "max": 1062.956189}, "fromAnswerMs": {"observedCount": 5, "min": -194.183047, "median": -180.751723, "max": -176.664667}, "pollIntervalMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "statsCacheMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "requestToCallbackMs": {"observedCount": 0, "min": null, "median": null, "max": null}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 4, "callbackCount": 1, "fromPushMs": {"observedCount": 5, "min": 994.300988, "median": 1051.757657, "max": 1084.553783}, "fromAnswerMs": {"observedCount": 5, "min": -174.461306, "median": -172.800293, "max": -155.246141}, "pollIntervalMs": {"observedCount": 4, "min": 25, "median": 25.0, "max": 25}, "statsCacheMs": {"observedCount": 4, "min": 50, "median": 50.0, "max": 50}, "requestToCallbackMs": {"observedCount": 4, "min": 0.715422, "median": 0.8525765000000001, "max": 1.125428}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1050.140315, "median": 1104.746476, "max": 1121.317397}, "fromAnswerMs": {"observedCount": 5, "min": -119.811474, "median": -118.482527, "max": -110.475258}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 0.858941, "median": 1.034313, "max": 1.110356}}
+            }
+          }
+        }
+      ]
+    },
+    {
+      "profile": "optimized",
+      "commit": "bb6d6362a4e04b7703d64540667bc68db44ea388",
+      "run": "https://github.com/ziahamza/expo-callkit-telecom/actions/runs/40447020455",
+      "artifactSha256": {
+        "native-latency-livekit.json": "8252d9cb041fb5c19b981d80243eb8fd13ff41a0a51a04abda79e32cd4304898",
+        "native-latency-webrtc.json": "a73e3792fafd7e6059b5149ea4a2e889219dd34538a91e2d45254b75c629b74f",
+        "native-latency-summary.json": "c7cab8a508797609bd15fd464ace947f58f3b236c685440a237db83f2af0fc42"
+      },
+      "paths": [
+        {
+          "provider": "livekit",
+          "credentials": "fetcher",
+          "sampleIndexes": [1, 2, 3, 4, 5],
+          "answerMs": [177.973787, 160.394027, 186.270242, 180.841938, 184.326229],
+          "endpointAbsentAtAuthorizationCount": 0,
+          "processAgeMs": {"observedCount": 5, "min": 3647, "median": 3944, "max": 4722},
+          "phasesMs": {
+            "pushToReportedMs": {"observedCount": 5, "min": 40.952994, "median": 48.211112, "max": 72.626259},
+            "pushToPrewarmMs": {"observedCount": 5, "min": 68.963371, "median": 101.565657, "max": 136.177709},
+            "pushToPrejoinedMs": {"observedCount": 5, "min": 2641.903912, "median": 2789.142087, "max": 3550.721558},
+            "answerToAcceptedMs": {"observedCount": 5, "min": 7.928022, "median": 12.401358, "max": 16.258082},
+            "acceptedToAuthorizedMs": {"observedCount": 5, "min": 102.275657, "median": 129.460944, "max": 144.289034},
+            "authorizedToFirstAudioMs": {"observedCount": 5, "min": 18.286339, "median": 41.768576, "max": 63.229808},
+            "answerToFirstAudioMs": {"observedCount": 5, "min": 160.394027, "median": 180.841938, "max": 186.270242},
+            "coreAddMs": {"observedCount": 5, "min": 39.890298, "median": 47.223078, "max": 70.701027},
+            "credentialsMs": {"observedCount": 5, "min": 709.453769, "median": 728.905321, "max": 800.221907},
+            "subscriptionToRemoteTrackMs": {"observedCount": 5, "min": 641.196659, "median": 730.083929, "max": 1350.696395},
+            "remoteTrackToDecoderMs": {"observedCount": 5, "min": 981.277191, "median": 1158.703416, "max": 1214.227294},
+            "microphonePublishMs": {"observedCount": 5, "min": 28.673564, "median": 95.042442, "max": 164.152287},
+            "audioWaitToModeMs": {"observedCount": 5, "min": 91.007797, "median": 120.46524, "max": 123.092972},
+            "endpointReadyRelativeToAnswerMs": {"observedCount": 5, "min": -3668.703873, "median": -2872.25469, "max": -2751.596751},
+            "decoderFirstPcmRelativeToAnswerMs": {"observedCount": 5, "min": -162.051376, "median": -158.51024, "max": -156.932188},
+            "playbackStartRelativeToAnswerMs": {"observedCount": 5, "min": -1361.062312, "median": -1296.154784, "max": -1108.712353},
+            "microphonePublishRelativeToAnswerMs": {"observedCount": 5, "min": -1388.659305, "median": -1315.967431, "max": -1151.71973},
+            "authorizedToCaptureCallbackMs": {"observedCount": 5, "min": 42.274497, "median": 52.738059, "max": 53.228884},
+            "authorizedToOutputMs": {"observedCount": 5, "min": 18.46114, "median": 42.887772, "max": 63.328506},
+            "answerToOutputMs": {"observedCount": 5, "min": 160.568828, "median": 180.940636, "max": 200.097624},
+            "answerToAuthorizedMs": {"observedCount": 5, "min": 117.61213, "median": 141.862302, "max": 160.547116},
+            "authorizedToPlaybackCallbackMs": {"observedCount": 5, "min": -1497.267523, "median": -1438.017086, "max": -1269.259469},
+            "authorizedToSubscriptionRequestMs": {"observedCount": 5, "min": -2863.180276, "median": -2098.906543, "max": -2032.619019},
+            "authorizedToRemoteSubscribedMs": {"observedCount": 5, "min": -1512.495668, "median": -1457.72069, "max": -1301.623957},
+            "remoteSubscribedToFirstAudioMs": {"observedCount": 5, "min": 1327.347083, "median": 1481.548873, "max": 1554.264244},
+            "decoderToFirstAudioMs": {"observedCount": 5, "min": 317.326215, "median": 340.025163, "max": 346.061499},
+            "prejoinedToAnswerMs": {"observedCount": 5, "min": 156.75658, "median": 157.569322, "max": 161.878832}
+          },
+          "transports": {
+            "publisher": {
+              "iceChecking": {"observedCount": 0, "sampledCount": 0, "callbackCount": 0, "fromPushMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "fromAnswerMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "pollIntervalMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "statsCacheMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "requestToCallbackMs": {"observedCount": 0, "min": null, "median": null, "max": null}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1632.913539, "median": 1709.581191, "max": 2338.054817}, "fromAnswerMs": {"observedCount": 5, "min": -1374.545573, "median": -1293.634491, "max": -1091.876124}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 1.550475, "median": 4.847414, "max": 24.131205}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1670.597454, "median": 1742.205392, "max": 2338.054817}, "fromAnswerMs": {"observedCount": 5, "min": -1374.545573, "median": -1275.394564, "max": -1059.251923}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 1.550475, "median": 4.519595, "max": 8.293606}}
+            },
+            "subscriber": {
+              "iceChecking": {"observedCount": 2, "sampledCount": 2, "callbackCount": 0, "fromPushMs": {"observedCount": 2, "min": 1582.57609, "median": 1814.7776715, "max": 2046.979253}, "fromAnswerMs": {"observedCount": 2, "min": -1363.415928, "median": -1116.7309135, "max": -870.045899}, "pollIntervalMs": {"observedCount": 2, "min": 25, "median": 25.0, "max": 25}, "statsCacheMs": {"observedCount": 2, "min": 50, "median": 50.0, "max": 50}, "requestToCallbackMs": {"observedCount": 2, "min": 1.776502, "median": 21.0498465, "max": 40.323191}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1627.573469, "median": 1676.410115, "max": 2329.413942}, "fromAnswerMs": {"observedCount": 5, "min": -1383.186448, "median": -1294.61901, "max": -1143.445862}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 4.807775, "median": 16.706001, "max": 47.654349}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 2627.456343, "median": 2734.900174, "max": 3542.903911}, "fromAnswerMs": {"observedCount": 5, "min": -211.091844, "median": -178.567267, "max": -169.696479}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 1.019381, "median": 1.393234, "max": 18.725314}}
+            }
+          }
+        },
+        {
+          "provider": "livekit",
+          "credentials": "push",
+          "sampleIndexes": [1, 2, 3, 4, 5],
+          "answerMs": [164.225561, 180.71284, 164.254304, 159.654608, 183.641132],
+          "endpointAbsentAtAuthorizationCount": 0,
+          "processAgeMs": {"observedCount": 5, "min": 3004, "median": 3303, "max": 3622},
+          "phasesMs": {
+            "pushToReportedMs": {"observedCount": 5, "min": 46.114206, "median": 56.075672, "max": 59.254712},
+            "pushToPrewarmMs": {"observedCount": 5, "min": 78.401509, "median": 81.454225, "max": 117.02782},
+            "pushToPrejoinedMs": {"observedCount": 5, "min": 1916.091833, "median": 2061.454664, "max": 2304.043227},
+            "answerToAcceptedMs": {"observedCount": 5, "min": 8.326836, "median": 10.192891, "max": 16.423964},
+            "acceptedToAuthorizedMs": {"observedCount": 5, "min": 125.809727, "median": 133.11872, "max": 134.523486},
+            "authorizedToFirstAudioMs": {"observedCount": 5, "min": 17.420917, "median": 20.91395, "max": 41.15493},
+            "answerToFirstAudioMs": {"observedCount": 5, "min": 159.654608, "median": 164.254304, "max": 183.641132},
+            "coreAddMs": {"observedCount": 5, "min": 44.349293, "median": 54.27148, "max": 57.541255},
+            "credentialsMs": {"observedCount": 5, "min": 0.008943, "median": 0.011797, "max": 0.019459},
+            "subscriptionToRemoteTrackMs": {"observedCount": 5, "min": 734.066201, "median": 807.115501, "max": 945.777498},
+            "remoteTrackToDecoderMs": {"observedCount": 5, "min": 964.86095, "median": 1005.471317, "max": 1113.241288},
+            "microphonePublishMs": {"observedCount": 5, "min": 45.734149, "median": 114.529807, "max": 124.218318},
+            "audioWaitToModeMs": {"observedCount": 5, "min": 111.917088, "median": 122.67883, "max": 124.514291},
+            "endpointReadyRelativeToAnswerMs": {"observedCount": 5, "min": -2403.474562, "median": -2160.013795, "max": -2026.715532},
+            "decoderFirstPcmRelativeToAnswerMs": {"observedCount": 5, "min": -180.247764, "median": -176.741733, "max": -156.35106},
+            "playbackStartRelativeToAnswerMs": {"observedCount": 5, "min": -1255.845343, "median": -1127.479197, "max": -1110.445055},
+            "microphonePublishRelativeToAnswerMs": {"observedCount": 5, "min": -1258.526832, "median": -1215.521692, "max": -1149.838283},
+            "authorizedToCaptureCallbackMs": {"observedCount": 5, "min": 50.053609, "median": 57.089645, "max": 68.16912},
+            "authorizedToOutputMs": {"observedCount": 5, "min": 17.541837, "median": 20.990354, "max": 41.29558},
+            "answerToOutputMs": {"observedCount": 5, "min": 159.775528, "median": 164.362606, "max": 183.781782},
+            "answerToAuthorizedMs": {"observedCount": 5, "min": 141.605586, "median": 142.486202, "max": 145.279809},
+            "authorizedToPlaybackCallbackMs": {"observedCount": 5, "min": -1398.079034, "median": -1269.965399, "max": -1252.050641},
+            "authorizedToSubscriptionRequestMs": {"observedCount": 5, "min": -2381.500241, "median": -2118.965077, "max": -2011.901261},
+            "authorizedToRemoteSubscribedMs": {"observedCount": 5, "min": -1435.734721, "median": -1304.329711, "max": -1277.851204},
+            "remoteSubscribedToFirstAudioMs": {"observedCount": 5, "min": 1305.841013, "median": 1345.484641, "max": 1453.155638},
+            "decoderToFirstAudioMs": {"observedCount": 5, "min": 339.902372, "median": 340.967294, "max": 343.067952},
+            "prejoinedToAnswerMs": {"observedCount": 5, "min": 152.749068, "median": 158.095351, "max": 161.080215}
+          },
+          "transports": {
+            "publisher": {
+              "iceChecking": {"observedCount": 2, "sampledCount": 2, "callbackCount": 0, "fromPushMs": {"observedCount": 2, "min": 1060.389461, "median": 1098.6718055000001, "max": 1136.95415}, "fromAnswerMs": {"observedCount": 2, "min": -1125.509705, "median": -1107.414139, "max": -1089.318573}, "pollIntervalMs": {"observedCount": 2, "min": 25, "median": 25.0, "max": 25}, "statsCacheMs": {"observedCount": 2, "min": 50, "median": 50.0, "max": 50}, "requestToCallbackMs": {"observedCount": 2, "min": 27.377225, "median": 49.202369999999995, "max": 71.027515}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 944.629977, "median": 1128.556886, "max": 1194.118087}, "fromAnswerMs": {"observedCount": 5, "min": -1270.889427, "median": -1125.509705, "max": -1052.085645}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 4.2217, "median": 8.210993, "max": 71.027515}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 944.629977, "median": 1128.556886, "max": 1194.118087}, "fromAnswerMs": {"observedCount": 5, "min": -1270.889427, "median": -1125.509705, "max": -1052.085645}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 4.2217, "median": 8.210993, "max": 71.027515}}
+            },
+            "subscriber": {
+              "iceChecking": {"observedCount": 2, "sampledCount": 2, "callbackCount": 0, "fromPushMs": {"observedCount": 2, "min": 1364.526052, "median": 1511.394032, "max": 1658.262012}, "fromAnswerMs": {"observedCount": 2, "min": -861.746671, "median": -834.2460865, "max": -806.745502}, "pollIntervalMs": {"observedCount": 2, "min": 25, "median": 25.0, "max": 25}, "statsCacheMs": {"observedCount": 2, "min": 50, "median": 50.0, "max": 50}, "requestToCallbackMs": {"observedCount": 2, "min": 1.535031, "median": 1.786506, "max": 2.037981}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 875.357982, "median": 1044.366369, "max": 1163.769347}, "fromAnswerMs": {"observedCount": 5, "min": -1301.238167, "median": -1201.814066, "max": -1144.941429}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 39.59018, "median": 60.951888, "max": 107.010256}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1886.605915, "median": 2032.694518, "max": 2303.536921}, "fromAnswerMs": {"observedCount": 5, "min": -199.355657, "median": -161.470593, "max": -153.204648}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 1.271884, "median": 1.77192, "max": 3.321207}}
+            }
+          }
+        },
+        {
+          "provider": "webrtc",
+          "credentials": "fetcher",
+          "sampleIndexes": [1, 2, 3, 4, 5],
+          "answerMs": [160.387024, 173.644581, 181.651794, 184.531242, 180.553327],
+          "endpointAbsentAtAuthorizationCount": 0,
+          "processAgeMs": {"observedCount": 5, "min": 2114, "median": 2336, "max": 2363},
+          "phasesMs": {
+            "pushToReportedMs": {"observedCount": 5, "min": 45.482449, "median": 52.634857, "max": 80.663895},
+            "pushToPrewarmMs": {"observedCount": 5, "min": 71.714136, "median": 98.427499, "max": 149.818069},
+            "pushToPrejoinedMs": {"observedCount": 5, "min": 1060.186814, "median": 1129.683326, "max": 1156.24492},
+            "answerToAcceptedMs": {"observedCount": 5, "min": 7.194837, "median": 9.882261, "max": 11.009139},
+            "acceptedToAuthorizedMs": {"observedCount": 5, "min": 119.959155, "median": 127.483959, "max": 135.349223},
+            "authorizedToFirstAudioMs": {"observedCount": 5, "min": 17.842964, "median": 42.676287, "max": 53.718559},
+            "answerToFirstAudioMs": {"observedCount": 5, "min": 160.387024, "median": 180.553327, "max": 184.531242},
+            "coreAddMs": {"observedCount": 5, "min": 43.958114, "median": 51.610839, "max": 78.592564},
+            "credentialsMs": {"observedCount": 5, "min": 542.4376, "median": 593.786628, "max": 652.791004},
+            "subscriptionToRemoteTrackMs": {"observedCount": 5, "min": 25.128134, "median": 39.291015, "max": 45.352285},
+            "remoteTrackToDecoderMs": {"observedCount": 5, "min": 53.715013, "median": 55.304031, "max": 66.638656},
+            "microphonePublishMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "audioWaitToModeMs": {"observedCount": 5, "min": 108.324973, "median": 116.365747, "max": 123.194734},
+            "endpointReadyRelativeToAnswerMs": {"observedCount": 5, "min": -1245.764681, "median": -1238.419968, "max": -1147.869593},
+            "decoderFirstPcmRelativeToAnswerMs": {"observedCount": 5, "min": -168.38648, "median": -165.061713, "max": -157.806459},
+            "playbackStartRelativeToAnswerMs": {"observedCount": 5, "min": -230.063786, "median": -229.398048, "max": -222.540754},
+            "microphonePublishRelativeToAnswerMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "authorizedToCaptureCallbackMs": {"observedCount": 5, "min": 48.3316, "median": 54.511237, "max": 72.417429},
+            "authorizedToOutputMs": {"observedCount": 5, "min": 18.247507, "median": 43.130816, "max": 54.06768},
+            "answerToOutputMs": {"observedCount": 5, "min": 160.791567, "median": 181.22542, "max": 184.880363},
+            "answerToAuthorizedMs": {"observedCount": 5, "min": 130.812683, "median": 138.012441, "max": 142.54406},
+            "authorizedToPlaybackCallbackMs": {"observedCount": 5, "min": -372.607846, "median": -363.142921, "max": -360.366342},
+            "authorizedToSubscriptionRequestMs": {"observedCount": 5, "min": -400.166355, "median": -395.418266, "max": -392.117309},
+            "authorizedToRemoteSubscribedMs": {"observedCount": 5, "min": -366.729758, "median": -355.978489, "max": -352.186917},
+            "remoteSubscribedToFirstAudioMs": {"observedCount": 5, "min": 384.572722, "median": 397.232292, "max": 405.905476},
+            "decoderToFirstAudioMs": {"observedCount": 5, "min": 318.193483, "median": 341.96075, "max": 352.917722},
+            "prejoinedToAnswerMs": {"observedCount": 5, "min": 153.12267, "median": 159.766059, "max": 162.898524}
+          },
+          "transports": {
+            "raw": {
+              "iceChecking": {"observedCount": 5, "sampledCount": 0, "callbackCount": 5, "fromPushMs": {"observedCount": 5, "min": 984.888115, "median": 1062.342242, "max": 1090.492897}, "fromAnswerMs": {"observedCount": 5, "min": -228.75655, "median": -228.421369, "max": -223.607195}, "pollIntervalMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "statsCacheMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "requestToCallbackMs": {"observedCount": 0, "min": null, "median": null, "max": null}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 3, "callbackCount": 2, "fromPushMs": {"observedCount": 5, "min": 990.911013, "median": 1069.885242, "max": 1112.228577}, "fromAnswerMs": {"observedCount": 5, "min": -222.398471, "median": -215.699145, "max": -194.756676}, "pollIntervalMs": {"observedCount": 3, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 3, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 3, "min": 1.651654, "median": 11.062167, "max": 24.67117}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1043.568328, "median": 1122.872992, "max": 1147.525241}, "fromAnswerMs": {"observedCount": 5, "min": -171.618203, "median": -167.039781, "max": -161.162729}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 0.688978, "median": 0.888536, "max": 1.542331}}
+            }
+          }
+        },
+        {
+          "provider": "webrtc",
+          "credentials": "livekitPush",
+          "sampleIndexes": [1, 2, 3, 4, 5],
+          "answerMs": [185.142936, 169.098497, 189.064749, 178.781464, 176.718445],
+          "endpointAbsentAtAuthorizationCount": 0,
+          "processAgeMs": {"observedCount": 5, "min": 2210, "median": 2410, "max": 2426},
+          "phasesMs": {
+            "pushToReportedMs": {"observedCount": 5, "min": 50.004643, "median": 67.048757, "max": 69.847233},
+            "pushToPrewarmMs": {"observedCount": 5, "min": 75.214103, "median": 113.695679, "max": 131.000844},
+            "pushToPrejoinedMs": {"observedCount": 5, "min": 1064.564463, "median": 1156.321612, "max": 1331.475781},
+            "answerToAcceptedMs": {"observedCount": 5, "min": 8.466695, "median": 13.275361, "max": 31.172826},
+            "acceptedToAuthorizedMs": {"observedCount": 5, "min": 118.192996, "median": 126.624717, "max": 137.67958},
+            "authorizedToFirstAudioMs": {"observedCount": 5, "min": 18.712956, "median": 39.666494, "max": 47.549454},
+            "answerToFirstAudioMs": {"observedCount": 5, "min": 169.098497, "median": 178.781464, "max": 189.064749},
+            "coreAddMs": {"observedCount": 5, "min": 48.996869, "median": 65.67006, "max": 68.952859},
+            "credentialsMs": {"observedCount": 5, "min": 548.70358, "median": 564.493447, "max": 596.125447},
+            "subscriptionToRemoteTrackMs": {"observedCount": 5, "min": 23.232951, "median": 29.512803, "max": 132.768408},
+            "remoteTrackToDecoderMs": {"observedCount": 5, "min": 28.055406, "median": 51.860221, "max": 80.337673},
+            "microphonePublishMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "audioWaitToModeMs": {"observedCount": 5, "min": 108.387622, "median": 115.487388, "max": 129.492243},
+            "endpointReadyRelativeToAnswerMs": {"observedCount": 5, "min": -1421.482509, "median": -1254.832916, "max": -1146.113804},
+            "decoderFirstPcmRelativeToAnswerMs": {"observedCount": 5, "min": -190.319727, "median": -168.992478, "max": -159.167586},
+            "playbackStartRelativeToAnswerMs": {"observedCount": 5, "min": -270.348253, "median": -224.847441, "max": -216.805024},
+            "microphonePublishRelativeToAnswerMs": {"observedCount": 0, "min": null, "median": null, "max": null},
+            "authorizedToCaptureCallbackMs": {"observedCount": 5, "min": 48.061532, "median": 58.896347, "max": 61.68264},
+            "authorizedToOutputMs": {"observedCount": 5, "min": 19.040705, "median": 40.043927, "max": 47.882692},
+            "answerToOutputMs": {"observedCount": 5, "min": 169.426246, "median": 179.133269, "max": 189.397987},
+            "answerToAuthorizedMs": {"observedCount": 5, "min": 131.468357, "median": 145.476442, "max": 154.332612},
+            "authorizedToPlaybackCallbackMs": {"observedCount": 5, "min": -411.863548, "median": -369.187238, "max": -356.315798},
+            "authorizedToSubscriptionRequestMs": {"observedCount": 5, "min": -513.788962, "median": -404.305623, "max": -377.587833},
+            "authorizedToRemoteSubscribedMs": {"observedCount": 5, "min": -380.596762, "median": -363.796773, "max": -352.205654},
+            "remoteSubscribedToFirstAudioMs": {"observedCount": 5, "min": 378.863612, "median": 399.518761, "max": 428.146216},
+            "decoderToFirstAudioMs": {"observedCount": 5, "min": 341.390581, "median": 347.773942, "max": 375.462663},
+            "prejoinedToAnswerMs": {"observedCount": 5, "min": 152.576105, "median": 154.057806, "max": 158.29183}
+          },
+          "transports": {
+            "raw": {
+              "iceChecking": {"observedCount": 5, "sampledCount": 0, "callbackCount": 5, "fromPushMs": {"observedCount": 5, "min": 996.203972, "median": 1086.031413, "max": 1262.506889}, "fromAnswerMs": {"observedCount": 5, "min": -267.504849, "median": -223.416866, "max": -214.059598}, "pollIntervalMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "statsCacheMs": {"observedCount": 0, "min": null, "median": null, "max": null}, "requestToCallbackMs": {"observedCount": 0, "min": null, "median": null, "max": null}},
+              "iceConnected": {"observedCount": 5, "sampledCount": 4, "callbackCount": 1, "fromPushMs": {"observedCount": 5, "min": 1000.8729, "median": 1099.316619, "max": 1274.091998}, "fromAnswerMs": {"observedCount": 5, "min": -218.17261, "median": -215.675613, "max": -206.924989}, "pollIntervalMs": {"observedCount": 4, "min": 25, "median": 25.0, "max": 25}, "statsCacheMs": {"observedCount": 4, "min": 50, "median": 50.0, "max": 50}, "requestToCallbackMs": {"observedCount": 4, "min": 0.826984, "median": 2.1541449999999998, "max": 11.088277}},
+              "dtlsConnected": {"observedCount": 5, "sampledCount": 5, "callbackCount": 0, "fromPushMs": {"observedCount": 5, "min": 1056.96713, "median": 1146.073811, "max": 1326.869458}, "fromAnswerMs": {"observedCount": 5, "min": -185.509941, "median": -162.898153, "max": -156.856599}, "pollIntervalMs": {"observedCount": 5, "min": 25, "median": 25, "max": 25}, "statsCacheMs": {"observedCount": 5, "min": 50, "median": 50, "max": 50}, "requestToCallbackMs": {"observedCount": 5, "min": 0.921262, "median": 0.973643, "max": 1.89657}}
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
