@@ -48,9 +48,12 @@ journey then waits for both zero clients and the actual declined receipt, retain
 sanitized request/release/recording timestamps. Local CLOSED does not prove server
 receipt.
 
-Before setting descriptions, the adapter disables PeerConnection audio recording
-and playout and disables its local track. Only native audio authority enables
-them. Hold disables recording/playout and remote tracks; mute disables recording.
+Before creating peer audio threads, the adapter disables physical recording in
+the pinned ADM and mutes native speaker output. Its local track stays disabled,
+while PeerConnection recordingless buffers and remote playout/decoding run during
+pre-warm. Native audio authority enables physical recording and unmutes output;
+the SDP and subscription stay intact. Hold stops physical capture and mutes output
+while keeping remote decoding warm; mute stops physical recording only.
 The adapter requests no Android audio focus or audio mode. The PCM timing hook
 has the same threshold/definition as the LiveKit adapter. Its remoteSubscribed
 signal means the raw remote audio track is enabled with a sink; it is not an SFU
@@ -65,3 +68,6 @@ existing native session registry.
 
 API references: [PeerConnection audio recording/playout controls](https://webrtc.googlesource.com/src/+/refs/heads/main/sdk/android/api/org/webrtc/PeerConnection.java),
 [independent aiortc peer API](https://aiortc.readthedocs.io/en/latest/api.html).
+
+The [shared latency qualification](./android-latency.md) uses the same decoded-PCM
+method and fresh-process sampling regime for this adapter and LiveKit.

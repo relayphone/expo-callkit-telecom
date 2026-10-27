@@ -31,6 +31,9 @@ class NativeMediaJourneyTest {
         }
     }
 
+    private fun stageForRole(events: List<NativeMediaSignal>, kind: NativeMediaStage, role: Long) =
+        events.first { it.stage == kind && it.measurements["role"] == role }
+
     @Test fun realNativeLiveKitAudioAndCleanup() = journey("livekit", listOf("push", "fetcher"))
     @Test fun realNativeWebRTCAudioAndCleanup() = journey("webrtc", listOf("fetcher", "livekitPush"))
 
@@ -129,7 +132,15 @@ class NativeMediaJourneyTest {
                         val prejoined = stage(serverId, NativeMediaStage.PREJOINED)
                         delay(150)
                         assertFalse(events(serverId).any { it.stage in setOf(NativeMediaStage.CAPTURE_STARTED,
-                            NativeMediaStage.PLAYBACK_STARTED, NativeMediaStage.REMOTE_SUBSCRIBED, NativeMediaStage.FIRST_AUDIO) })
+                            NativeMediaStage.CAPTURE_BEFORE_AUTHORITY, NativeMediaStage.OUTPUT_BEFORE_AUTHORITY,
+                            NativeMediaStage.FIRST_AUDIO) })
+                        val decoded = stage(serverId, NativeMediaStage.DECODER_FIRST_PCM)
+                        val warmPlayback = stage(serverId, NativeMediaStage.PLAYBACK_STARTED)
+                        val warmSubscribed = stage(serverId, NativeMediaStage.REMOTE_SUBSCRIBED)
+                        val mutedOutput = stage(serverId, NativeMediaStage.OUTPUT_MUTED)
+                        for (warm in listOf(decoded, warmPlayback, warmSubscribed, mutedOutput))
+                            assertTrue("Tone fixture receive path must be hot at PREJOINED", warm.elapsedRealtimeNanos <= prejoined.elapsedRealtimeNanos)
+                        assertFalse(events(serverId).any { it.stage == NativeMediaStage.OUTPUT_OBSERVATION_UNAVAILABLE })
                         val preanswerRecording = recording.snapshot()
                         recordingObservation = preanswerRecording
                         assertEquals(0, preanswerRecording["newObservedCount"])
@@ -169,8 +180,16 @@ class NativeMediaJourneyTest {
                         assertTrue(reported.elapsedRealtimeNanos <= jsWarm.elapsedRealtimeNanos)
                         assertTrue(accepted.elapsedRealtimeNanos <= authorized.elapsedRealtimeNanos)
                         assertTrue(authorized.elapsedRealtimeNanos <= first.elapsedRealtimeNanos)
-                        for (started in listOf(capture, playback, subscribed))
-                            assertTrue(authorized.elapsedRealtimeNanos <= started.elapsedRealtimeNanos)
+                        assertTrue(authorized.elapsedRealtimeNanos <= capture.elapsedRealtimeNanos)
+                        val outputAudio = stage(serverId, NativeMediaStage.OUTPUT_FIRST_NONZERO)
+                        assertTrue(authorized.elapsedRealtimeNanos <= outputAudio.elapsedRealtimeNanos)
+                        assertTrue(events(serverId).none { it.stage in setOf(
+                            NativeMediaStage.CAPTURE_BEFORE_AUTHORITY, NativeMediaStage.OUTPUT_BEFORE_AUTHORITY) })
+                        for (role in roles) assertTrue(stageForRole(events(serverId), NativeMediaStage.DTLS_CONNECTED, role)
+                            .elapsedRealtimeNanos <= prejoined.elapsedRealtimeNanos)
+                        assertEquals(1, events(serverId).count { it.stage == NativeMediaStage.MEDIA_CONNECT_STARTED })
+                        if (provider == "livekit") assertTrue(stage(serverId, NativeMediaStage.MICROPHONE_PUBLISHED)
+                            .elapsedRealtimeNanos <= prejoined.elapsedRealtimeNanos)
                         val elapsedMs = (first.elapsedRealtimeNanos - requested.elapsedRealtimeNanos) / 1_000_000.0
                         assertTrue("Native answer-to-PCM exceeded bound", elapsedMs in 0.0..3000.0)
                         results += mapOf("credentials" to source, "sampleIndex" to sampleIndex,
@@ -185,6 +204,8 @@ class NativeMediaJourneyTest {
                             "audioAuthorizedNanos" to authorized.elapsedRealtimeNanos, "firstAudioNanos" to first.elapsedRealtimeNanos,
                             "captureStartedNanos" to capture.elapsedRealtimeNanos, "playbackStartedNanos" to playback.elapsedRealtimeNanos,
                             "remoteSubscribedNanos" to subscribed.elapsedRealtimeNanos,
+                            "decoderFirstPcmNanos" to decoded.elapsedRealtimeNanos, "outputMutedNanos" to mutedOutput.elapsedRealtimeNanos,
+                            "outputFirstAudioNanos" to outputAudio.elapsedRealtimeNanos,
                             "answerToFirstAudioMs" to elapsedMs, "pcm" to first.measurements, "preanswerCapture" to false)
                         assertEquals(0, joinHandlerCalls)
                         if (index == 0 && benchmarkSample == null) {
@@ -197,15 +218,18 @@ class NativeMediaJourneyTest {
                             val holdRequested = android.os.SystemClock.elapsedRealtimeNanos()
                             engine.hold(id, true)
                             assertTrue(stage(serverId, NativeMediaStage.CAPTURE_STOPPED).elapsedRealtimeNanos >= holdRequested)
-                            assertTrue(stage(serverId, NativeMediaStage.PLAYBACK_STOPPED).elapsedRealtimeNanos >= holdRequested)
+                            val muted = stage(serverId, NativeMediaStage.OUTPUT_MUTED, 2)
+                            assertTrue(muted.elapsedRealtimeNanos >= holdRequested)
                             val starts = events(serverId).count { it.stage == NativeMediaStage.CAPTURE_STARTED }
                             val playbackStarts = events(serverId).count { it.stage == NativeMediaStage.PLAYBACK_STARTED }
+                            val outputStarts = events(serverId).count { it.stage == NativeMediaStage.OUTPUT_FIRST_NONZERO }
                             delay(100)
                             assertEquals(starts, events(serverId).count { it.stage == NativeMediaStage.CAPTURE_STARTED })
                             assertEquals(playbackStarts, events(serverId).count { it.stage == NativeMediaStage.PLAYBACK_STARTED })
+                            assertEquals(outputStarts, events(serverId).count { it.stage == NativeMediaStage.OUTPUT_FIRST_NONZERO })
                             engine.hold(id, false)
                             val resumed = stage(serverId, NativeMediaStage.AUDIO_AUTHORIZED, 2)
-                            for (kind in listOf(NativeMediaStage.CAPTURE_STARTED, NativeMediaStage.PLAYBACK_STARTED, NativeMediaStage.FIRST_AUDIO))
+                            for (kind in listOf(NativeMediaStage.CAPTURE_STARTED, NativeMediaStage.OUTPUT_FIRST_NONZERO, NativeMediaStage.FIRST_AUDIO))
                                 assertTrue(stage(serverId, kind, 2).elapsedRealtimeNanos >= resumed.elapsedRealtimeNanos)
                             cleanupResults += "hold-capture-stopped-resumed"
                         }
@@ -265,7 +289,7 @@ class NativeMediaJourneyTest {
                 assertEquals(0, joinHandlerCalls)
                 output.writeText(JSONObject(mapOf("passed" to true, "provider" to provider, "metric" to "native-answer-request-to-first-remote-pcm",
                     "pcmThreshold" to 128, "budgetMs" to 3000, "targetMs" to 300, "samples" to results,
-                    "profile" to "baseline", "samplesPerPath" to 1, "sources" to sources,
+                    "profile" to "optimized", "samplesPerPath" to 1, "sources" to sources,
                     "benchmarkOnly" to (benchmarkSample != null), "processIsolation" to
                         (if (benchmarkSample == null) "full-journey" else "fresh-app-process"),
                     "cleanup" to cleanupResults, "recordingObservation" to recordingObservation, "declineObservation" to declineObservation,

@@ -44,6 +44,23 @@ class ConversationEngine(val context: Context) {
     private val telecom = CallsManager(context).apply {
         registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE or CallsManager.CAPABILITY_SUPPORTS_VIDEO_CALLING)
     }
+    private var startingEndpoints: List<CallEndpointCompat> = emptyList()
+    init {
+        // Keep this collection alive through addCall: Core-Telecom shares Bluetooth
+        // endpoint UUIDs between the starting-flow session and the admitted call.
+        // Call admission only reads the cache and never waits for endpoint discovery.
+        jobs.launch {
+            try {
+                telecom.getAvailableStartingCallEndpoints().collect { startingEndpoints = it.toList() }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                // Discovery is optional; Core-Telecom still selects its default route.
+            } finally {
+                startingEndpoints = emptyList()
+            }
+        }
+    }
     private val metadata = context.packageManager.getApplicationInfo(context.packageName,
         android.content.pm.PackageManager.GET_META_DATA).metaData
     var policy = org.json.JSONObject(metadata?.getString("ExpoCallKitTelecomJoinPolicy") ?: "{}")
@@ -210,10 +227,15 @@ class ConversationEngine(val context: Context) {
         calls[id] = call
         publish()
         val handle = (member["phoneNumber"] ?: member["email"] ?: member["id"]).toString()
+        val preferredEndpoint = preferredStartingEndpoint(video)
+        signal(call, NativeMediaStage.ROUTE_PREFERENCE_REQUESTED, mapOf(
+            "cached" to if (preferredEndpoint != null) 1L else 0L,
+            "type" to (preferredEndpoint?.type?.toLong() ?: 0L),
+            "availableCount" to startingEndpoints.size.toLong()))
         val attributes = CallAttributesCompat((member["displayName"] ?: handle).toString(), Uri.fromParts("sip", handle, null),
             if (incoming) CallAttributesCompat.DIRECTION_INCOMING else CallAttributesCompat.DIRECTION_OUTGOING,
             if (video) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL,
-            CallAttributesCompat.SUPPORTS_SET_INACTIVE)
+            CallAttributesCompat.SUPPORTS_SET_INACTIVE, preferredStartingCallEndpoint = preferredEndpoint)
         call.job = jobs.launch {
             try {
                 signal(call, NativeMediaStage.CORE_ADD_REQUESTED)
@@ -408,6 +430,20 @@ class ConversationEngine(val context: Context) {
         refreshRoutes()
         ConversationService.remove(context, id)
         publish()
+    }
+    private fun preferredStartingEndpoint(video: Boolean): CallEndpointCompat? {
+        // Only pass endpoints emitted by the public starting-endpoint flow. Preserve
+        // an existing active route, including a speaker the user already selected.
+        val current = calls.values.firstOrNull { it.active }?.endpoint
+        startingEndpoints.firstOrNull { it.identifier == current?.identifier }?.let { return it }
+        startingEndpoints.firstOrNull { it.type == CallEndpointCompat.TYPE_WIRED_HEADSET }?.let { return it }
+        val bluetooth = startingEndpoints.filter { it.type == CallEndpointCompat.TYPE_BLUETOOTH }
+        if (bluetooth.isNotEmpty()) return bluetooth.singleOrNull()
+        // Preserve Core's video default. Audio calls prefer private audio; a sole
+        // speaker endpoint can be preselected without choosing it over a private route.
+        if (video) return null
+        startingEndpoints.firstOrNull { it.type == CallEndpointCompat.TYPE_EARPIECE }?.let { return it }
+        return startingEndpoints.singleOrNull()?.takeIf { it.type == CallEndpointCompat.TYPE_SPEAKER }
     }
     private fun route(endpoint: CallEndpointCompat) = mapOf("id" to endpoint.identifier.toString(), "name" to endpoint.name.toString(),
         "type" to when(endpoint.type) { CallEndpointCompat.TYPE_EARPIECE -> "builtInReceiver"; CallEndpointCompat.TYPE_SPEAKER -> "builtInSpeaker";

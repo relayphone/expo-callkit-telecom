@@ -23,14 +23,29 @@ for source in expected_sources:
     assert len(selected) == samples_per_path
     if samples_per_path > 1:
         assert {sample["sampleIndex"] for sample in selected} == set(range(1, samples_per_path + 1))
+optimized = result.get("profile") == "optimized"
 for sample in result["samples"]:
     assert sample["highPriority"] is True
     assert sample["pushNanos"] <= sample["reportedNanos"]
     assert sample["reportedNanos"] <= min(sample["prewarmNanos"], sample["jsWarmNanos"])
     assert sample["prewarmNanos"] <= sample["prejoinedNanos"] <= sample["answerRequestedNanos"]
     assert sample["answerRequestedNanos"] <= sample["answerAcceptedNanos"] <= sample["audioAuthorizedNanos"] <= sample["firstAudioNanos"]
-    assert all(sample[key] >= sample["audioAuthorizedNanos"] for key in
-               ("captureStartedNanos", "playbackStartedNanos", "remoteSubscribedNanos"))
+    assert sample["captureStartedNanos"] >= sample["audioAuthorizedNanos"]
+    if optimized:
+        assert all(sample[key] <= sample["prejoinedNanos"] for key in
+                   ("playbackStartedNanos", "remoteSubscribedNanos", "decoderFirstPcmNanos", "outputMutedNanos"))
+        assert sample["outputFirstAudioNanos"] >= sample["audioAuthorizedNanos"]
+        events = sample["events"]
+        assert not any(event["stage"] in ("captureBeforeAuthority", "outputBeforeAuthority",
+                                         "outputObservationUnavailable") for event in events)
+        assert sum(event["stage"] == "mediaConnectStarted" for event in events) == 1
+        roles = {1, 2} if provider == "livekit" else {0}
+        for role in roles:
+            assert any(event["stage"] == "dtlsConnected" and event["measurements"].get("role") == role
+                       and event["nanos"] <= sample["prejoinedNanos"] for event in events)
+    else:
+        assert all(sample[key] >= sample["audioAuthorizedNanos"] for key in
+                   ("playbackStartedNanos", "remoteSubscribedNanos"))
     elapsed = (sample["firstAudioNanos"] - sample["answerRequestedNanos"]) / 1_000_000
     assert abs(elapsed - sample["answerToFirstAudioMs"]) < .001
     assert 0 <= elapsed <= result["budgetMs"]

@@ -73,3 +73,31 @@ The baseline and optimized before/after measurements will be recorded here from
 completed CI artifacts, including commit/run references and any measured emulator
 floor. The 300 ms goal remains separate from the 3 s failure bound until the measured
 results establish which part of the path meets it.
+
+The optimized profile keeps the remote subscription and decoder enabled and the
+native playback track running behind ADM speaker mute. LiveKit prepublishes a
+muted microphone using recordingless buffers; raw WebRTC negotiates the sender
+once during pre-warm. Fake capture buffers are paced at their audio duration and
+do not open the microphone. A cached public Core starting-endpoint preference
+preselects the route without delaying initial call reporting; the observed current
+endpoint remains nullable route metadata; successful Core activation/focus and
+observed communication mode authorize audio.
+
+After that authority, Answer releases native output mute and arms the same decoded
+PCM gate. It enables physical recording and unmutes the existing sender without
+another SDP exchange or subscription. Remote PCM timing does not wait for the
+microphone's first physical read. On hold, output is muted while receive decoding
+stays hot; physical capture stops. Resume again waits for native audio authority.
+Non-speaking callers and absent remote publications remain answerable: optional
+remote decoder/output warmup is bounded to two seconds rather than a requirement
+that the caller produce nonzero audio. The CI tone fixture separately requires
+both transports, nonzero decoder PCM, running playback and muted output before
+PREJOINED.
+
+Optimized privacy evidence includes positive bytes read by this ADM after answer,
+zero new recording sessions before answer, silent post-mute AudioTrack buffers
+before answer, and nonzero output after authority. The playback observation is
+installed only when the pinned direct-buffer backing-array API is supported; the
+API35 qualification requires it. The baseline capture timestamp is an SDK start
+callback; the optimized timestamp comes from a positive physical read. Decoded
+remote PCM remains the shared before/after metric. No raw audio is retained.
