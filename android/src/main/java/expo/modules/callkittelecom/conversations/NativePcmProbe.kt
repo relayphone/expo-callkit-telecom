@@ -5,12 +5,14 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
+import kotlinx.coroutines.CompletableDeferred
 import livekit.org.webrtc.AudioTrackSink
 
 /** Decoder readiness and post-release PCM have separate gates and monotonic callback timestamps. */
 internal class NativePcmProbe(private val serverId: String) {
     private class Gate(val openedAt: Long, val first: AtomicBoolean = AtomicBoolean(false))
     private val decoded = AtomicBoolean(false)
+    private val decodedReady = CompletableDeferred<Unit>()
     @Volatile private var gate: Gate? = null
     @Volatile private var closed = false
 
@@ -18,7 +20,8 @@ internal class NativePcmProbe(private val serverId: String) {
     val answerSink = sink(false)
     fun arm() { gate = Gate(SystemClock.elapsedRealtimeNanos()) }
     fun disarm() { gate = null }
-    fun close() { closed = true; gate = null }
+    suspend fun awaitDecoded() { decodedReady.await() }
+    fun close() { closed = true; gate = null; decodedReady.cancel() }
 
     private fun sink(decoderOnly: Boolean) = object : AudioTrackSink {
         override fun onData(data: ByteBuffer, bits: Int, rate: Int, channels: Int, frames: Int, capturedAt: Long) {
@@ -32,8 +35,10 @@ internal class NativePcmProbe(private val serverId: String) {
             if (closed || peak < 128) return
             val values = mapOf("frames" to frames.toLong(), "sampleRate" to rate.toLong(),
                 "channels" to channels.toLong(), "peak" to peak.toLong(), "threshold" to 128L)
-            if (decoded.compareAndSet(false, true))
+            if (decoded.compareAndSet(false, true)) {
                 NativeMediaSignals.emit(serverId, NativeMediaStage.DECODER_FIRST_PCM, values, enteredAt)
+                decodedReady.complete(Unit)
+            }
             if (current != null && gate === current && enteredAt >= current.openedAt && current.first.compareAndSet(false, true))
                 NativeMediaSignals.emit(serverId, NativeMediaStage.FIRST_AUDIO, values, enteredAt)
         }

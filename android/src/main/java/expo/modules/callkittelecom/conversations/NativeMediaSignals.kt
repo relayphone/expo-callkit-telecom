@@ -23,7 +23,13 @@ enum class NativeMediaStage(val value: String) {
     TRANSPORT_CONNECTED("transportConnected"), SUBSCRIPTION_REQUESTED("subscriptionRequested"),
     REMOTE_TRACK_AVAILABLE("remoteTrackAvailable"), DECODER_FIRST_PCM("decoderFirstPcm"),
     MICROPHONE_PUBLISH_STARTED("microphonePublishStarted"), MICROPHONE_PUBLISHED("microphonePublished"),
-    PREPARATION_READY("preparationReady"), AUDIO_MODE_READY("audioModeReady"), ENDPOINT_READY("endpointReady")
+    ROUTE_PREFERENCE_REQUESTED("routePreferenceRequested"), PREPARATION_READY("preparationReady"),
+    AUDIO_MODE_READY("audioModeReady"), ENDPOINT_READY("endpointReady"),
+    CAPTURE_BEFORE_AUTHORITY("captureBeforeAuthority"),
+    CAPTURE_PUMP_STARTED("capturePumpStarted"), CAPTURE_PUMP_STOPPED("capturePumpStopped"),
+    OUTPUT_BEFORE_AUTHORITY("outputBeforeAuthority"), OUTPUT_FIRST_NONZERO("outputFirstNonzero"),
+    OUTPUT_MUTED("outputMuted"), OUTPUT_OBSERVATION_UNAVAILABLE("outputObservationUnavailable"),
+    OUTPUT_RELEASED("outputReleased"), SILENT_BUFFER_WINDOW("silentBufferWindow")
 }
 
 /** Native lifecycle observations contain timings/counts, never credentials or audio samples. */
