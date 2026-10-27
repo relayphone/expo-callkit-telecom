@@ -6,7 +6,7 @@ snapshot and forwards handler registration. It creates no LCK manager, CallKit
 provider, PushKit registry or audio session. IDs, status, direction, participants,
 deadlines and reports remain SDK values. iOS17.4 is the minimum.
 
-`sdk-revision` pins `ziahamza/ios-voip-sdk` at
+`sdk-revision` pins `relayphone/ios-voip-sdk` at
 `52c2eaba23f61e67e9086a7b2328cf9e293da4ea`, the shared identity contract revision.
 CI checks out that exact commit in `apple/.sdk/ios-voip-sdk` before resolving the
 local package dependency. The SDK manifest reads its adjacent `VERSION` file;

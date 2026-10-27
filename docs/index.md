@@ -23,7 +23,7 @@ hero:
       link: /getting-started
     - theme: alt
       text: View on GitHub
-      link: https://github.com/ziahamza/expo-callkit-telecom/tree/v2
+      link: https://github.com/relayphone/expo-callkit-telecom/tree/v2
     - theme: alt
       text: vs react-native-callkeep
       link: /vs-callkeep
@@ -55,7 +55,7 @@ This homepage and its demonstrations describe upstream v1. The fork's `v2`
 branch uses a breaking conversations API on Android: start with the
 [v1 → v2 migration](./migrating-v1-to-v2.md) and
 [Android quick-start](./android-quick-start.md).
-**iOS v2 is pending M3.5**; [draft #33](https://github.com/ziahamza/expo-callkit-telecom/pull/33)
+**iOS v2 is pending M3.5**; [draft #33](https://github.com/relayphone/expo-callkit-telecom/pull/33)
 is an unmerged adapter spike, not a shipped iOS v2 implementation.
 
 ## See it in action on iOS and Android

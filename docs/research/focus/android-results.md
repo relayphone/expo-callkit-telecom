@@ -7,14 +7,14 @@ also rang. Both raw Core-Telecom and production native intake produced this
 pattern in all three independent samples per cell. These are Android ringtone
 playback observations; physical speaker audibility was not measured.
 
-[PR29](https://github.com/ziahamza/expo-callkit-telecom/pull/29) was qualified at
+[PR29](https://github.com/relayphone/expo-callkit-telecom/pull/29) was qualified at
 `7c9668ab43173a64ed225b20877ff160b7dd996b` in
-[run40456679331](https://github.com/ziahamza/expo-callkit-telecom/actions/runs/40456679331)
+[run40456679331](https://github.com/relayphone/expo-callkit-telecom/actions/runs/40456679331)
 and merged as `f2424a8166425afed4bbd93c856be36770190d09` with the same full source
 tree. The [checked JSON](./android-results.json) retains all 108 pairs / 216
 reports, three samples per policy/contact cell in each lane, source hashes,
 policy readbacks and missing observations. This is the Android counterpart to
-the [pinned iPhone Focus results](https://github.com/ziahamza/ios-voip-sdk/blob/41b5de1787a59fd16a9493b5d4366c98768bd25a/docs/research/focus/results.md).
+the [pinned iPhone Focus results](https://github.com/relayphone/ios-voip-sdk/blob/41b5de1787a59fd16a9493b5d4366c98768bd25a/docs/research/focus/results.md).
 
 ## Which settings rang
 
@@ -127,9 +127,9 @@ in that setup. Android has 216 reports and three samples per cell in each lane;
 the iPhone source has one sample per measured row, no acoustic/haptic
 qualification and no CallKit run. These protocols, providers and sample counts
 differ; neither result establishes universal platform behavior. See the
-[source results and limitations](https://github.com/ziahamza/ios-voip-sdk/blob/41b5de1787a59fd16a9493b5d4366c98768bd25a/docs/research/focus/results.md).
+[source results and limitations](https://github.com/relayphone/ios-voip-sdk/blob/41b5de1787a59fd16a9493b5d4366c98768bd25a/docs/research/focus/results.md).
 
-The [merged host-controlled breakthrough RFC](https://github.com/ziahamza/ios-voip-sdk/blob/9fa1fa73164dc36a608b05e495ff05c2c0885888/docs/research/focus/app-breakthrough.md)
+The [merged host-controlled breakthrough RFC](https://github.com/relayphone/ios-voip-sdk/blob/9fa1fa73164dc36a608b05e495ff05c2c0885888/docs/research/focus/app-breakthrough.md)
 is a conditional design, not an implemented automatic override. Its user-chosen
 VIP/repeat/AI routing maps to Android as host/server routing for genuine calls,
 combined with the device's actual sender/repeat policy and native outcome hook.

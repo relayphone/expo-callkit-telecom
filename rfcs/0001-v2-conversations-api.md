@@ -1,6 +1,6 @@
 # RFC 0001: a conversations API for v2 (LiveCommunicationKit and Core-Telecom)
 
-- **Status:** accepted for `ziahamza/expo-callkit-telecom` branch `v2`, per [lane #11](https://github.com/ziahamza/expo-callkit-telecom/issues/11). This is a fork decision; no upstream proposal is authorized.
+- **Status:** accepted for `relayphone/expo-callkit-telecom` branch `v2`, per [lane #11](https://github.com/relayphone/expo-callkit-telecom/issues/11). This is a fork decision; no upstream proposal is authorized.
 - **Scope:** the TypeScript API, the native architecture, push, audio, migration and testing.
 - **Media:** the app supplies the native media adapter; the accepted October 26 join policy below makes native answer and muted pre-warm the default. It supersedes the draft's JS-gated Join descriptions.
 
@@ -242,7 +242,7 @@ Most apps need only state and the handler. Lifecycle signals that aren't state g
 
 ## Native architecture
 
-### iOS: [`ios-voip-sdk`](https://github.com/ziahamza/ios-voip-sdk)
+### iOS: [`ios-voip-sdk`](https://github.com/relayphone/ios-voip-sdk)
 
 One repository, one Swift source tree, two products that are versioned and tested together:
 
@@ -251,7 +251,7 @@ One repository, one Swift source tree, two products that are versioned and teste
 | **Swift package** (SwiftPM; Swift 6, with no Expo, React Native or WebRTC dependency) | Native Swift apps, and later watchOS and Mac Catalyst | Owns the process's only `ConversationManager`, projects state, registers app metadata synchronously before reporting, enforces handler deadlines. Also holds the PushKit metadata shim (a separate Objective-C target), the media adapter protocols and the activation watchdog. |
 | **iOS-only Expo module** (npm; `expo-module.config.json` lists `apple` as its only platform) | Expo and bare React Native apps (bare apps need `expo-modules-core`) | A thin bridge that exposes this RFC's API: the state hooks, the handler, commands, reports, audio routes, push token and events. It also ships a config plugin for entitlements, `voip`, push, default calling and media adapters. Its podspec compiles the same Swift sources, so CocoaPods consumers need no separately published pod. |
 
-**Simulator support built in.** Genuine LiveCommunicationKit doesn't work in the iOS simulator: the call is torn down about 100 ms after the report. `ios-voip-sdk` therefore ships optional simulator support built on the simulator runtime in [ios-voip-sdk](https://github.com/ziahamza/ios-voip-sdk):
+**Simulator support built in.** Genuine LiveCommunicationKit doesn't work in the iOS simulator: the call is torn down about 100 ms after the report. `ios-voip-sdk` therefore ships optional simulator support built on the simulator runtime in [ios-voip-sdk](https://github.com/relayphone/ios-voip-sdk):
 
 - **Activation:** in simulator builds the SDK activates the runtime in-process, before it creates its `ConversationManager`. This needs no `DYLD_INSERT_LIBRARIES` and no global simulator setup.
 - **Packaging:** the runtime arrives as an XCFramework. Its simulator slice is the runtime; its device slice is an empty stub. Device and App Store builds therefore contain no simulator code, and no build setting has to remember to exclude it.
@@ -278,7 +278,7 @@ One repository, one Swift source tree, two products that are versioned and teste
 
 ## Native answer and push-time pre-warm (accepted October 26)
 
-[Hamza's A+B+C decision](https://github.com/ziahamza/ios-voip-sdk/issues/50#issuecomment-6417033029) supersedes the earlier draft's JS-gated Join default. `joinPolicy` now selects native answering by default; `{ type: "handler" }` explicitly retains JS-gated joining. Native policy names its media adapter (`livekit` or `webrtc`), takes `credentials: "fromPush"` or a registered native fetcher reference, and enables media/JS `prewarm` by default. A native fetcher reference is serializable configuration, never a JS closure or an embedded device secret.
+[Hamza's A+B+C decision](https://github.com/relayphone/ios-voip-sdk/issues/50#issuecomment-6417033029) supersedes the earlier draft's JS-gated Join default. `joinPolicy` now selects native answering by default; `{ type: "handler" }` explicitly retains JS-gated joining. Native policy names its media adapter (`livekit` or `webrtc`), takes `credentials: "fromPush"` or a registered native fetcher reference, and enables media/JS `prewarm` by default. A native fetcher reference is serializable configuration, never a JS closure or an embedded device secret.
 
 The mandatory order on APNs VoIP and high-priority FCM data messages is:
 
@@ -297,13 +297,13 @@ These types describe the accepted target, not evidence of native media integrati
 
 ## Accepted fork contract refinements
 
-The source of truth for the iOS model is [ios-voip-sdk START-HERE](https://github.com/ziahamza/ios-voip-sdk/blob/main/docs/START-HERE.md), its [M1 bridge contract](https://github.com/ziahamza/ios-voip-sdk/blob/main/Expo/M1-API.md), and [issue #50](https://github.com/ziahamza/ios-voip-sdk/issues/50)'s M3.5 rules. These refine the draft above:
+The source of truth for the iOS model is [ios-voip-sdk START-HERE](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/START-HERE.md), its [M1 bridge contract](https://github.com/relayphone/ios-voip-sdk/blob/main/Expo/M1-API.md), and [issue #50](https://github.com/relayphone/ios-voip-sdk/issues/50)'s M3.5 rules. These refine the draft above:
 
 - Public types live in `src/conversations/types.ts` and the `expo-callkit-telecom/types` entry. The implementation replaces v1 incrementally on `v2`; this types-only slice adds no compatibility shim or alternate runtime. The root runtime switches to the conversations API with the Android implementation.
 - Conversation IDs are branded UUID strings, and immutable conversations form a status-discriminated union. Status names, participants, capabilities, payload fields and end reasons match the SDK. `connectedAt` is present for connected state; held state can precede a transport connected report, and terminal state can precede end metadata. Native termination/hold takes precedence over transport progress.
 - Reads and change events carry a full `{ revision, conversations }` snapshot internally. Revisions are nonnegative safe integers, strictly increase on change within a native process lifetime, and attach before asynchronous hydration. Older/equal revisions cannot overwrite newer state. Public `getConversations()` still returns the readonly list. Hooks preserve unchanged conversation identity.
 - Native owns the effective application deadline. iOS currently reserves 1.5 seconds before `timeoutDate`; this is SDK policy, not a measured platform duration. Android uses its own Core-Telecom deadline and must settle before the platform timeout. Handler replacement, reset, cancellation or timeout aborts JS work; late settlements cannot resurrect it. Missing optional hold/mute/tones handlers accept. Under the explicit handler join policy a missing join handler fails. With no handler the action stays pending until policy applies (default fail).
-- `reportIncomingConversation` returns a discriminated outcome: `reported` with a branded id, `filtered` with `doNotDisturb`, `blockList` or `other` (retaining an unknown native reason), `atCapacity`, or `failed` with a typed error. A duplicate accepted invitation returns the same id. Other command rejections use typed codes and preserve native error details. The current iOS bridge returns only an id; M3.5 must supply the native reasons before full wiring. [Owner coordination](https://github.com/ziahamza/ios-voip-sdk/issues/50#issuecomment-6416599843).
+- `reportIncomingConversation` returns a discriminated outcome: `reported` with a branded id, `filtered` with `doNotDisturb`, `blockList` or `other` (retaining an unknown native reason), `atCapacity`, or `failed` with a typed error. A duplicate accepted invitation returns the same id. Other command rejections use typed codes and preserve native error details. The current iOS bridge returns only an id; M3.5 must supply the native reasons before full wiring. [Owner coordination](https://github.com/relayphone/ios-voip-sdk/issues/50#issuecomment-6416599843).
 - Audio routes retain the existing port names and opaque selection ids; published `current` follows the OS, not a requested route. Native media selection is `webrtc` (default), `livekit`, or `none`; the watchdog performs at most one state-aware recovery attempt.
 - M3.5's small native transport boundary keeps platform code out of the TypeScript runtime. No synchronous JS callback may block native actions. LCK state/commands stay on the SDK actor, push report entry is synchronous, and media work stays on AudioSessionQueue. The iOS boundary is compile-only until M3.5; this fork does not implement another iOS provider.
 - CI uses only path-filtered `ubuntu-latest` or `macos-26` runners. Android journeys run on pinned emulators with machine-checked results. No physical device is used by this lane.

@@ -1,6 +1,6 @@
 # Typed incoming caller identity
 
-The Android v2 caller matches [SDK #150 at e25b64f](https://github.com/ziahamza/ios-voip-sdk/blob/e25b64f71fb9b2c1ea884c1d39d965c131f00ac1/Expo/CALLER.md).
+The Android v2 caller matches [SDK #150 at e25b64f](https://github.com/relayphone/ios-voip-sdk/blob/e25b64f71fb9b2c1ea884c1d39d965c131f00ac1/Expo/CALLER.md).
 `Participant` remains the outgoing/member model. Incoming callers now require:
 
 ```ts
@@ -42,7 +42,7 @@ the existing v2 failed outcome with `invalid_arguments`. Media credentials remai
 the fork's separate optional `incomingCall.media` extension; no credentials enter
 snapshots. iOS native wiring is unchanged.
 
-[Caller Swift validation](https://github.com/ziahamza/ios-voip-sdk/blob/e25b64f71fb9b2c1ea884c1d39d965c131f00ac1/Sources/VoIPSDK/ConversationModels.swift#L44)
+[Caller Swift validation](https://github.com/relayphone/ios-voip-sdk/blob/e25b64f71fb9b2c1ea884c1d39d965c131f00ac1/Sources/VoIPSDK/ConversationModels.swift#L44)
 provides the parity vectors. Instrumented tests cover normalization, strict field
 types, Unicode controls, projections and actual Android URI encoding; the complete
 Core, media, DND and release Expo journeys also run with the new fixture schema.
