@@ -3,10 +3,10 @@ name: v2 iOS boundary
 on:
   pull_request:
     branches: [v2]
-    paths: ['apple/**', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', '.github/workflows/v2-ios-boundary.yml']
+    paths: ['apple/**', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', 'tools/run-ios-m35-journeys.py', 'tools/tests/test_ios_m35_runner.py', '.github/workflows/v2-ios-boundary.yml']
   push:
     branches: [v2]
-    paths: ['apple/**', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', '.github/workflows/v2-ios-boundary.yml']
+    paths: ['apple/**', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', 'tools/run-ios-m35-journeys.py', 'tools/tests/test_ios_m35_runner.py', '.github/workflows/v2-ios-boundary.yml']
 
 permissions:
   contents: read
@@ -35,6 +35,40 @@ jobs:
       - name: Compile pinned SDK adapter for iOS simulator
         working-directory: apple
         run: xcodebuild -scheme ExpoConversationsBoundary -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/v2-ios-boundary" CODE_SIGNING_ALLOWED=NO build
+      - name: Run separate native Join and handler simulator journeys
+        run: python3 tools/run-ios-m35-journeys.py --output "$RUNNER_TEMP/v2-ios-m35" --derived-data "$RUNNER_TEMP/v2-ios-boundary"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: ios-m35-adapter-journeys
+          path: ${{ runner.temp }}/v2-ios-m35/results.json
+          if-no-files-found: error
+
+  bridge-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check runner inventory selection and failure receipts
+        run: python3 -m unittest discover -s tools/tests -p test_ios_m35_runner.py
+      - name: Read pinned SDK revision
+        id: sdk
+        run: |
+          sdk_revision=$(cat apple/sdk-revision)
+          [[ "$sdk_revision" =~ ^[0-9a-f]{40}$ ]]
+          echo "revision=$sdk_revision" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v6
+        with:
+          repository: ziahamza/ios-voip-sdk
+          ref: ${{ steps.sdk.outputs.revision }}
+          path: apple/.sdk/ios-voip-sdk
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - run: bun install --frozen-lockfile
+      - name: Check positive and negative declarations against the actual SDK
+        run: bunx tsc -p apple/BridgeContract/tsconfig.json
 
   compile-example:
     runs-on: macos-26

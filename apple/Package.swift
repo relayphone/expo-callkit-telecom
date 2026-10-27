@@ -13,6 +13,10 @@ let package = Package(
   targets: [
     .target(name: "ExpoConversationsBoundary", dependencies: [
       .product(name: "VoIPSDK", package: "ios-voip-sdk")
+    ]),
+    .testTarget(name: "ExpoConversationsBoundaryTests", dependencies: [
+      "ExpoConversationsBoundary",
+      .product(name: "VoIPSDK", package: "ios-voip-sdk")
     ])
   ],
   swiftLanguageModes: [.v6]
