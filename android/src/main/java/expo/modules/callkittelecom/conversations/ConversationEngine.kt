@@ -98,9 +98,9 @@ class ConversationEngine(val context: Context) {
         emit("conversationsChanged", snapshot)
     }
     @Suppress("UNCHECKED_CAST")
-    private fun signal(current: Call, stage: NativeMediaStage) {
+    private fun signal(current: Call, stage: NativeMediaStage, measurements: Map<String, Long> = emptyMap()) {
         ((current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String)
-            ?.let { NativeMediaSignals.emit(it, stage) }
+            ?.let { NativeMediaSignals.emit(it, stage, measurements) }
     }
     private fun call(id: String) = calls[id] ?: error("unknown_conversation")
     private suspend fun control(id: String) = call(id).ready.await()
@@ -308,22 +308,21 @@ class ConversationEngine(val context: Context) {
         refreshRoutes()
         publish()
     }
-    private suspend fun awaitAudio(id: String, current: Call) {
+    private suspend fun awaitAudio(id: String, current: Call): Unit = withContext(Dispatchers.Main) {
         // Returning through main lets Core-Telecom finish a system callback before audio begins.
-        withContext(Dispatchers.Main) { yield(); check(calls[id] === current && current.active) }
+        yield(); check(calls[id] === current && current.active)
         signal(current, NativeMediaStage.AUDIO_WAIT_STARTED)
-        try { withTimeout(1500) {
-            var modeObserved = false
-            while (audio.mode != AudioManager.MODE_IN_COMMUNICATION || current.endpoint == null) {
-                if (!modeObserved && audio.mode == AudioManager.MODE_IN_COMMUNICATION) {
-                    signal(current, NativeMediaStage.AUDIO_MODE_READY); modeObserved = true
-                }
-                delay(10)
-            }
-            if (!modeObserved) signal(current, NativeMediaStage.AUDIO_MODE_READY)
+        try {
+            // Telecom's successful answer/setActive transaction already verifies this
+            // call owns focus. Endpoint callbacks describe route/UI state and may be absent;
+            // they are not another audio activation acknowledgment. Mode changes are async.
+            NativeAudioAuthority.await({ calls[id] === current && current.active }, { audio.mode })
+            signal(current, NativeMediaStage.AUDIO_MODE_READY)
             check(calls[id] === current && current.active)
-            signal(current, NativeMediaStage.AUDIO_AUTHORIZED)
-        } } catch (error: TimeoutCancellationException) {
+            signal(current, NativeMediaStage.AUDIO_AUTHORIZED, mapOf(
+                "audioMode" to AudioManager.MODE_IN_COMMUNICATION.toLong(), "coreActive" to 1L,
+                "endpointObserved" to if (current.endpoint != null) 1L else 0L))
+        } catch (error: TimeoutCancellationException) {
             @Suppress("UNCHECKED_CAST") val serverId = (current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String
             serverId?.let { NativeMediaSignals.emit(it, NativeMediaStage.AUDIO_WAIT_EXPIRED, mapOf(
                 "audioMode" to audio.mode.toLong(), "hasEndpoint" to if (current.endpoint != null) 1L else 0L,
