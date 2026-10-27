@@ -14,3 +14,4 @@ adb exec-out run-as expo.modules.callkittelecom.instrumentation cat files/native
 python3 tools/check-native-media.py android/instrumentation/build/native-media-results.json
 adb exec-out run-as expo.modules.callkittelecom.instrumentation cat files/native-webrtc-results.json > android/instrumentation/build/native-webrtc-results.json
 python3 tools/check-native-media.py android/instrumentation/build/native-webrtc-results.json
+python3 tools/summarize-native-latency.py --input android/instrumentation/build/native-media-results.json --input android/instrumentation/build/native-webrtc-results.json --output-json android/instrumentation/build/native-latency-summary.json --output-markdown android/instrumentation/build/native-latency-summary.md

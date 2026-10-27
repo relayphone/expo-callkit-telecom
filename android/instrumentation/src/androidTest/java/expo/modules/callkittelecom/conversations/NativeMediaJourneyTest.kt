@@ -97,16 +97,25 @@ class NativeMediaJourneyTest {
             }
             val stamp = android.os.SystemClock.elapsedRealtime().toString()
             val prefix = if (provider == "webrtc") "rtc-" else ""
-            try { withTimeout(120_000) {
-                for ((index, source) in sources.withIndex()) {
+            val measurements = (1..5).flatMap { sampleIndex ->
+                sources.shuffled(kotlin.random.Random(132 + sampleIndex)).map { it to sampleIndex }
+            }
+            try { withTimeout(240_000) {
+                for ((index, measurement) in measurements.withIndex()) {
+                    val (source, sampleIndex) = measurement
                     // Isolate each measurement from the previous test/call's audio teardown.
                     withTimeout(5000) { while (context.getSystemService(android.media.AudioManager::class.java).mode != android.media.AudioManager.MODE_NORMAL) delay(25) }
-                    val serverId = "${prefix}timing-$source-$stamp"
+                    val serverId = "${prefix}timing-$source-$sampleIndex-$stamp"
                     val id = incoming(serverId, source != "fetcher")
                     val prejoined = stage(serverId, NativeMediaStage.PREJOINED)
                     delay(150)
                     assertFalse(events(serverId).any { it.stage in setOf(NativeMediaStage.CAPTURE_STARTED,
                         NativeMediaStage.PLAYBACK_STARTED, NativeMediaStage.REMOTE_SUBSCRIBED, NativeMediaStage.FIRST_AUDIO) })
+                    val audio = context.getSystemService(android.media.AudioManager::class.java)
+                    val preanswerRecordings = audio.activeRecordingConfigurations.size
+                    assertEquals(0, preanswerRecordings)
+                    assertEquals(android.media.AudioManager.MODE_NORMAL, audio.mode)
+                    val processAgeMs = android.os.SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime()
                     engine.join(id)
                     val first = stage(serverId, NativeMediaStage.FIRST_AUDIO)
                     val reported = stage(serverId, NativeMediaStage.REPORTED)
@@ -120,6 +129,14 @@ class NativeMediaJourneyTest {
                     val capture = stage(serverId, NativeMediaStage.CAPTURE_STARTED)
                     val playback = stage(serverId, NativeMediaStage.PLAYBACK_STARTED)
                     val subscribed = stage(serverId, NativeMediaStage.REMOTE_SUBSCRIBED)
+                    stage(serverId, NativeMediaStage.DECODER_FIRST_PCM)
+                    if (provider == "livekit") stage(serverId, NativeMediaStage.MICROPHONE_PUBLISHED)
+                    val roles = if (provider == "livekit") setOf(1L, 2L) else setOf(0L)
+                    withTimeout(10_000) {
+                        while (!events(serverId).filter { it.stage == NativeMediaStage.DTLS_CONNECTED }
+                            .mapNotNull { it.measurements["role"] }.containsAll(roles)) delay(10)
+                    }
+                    withTimeout(3000) { while (audio.activeRecordingConfigurations.isEmpty()) delay(10) }
                     assertTrue(reported.elapsedRealtimeNanos <= prewarm.elapsedRealtimeNanos)
                     assertTrue(reported.elapsedRealtimeNanos <= jsWarm.elapsedRealtimeNanos)
                     assertTrue(accepted.elapsedRealtimeNanos <= authorized.elapsedRealtimeNanos)
@@ -128,7 +145,11 @@ class NativeMediaJourneyTest {
                         assertTrue(authorized.elapsedRealtimeNanos <= started.elapsedRealtimeNanos)
                     val elapsedMs = (first.elapsedRealtimeNanos - requested.elapsedRealtimeNanos) / 1_000_000.0
                     assertTrue("Native answer-to-PCM exceeded bound", elapsedMs in 0.0..3000.0)
-                    results += mapOf("credentials" to source, "pushNanos" to pushed.elapsedRealtimeNanos,
+                    results += mapOf("credentials" to source, "sampleIndex" to sampleIndex,
+                        "processAgeMs" to processAgeMs, "preanswerRecordingConfigurations" to preanswerRecordings,
+                        "activeRecordingConfigurations" to audio.activeRecordingConfigurations.size,
+                        "events" to events(serverId).map { mapOf("stage" to it.stage.value,
+                            "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) }, "pushNanos" to pushed.elapsedRealtimeNanos,
                         "highPriority" to true, "reportedNanos" to reported.elapsedRealtimeNanos, "prejoinedNanos" to prejoined.elapsedRealtimeNanos,
                         "prewarmNanos" to prewarm.elapsedRealtimeNanos, "jsWarmNanos" to jsWarm.elapsedRealtimeNanos,
                         "answerRequestedNanos" to requested.elapsedRealtimeNanos, "answerAcceptedNanos" to accepted.elapsedRealtimeNanos,
@@ -202,10 +223,11 @@ class NativeMediaJourneyTest {
                     assertFalse(events(goneServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
                     owned -= gone; cleanupResults += code.toString()
                 }
-                assertEquals(sources.size + 4, warmRequests)
+                assertEquals(measurements.size + 4, warmRequests)
                 assertEquals(0, joinHandlerCalls)
                 output.writeText(JSONObject(mapOf("passed" to true, "provider" to provider, "metric" to "native-answer-request-to-first-remote-pcm",
                     "pcmThreshold" to 128, "budgetMs" to 3000, "targetMs" to 300, "samples" to results,
+                    "profile" to "baseline", "samplesPerPath" to 5,
                     "cleanup" to cleanupResults, "declineObservation" to declineObservation,
                     "declineFirstZeroObservation" to declineFirstZeroObservation, "declinePendingObserved" to declinePendingObserved,
                     "declineClosedNanos" to declineClosedNanos, "declineTerminalSignal" to declineTerminalSignal,

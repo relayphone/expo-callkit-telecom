@@ -3,10 +3,10 @@ name: v2 Android
 on:
   pull_request:
     branches: [v2]
-    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
+    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
   push:
     branches: [v2]
-    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
+    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
 
 permissions:
   contents: read
@@ -66,6 +66,8 @@ jobs:
             android/instrumentation/build/journey-results.json
             android/instrumentation/build/native-media-results.json
             android/instrumentation/build/native-webrtc-results.json
+            android/instrumentation/build/native-latency-summary.json
+            android/instrumentation/build/native-latency-summary.md
             android/instrumentation/build/dnd-results
           if-no-files-found: error
 

@@ -216,6 +216,7 @@ class ConversationEngine(val context: Context) {
             CallAttributesCompat.SUPPORTS_SET_INACTIVE)
         call.job = jobs.launch {
             try {
+                signal(call, NativeMediaStage.CORE_ADD_REQUESTED)
                 telecom.addCall(attributes,
                     onAnswer = { withTimeout(4500) {
                         check(call.permitted.await()) { "Incoming call filtered" }
@@ -225,6 +226,7 @@ class ConversationEngine(val context: Context) {
                     onSetActive = { withTimeout(4500) { check(call.permitted.await()); hold(id, false, "system") } },
                     onSetInactive = { withTimeout(4500) { hold(id, true, "system") } }) {
                     call.admitted = true
+                    signal(call, NativeMediaStage.CORE_ADMITTED)
                     signal(call, NativeMediaStage.REPORTED)
                     publish()
                     call.ready.complete(this)
@@ -311,7 +313,14 @@ class ConversationEngine(val context: Context) {
         withContext(Dispatchers.Main) { yield(); check(calls[id] === current && current.active) }
         signal(current, NativeMediaStage.AUDIO_WAIT_STARTED)
         try { withTimeout(1500) {
-            while (audio.mode != AudioManager.MODE_IN_COMMUNICATION || current.endpoint == null) delay(10)
+            var modeObserved = false
+            while (audio.mode != AudioManager.MODE_IN_COMMUNICATION || current.endpoint == null) {
+                if (!modeObserved && audio.mode == AudioManager.MODE_IN_COMMUNICATION) {
+                    signal(current, NativeMediaStage.AUDIO_MODE_READY); modeObserved = true
+                }
+                delay(10)
+            }
+            if (!modeObserved) signal(current, NativeMediaStage.AUDIO_MODE_READY)
             check(calls[id] === current && current.active)
             signal(current, NativeMediaStage.AUDIO_AUTHORIZED)
         } } catch (error: TimeoutCancellationException) {
@@ -406,7 +415,11 @@ class ConversationEngine(val context: Context) {
             CallEndpointCompat.TYPE_BLUETOOTH -> "bluetoothHFP"; CallEndpointCompat.TYPE_WIRED_HEADSET -> "headphones"; else -> "unknown" })
     private fun updateRoutes(id: String, endpoint: CallEndpointCompat?) {
         val current = calls[id] ?: return
-        if (endpoint != null) current.endpoint = endpoint
+        if (endpoint != null) {
+            current.endpoint = endpoint
+            @Suppress("UNCHECKED_CAST") val serverId = (current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String
+            serverId?.let { NativeMediaSignals.emit(it, NativeMediaStage.ENDPOINT_READY, mapOf("type" to endpoint.type.toLong())) }
+        }
         refreshRoutes()
     }
     private fun refreshRoutes() {

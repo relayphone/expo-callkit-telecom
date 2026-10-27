@@ -66,6 +66,7 @@ internal class NativeMediaController(private val context: Context, private val p
         // WebRTC sessions own native negotiation; only LiveKit has a push credential wire shape.
         val nativeNegotiation = policy.optString("media", "webrtc") == "webrtc" && NativeMediaRegistry.factories.containsKey("webrtc") &&
             policy.opt("credentials") !is JSONObject && policy.opt("fallback") !is JSONObject
+        (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.CREDENTIALS_STARTED) }
         val resolved = if (nativeNegotiation || (policy.opt("credentials") !is JSONObject && fresh && compatiblePush)) payload else {
             val source = policy.optJSONObject("credentials") ?: policy.optJSONObject("fallback")
             val credentials = withTimeout(3000) {
@@ -78,6 +79,7 @@ internal class NativeMediaController(private val context: Context, private val p
             }
             payload + ("media" to credentials)
         }
+        (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.CREDENTIALS_RESOLVED) }
         currentCoroutineContext().ensureActive(); check(!closed)
         session?.prewarm(resolved) ?: error("Native media adapter unavailable")
     }
@@ -105,6 +107,7 @@ internal class NativeMediaController(private val context: Context, private val p
                         preparation = operations.async { withTimeout(8000) { prepare() } }
                         preparation!!.await()
                     }
+                    (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.PREPARATION_READY) }
                     phase = 2L
                     audioReady()
                     phase = 3L

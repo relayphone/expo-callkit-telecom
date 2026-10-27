@@ -11,6 +11,13 @@ provider = result.get("provider", "livekit")
 assert provider in ("livekit", "webrtc")
 expected_sources = {"push", "fetcher"} if provider == "livekit" else {"fetcher", "livekitPush"}
 assert {sample["credentials"] for sample in result["samples"]} == expected_sources
+samples_per_path = result.get("samplesPerPath", 1)
+assert len(result["samples"]) == len(expected_sources) * samples_per_path
+for source in expected_sources:
+    selected = [sample for sample in result["samples"] if sample["credentials"] == source]
+    assert len(selected) == samples_per_path
+    if samples_per_path > 1:
+        assert {sample["sampleIndex"] for sample in selected} == set(range(1, samples_per_path + 1))
 for sample in result["samples"]:
     assert sample["highPriority"] is True
     assert sample["pushNanos"] <= sample["reportedNanos"]
@@ -26,7 +33,7 @@ for sample in result["samples"]:
     assert sample["preanswerCapture"] is False
     print(f'{sample["credentials"]}: native answer to remote PCM {elapsed:.1f} ms (target {result["targetMs"]} ms)')
 assert result["jsJoinHandlerCalls"] == 0
-assert result["jsWarmRequests"] == len(expected_sources) + 4
+assert result["jsWarmRequests"] == len(expected_sources) * samples_per_path + 4
 assert set(result["cleanup"]) == {"hold-capture-stopped-resumed", "declined", "unanswered", "404", "410"}
 
 if provider == "webrtc":
