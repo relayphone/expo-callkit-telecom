@@ -76,3 +76,8 @@ independently verify Core removal; raw dumps are not uploaded. These artifacts m
 
 References: [Android caller-filter API](https://developer.android.com/reference/android/app/NotificationManager#matchesCallFilter(android.net.Uri)),
 [Android15 policy behavior](https://developer.android.com/about/versions/15/behavior-changes-15#dnd-changes).
+
+The [typed-caller three-sample study](../research/focus/android-results.md)
+separates platform and production native lanes with fresh caller identities.
+It records the full contact/starred/repeat matrix and compares it with the pinned
+iPhone Focus results and host-controlled breakthrough RFC.
