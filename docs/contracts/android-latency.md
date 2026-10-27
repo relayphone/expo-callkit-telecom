@@ -71,9 +71,10 @@ pre-warmed cleanup journeys remain part of the same CI qualification.
 
 The [completed before/after comparison](./android-latency-results.md) and
 [checked JSON](./android-latency-results.json) retain all five values per path,
-phase statistics and artifact hashes. All 20 optimized samples meet 300 ms:
-LiveKit 159.65–186.27 ms and WebRTC 160.39–189.06 ms. The observed minimum is
-159.65 ms; no fundamental emulator floor is inferred. The 3 s failure bound is
+phase statistics and artifact hashes. All 20 primary-comparison optimized samples
+meet 300 ms: LiveKit 159.65–186.27 ms and WebRTC 160.39–189.06 ms. A separate
+merged-source verification also passes all 20 attempts, spanning 150.30–251.31 ms;
+its values remain separate from the comparison. No fundamental emulator floor is inferred. The 3 s failure bound is
 unchanged. Raw WebRTC already met the target in this controlled baseline, so no
 raw median improvement is claimed. Earlier answers still wait for preparation;
 this result applies after PREJOINED.
