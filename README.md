@@ -10,7 +10,7 @@ identify a published v2 release.
 | Platform | v2 status |
 | --- | --- |
 | Android | Implemented on this branch: Core-Telecom, native FCM intake, native answer/pre-warm, typed incoming outcomes and server-end signals. Emulator and release Expo journeys are checked in CI. |
-| iOS | **Pending M3.5.** [Draft adapter spike #33](https://github.com/ziahamza/expo-callkit-telecom/pull/33) validates native/contract seams; full Expo/media composition is unmerged. The legacy iOS module is not a shipped v2 implementation. |
+| iOS | **Pending M3.5.** [Draft adapter spike #33](https://github.com/relayphone/expo-callkit-telecom/pull/33) validates native/contract seams; full Expo/media composition is unmerged. The legacy iOS module is not a shipped v2 implementation. |
 
 Start with the [v1 → v2 migration guide](docs/migrating-v1-to-v2.md) and
 [Android quick-start](docs/android-quick-start.md). They cover:
@@ -35,7 +35,7 @@ launch/acoustic latency, and does not establish production percentiles.
 
 The remaining README preserves upstream v1 installation, API and platform
 examples. They are not v2 instructions. **iOS v2 remains pending M3.5** in
-[#33](https://github.com/ziahamza/expo-callkit-telecom/pull/33).
+[#33](https://github.com/relayphone/expo-callkit-telecom/pull/33).
 
 > An Expo module — written in Swift and Kotlin — that wraps **CallKit** on iOS and **Jetpack Core-Telecom** on Android with API parity. It owns the system call UI, the audio session, and VoIP push — your app owns the media (LiveKit, plain WebRTC, etc.).
 

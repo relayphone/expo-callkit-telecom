@@ -2,7 +2,7 @@
 
 This guide covers the fork's Android conversations API on branch `v2`. It is a
 breaking change from upstream expo-callkit-telecom v1, with no compatibility shim.
-**iOS v2 is pending M3.5** in [draft PR #33](https://github.com/ziahamza/expo-callkit-telecom/pull/33);
+**iOS v2 is pending M3.5** in [draft PR #33](https://github.com/relayphone/expo-callkit-telecom/pull/33);
 the legacy iOS module still present in this tree does not implement the v2 port.
 Keep an existing iOS integration on v1 until the new SDK composition is qualified.
 
@@ -45,14 +45,14 @@ Incoming conversation UUIDs use UUIDv5 with namespace
 Do not trim or case-fold that server identity. Outgoing IDs are returned by
 `startConversation`; applications should treat both kinds as opaque native IDs.
 `eventId` still identifies a transport delivery for deduplication, not a second
-genuine call. The accepted [RFC](https://github.com/ziahamza/expo-callkit-telecom/blob/v2/rfcs/0001-v2-conversations-api.md) and
-[current types](https://github.com/ziahamza/expo-callkit-telecom/blob/v2/src/conversations/types.ts)
+genuine call. The accepted [RFC](https://github.com/relayphone/expo-callkit-telecom/blob/v2/rfcs/0001-v2-conversations-api.md) and
+[current types](https://github.com/relayphone/expo-callkit-telecom/blob/v2/src/conversations/types.ts)
 describe the full model.
 
 ## Map the v1 API
 
 The left column comes from the
-[v1 source](https://github.com/ziahamza/expo-callkit-telecom/blob/bc335010313712617ffe690ac10936309b0a6e26/src/Calls.ts).
+[v1 source](https://github.com/relayphone/expo-callkit-telecom/blob/bc335010313712617ffe690ac10936309b0a6e26/src/Calls.ts).
 The right column is the current Android v2 runtime, except the explicitly pending
 iOS dial-intent replacement.
 
@@ -75,7 +75,7 @@ iOS dial-intent replacement.
 | `setRTCAudioSessionConfiguration`, `prepareAudioSessionForCall`, `restoreAudioSession` | Remove JS audio-session ownership. Native media adapters coordinate activation and teardown with Core-Telecom. |
 | `getCaptureSession` | No equivalent v2 export. The host manages permission/UI needs; conversation state is not a camera-permission API. |
 | `registerVoIPPush`, `getVoIPPushToken`, `useVoIPPushToken`, `addVoIPPushTokenUpdatedListener` | Native registration starts at launch; use `usePushToken()` or the `pushTokenUpdated` hook event. `{ token, type: "APNS_VOIP" / "FCM" }` becomes `{ value, type: "apns-voip" / "fcm" }`, or `null`. |
-| `addCallIntentReceivedListener` | Shared replacement: `useConversationEvent("dialRequest", ...)`. **iOS v2 pending M3.5**: [#33](https://github.com/ziahamza/expo-callkit-telecom/pull/33); this is not a shipped v2 Recents/Siri integration. |
+| `addCallIntentReceivedListener` | Shared replacement: `useConversationEvent("dialRequest", ...)`. **iOS v2 pending M3.5**: [#33](https://github.com/relayphone/expo-callkit-telecom/pull/33); this is not a shipped v2 Recents/Siri integration. |
 
 Hooks belong in components; the v1 imperative `add*Listener` helpers are not
 compatibility aliases. Register the one `setConversationHandler` at module scope,
@@ -184,7 +184,7 @@ real-media fixtures and cleanup requirements.
 
 ## iOS v2 — pending M3.5
 
-**Pending M3.5:** [draft #33](https://github.com/ziahamza/expo-callkit-telecom/pull/33)
+**Pending M3.5:** [draft #33](https://github.com/relayphone/expo-callkit-telecom/pull/33)
 qualifies a native adapter/contract spike against the SDK's private branch. It is
 not merged or shipped full Expo runtime composition. Typed outcomes, routes,
 server-end bridge/event exposure, foreground report prewarm and named native
@@ -196,4 +196,4 @@ for the legacy iOS16 v1 module. Do not register both providers.
 The independent iPhone LCK Focus experiment observed app allowance working while
 its person/repeat rows remained filtered. That is SDK research, not a shipped
 v2 Focus feature or a global Focus-state getter. Keep iOS rollout, push/media
-configuration and parity claims pending the [M3.5 bridge gate](https://github.com/ziahamza/expo-callkit-telecom/pull/33).
+configuration and parity claims pending the [M3.5 bridge gate](https://github.com/relayphone/expo-callkit-telecom/pull/33).

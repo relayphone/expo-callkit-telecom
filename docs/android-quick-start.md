@@ -2,7 +2,7 @@
 
 This guide uses the fork's **`v2` branch**, not a published npm v2 release.
 Android uses Core-Telecom and native FCM intake. **iOS v2 is pending M3.5**;
-the [draft adapter spike #33](https://github.com/ziahamza/expo-callkit-telecom/pull/33)
+the [draft adapter spike #33](https://github.com/relayphone/expo-callkit-telecom/pull/33)
 does not ship full iOS runtime/media integration. For API replacements and
 breaking changes, start with [Migrating from v1](./migrating-v1-to-v2.md).
 
@@ -26,7 +26,7 @@ selection. `useAudioRoutes()` shows the current route; request an available rout
 with `selectAudioRoute(route.id)` and observe the actual result rather than
 assuming the request changed audio output. The deep link
 `conversations-example://journey` runs the same journey. See
-[the example journey instructions](https://github.com/ziahamza/expo-callkit-telecom/blob/v2/example/client/V2-JOURNEYS.md).
+[the example journey instructions](https://github.com/relayphone/expo-callkit-telecom/blob/v2/example/client/V2-JOURNEYS.md).
 
 The checked-in example deliberately chooses `joinPolicy: { type: "handler" }`
 and registers its handler at module scope, before React mounts. Its signaling
@@ -38,7 +38,7 @@ separately by the instrumentation fixture below.
 For real FCM delivery, configure the example's Firebase Android application and
 `example/client/google-services.json`, rebuild, and use the `fcm` token from
 `usePushToken()` (`{ type: "fcm", value }`). Follow the
-[example sender setup](https://github.com/ziahamza/expo-callkit-telecom/blob/v2/example/server/README.md) for the service account and
+[example sender setup](https://github.com/relayphone/expo-callkit-telecom/blob/v2/example/server/README.md) for the service account and
 device token. Its Android sender uses high-priority data messages:
 
 ```sh
@@ -201,10 +201,10 @@ test failure bound is 3,000 ms. These samples establish neither a production
 percentile nor a fixed emulator floor. Full method, phase timings and source-hashed
 JSON are linked from the results page.
 
-The existing [v2 Android workflow](https://github.com/ziahamza/expo-callkit-telecom/blob/v2/.github/workflows/v2-android.yml) reproduces
+The existing [v2 Android workflow](https://github.com/relayphone/expo-callkit-telecom/blob/v2/.github/workflows/v2-android.yml) reproduces
 native media, privacy/hold/cleanup, DND controls and the 20-sample benchmark on a CI
 emulator; it exercises production native FCM intake with a synthetic envelope,
-not cloud delivery. The [release example workflow](https://github.com/ziahamza/expo-callkit-telecom/blob/v2/.github/workflows/v2-example.yml)
+not cloud delivery. The [release example workflow](https://github.com/relayphone/expo-callkit-telecom/blob/v2/.github/workflows/v2-example.yml)
 separately runs the media-free Expo journey. No large local SDK installation is
 needed to inspect the checked results.
 
@@ -221,7 +221,7 @@ exact `tel:` handles matched against actual contacts. It observes ringtone
 playback, not physical sound. The linked pinned iPhone research has one sample
 per measured row and no acoustic/haptic or CallKit qualification; app allowance
 did admit its tested LCK calls. Neither result is a universal platform guarantee.
-**iOS v2 remains pending M3.5** ([draft #33](https://github.com/ziahamza/expo-callkit-telecom/pull/33));
+**iOS v2 remains pending M3.5** ([draft #33](https://github.com/relayphone/expo-callkit-telecom/pull/33));
 those iPhone findings are SDK research, not shipped fork behavior.
 
 On Android the host can read `NotificationManager.currentInterruptionFilter`

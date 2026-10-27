@@ -2,7 +2,7 @@
 
 All six native samples met their separate budgets: SDK/notification/Core completion stayed below 1,000 ms; visible caller-card absence was observed in 1,834.40–1,935.22 ms against a 3,000 ms UI budget. These are controlled emulator observations, not production percentiles or a universal dismissal floor.
 
-- Source: [b1af396992b0869a3c8a85d4b7c9f00934a91f3e](https://github.com/ziahamza/expo-callkit-telecom/commit/b1af396992b0869a3c8a85d4b7c9f00934a91f3e); [native Android run 40464699410](https://github.com/ziahamza/expo-callkit-telecom/actions/runs/40464699410).
+- Source: [b1af396992b0869a3c8a85d4b7c9f00934a91f3e](https://github.com/relayphone/expo-callkit-telecom/commit/b1af396992b0869a3c8a85d4b7c9f00934a91f3e); [native Android run 40464699410](https://github.com/relayphone/expo-callkit-telecom/actions/runs/40464699410).
 - Merged as `c37fb13803da48ba36577100069357db4223b82c`, with a full source tree identical to the qualified head.
 - Environment: API35, x86_64 google_apis, pixel_6 emulator; ubuntu-latest with KVM.
 - Evidence: [checked JSON](./android-answered-elsewhere-results.json); [API/intake and native mapping contract](./android-answered-elsewhere.md). Native JUnit reports 57 tests, 4 expected skips and 0 failures/errors. All nine workflow jobs and automated review on that head completed green before merge.
@@ -44,4 +44,4 @@ These are observer upper bounds including callbacks, Binder traversal, schedulin
 
 The generator ran the exact-head checker before deriving this JSON. All six derived rows, the raw artifact hash and checker/journey/workflow hashes were independently compared with their local sources. Commit/run references are collector-supplied metadata; hashes bind exact bytes. No raw node text, Telecom dumps, screenshots, credentials, tokens or audio are included.
 
-Raw artifact SHA256: `c46f684c0869db88fed8b5d5040dcbe67553cdae141336f2e46700ceee738f56`. Published JSON SHA256: `7561ef50a901f1935c20024c3822708ca31e91f62a79f29f7e90b5847ac0eef7`.
+Raw artifact SHA256: `c46f684c0869db88fed8b5d5040dcbe67553cdae141336f2e46700ceee738f56`. Published JSON SHA256: `4fa185efcd6075832e601eb12fdce85ba55a506c11882fa841013dd310c5a218`.
