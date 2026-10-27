@@ -13,14 +13,17 @@ head:
 hero:
   name: expo-callkit-telecom
   text: CallKit & Core-Telecom for React Native + Expo
-  tagline: One typed API across iOS and Android. VoIP push parsed natively. LiveKit-friendly audio session.
+  tagline: "Fork v2 has an Android conversations API; iOS v2 is pending M3.5 (draft PR #33). The demonstrations below describe upstream v1."
   actions:
     - theme: brand
-      text: Getting started
+      text: Android v2 quick-start
+      link: /android-quick-start
+    - theme: alt
+      text: Upstream v1 guide
       link: /getting-started
     - theme: alt
       text: View on GitHub
-      link: https://github.com/mfairley/expo-callkit-telecom
+      link: https://github.com/ziahamza/expo-callkit-telecom/tree/v2
     - theme: alt
       text: vs react-native-callkeep
       link: /vs-callkeep
@@ -45,6 +48,15 @@ features:
     title: Current platform APIs
     details: '<a href="https://www.swift.org/">Swift</a> on iOS (16.0+), <a href="https://kotlinlang.org/">Kotlin</a> + <a href="https://developer.android.com/jetpack/androidx/releases/core-telecom">androidx.core-telecom</a> on Android (minSdk 26). The path Google and Apple are pushing forward.'
 ---
+
+## Fork v2 rollout
+
+This homepage and its demonstrations describe upstream v1. The fork's `v2`
+branch uses a breaking conversations API on Android: start with the
+[v1 → v2 migration](./migrating-v1-to-v2.md) and
+[Android quick-start](./android-quick-start.md).
+**iOS v2 is pending M3.5**; [draft #33](https://github.com/ziahamza/expo-callkit-telecom/pull/33)
+is an unmerged adapter spike, not a shipped iOS v2 implementation.
 
 ## See it in action on iOS and Android
 
