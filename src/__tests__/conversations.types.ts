@@ -1,4 +1,5 @@
 /* eslint-disable no-void -- Compile-only expressions exercise the public contract. */
+import { receiveCallEnded } from "../api";
 import type {
   ActionContext,
   Conversation,
@@ -13,6 +14,9 @@ import type {
   IncomingCallPayload,
   NativeMediaCredentials,
   Caller,
+  CallEndedPayload,
+  ConversationEventMap,
+  EndedReason,
 } from "../conversations";
 
 declare const api: ConversationsApi;
@@ -176,3 +180,49 @@ const obsoleteCaller: Caller = {
   id: "legacy",
 };
 void obsoleteCaller;
+
+// Match SDK #159's host/server end input and acceptance result.
+const endedShape: Same<
+  CallEndedPayload,
+  {
+    eventId: string;
+    serverCallId: string;
+    reason: Exclude<EndedReason, "local">;
+  }
+> = true;
+const receiveEndedSignature: Same<
+  typeof receiveCallEnded,
+  (payload: CallEndedPayload) => Promise<boolean>
+> = true;
+void endedShape;
+void receiveEndedSignature;
+const ended: CallEndedPayload = {
+  eventId: "end-event",
+  serverCallId: "server-call",
+  reason: "answeredElsewhere",
+};
+const accepted: Promise<boolean> = api.receiveCallEnded(ended);
+void accepted;
+const localEnd: CallEndedPayload = {
+  eventId: "local-event",
+  serverCallId: "server-call",
+  // @ts-expect-error A local hangup uses endConversation, not a server signal.
+  reason: "local",
+};
+void localEnd;
+const answeredEvent: ConversationEventMap["answeredElsewhere"] = {
+  conversationId: id,
+  serverCallId: "server-call",
+  eventId: "end-event",
+};
+void answeredEvent;
+native.addListener("conversationEvent", (event) => {
+  if (event.type === "answeredElsewhere") {
+    const nativeID: ConversationId = event.payload.conversationId;
+    const eventID: string = event.payload.eventId;
+    const serverID: string = event.payload.serverCallId;
+    void nativeID;
+    void eventID;
+    void serverID;
+  }
+});

@@ -26,6 +26,7 @@ class NativeCallPush(private val engine: ConversationEngine, private val warmJav
         NativeMediaSignals.emit(serverId, NativeMediaStage.PUSH_RECEIVED, mapOf("highPriority" to if (highPriority) 1L else 0L))
         val outcome = engine.incoming(payload)
         if (outcome["status"] == "reported" &&
+            engine.canWarmIncoming(outcome["id"] as String) &&
             (engine.policy.optString("type", "native") != "native" || engine.policy.optBoolean("prewarm", true))) {
             NativeMediaSignals.emit(serverId, NativeMediaStage.JS_WARM_STARTED)
             warmJavaScript()

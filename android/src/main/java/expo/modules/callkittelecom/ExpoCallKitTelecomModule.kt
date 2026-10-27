@@ -52,6 +52,7 @@ class ExpoCallKitTelecomModule : Module() {
         AsyncFunction("getAudioRoutes") Coroutine { -> command { engine.audioRoutes() } }
         AsyncFunction("getPushToken") Coroutine { -> command { engine.pushTokenSnapshot() } }
         AsyncFunction("reportIncomingConversation") Coroutine { payload: Map<String, Any?> -> command { engine.incoming(payload) } }
+        AsyncFunction("receiveCallEnded") Coroutine { payload: Map<String, Any?> -> command { engine.receiveCallEnded(payload) } }
         AsyncFunction("startConversation") Coroutine { options: Map<String, Any?> -> command { engine.start(options) } }
         AsyncFunction("joinConversation") Coroutine { id: String -> command { engine.join(id) } }
         AsyncFunction("endConversation") Coroutine { id: String -> command { engine.end(id) } }
