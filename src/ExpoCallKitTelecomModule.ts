@@ -17,6 +17,7 @@ const commands = new Set<PropertyKey>([
   "mergeConversations",
   "reportConversation",
   "reportIncomingConversation",
+  "receiveCallEnded",
   "selectAudioRoute",
 ]);
 export default new Proxy(native, {

@@ -135,5 +135,7 @@ export const mergeConversations = bridge.mergeConversations.bind(bridge);
 export const reportIncomingConversation =
   bridge.reportIncomingConversation.bind(bridge);
 export const reportConversation = bridge.reportConversation.bind(bridge);
+/** Accept a backend/host end signal for a known incoming conversation. @category Reports */
+export const receiveCallEnded = bridge.receiveCallEnded.bind(bridge);
 /** Request an available native endpoint. @category Audio */
 export const selectAudioRoute = bridge.selectAudioRoute.bind(bridge);

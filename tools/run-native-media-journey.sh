@@ -28,11 +28,14 @@ collect_media_results() {
       pull_result "$result" "$build/$result.json" || true
     done
   fi
+  pull_result answered-elsewhere-results "$build/answered-elsewhere-results.json" || true
 }
 trap collect_media_results EXIT
 gradle -p android/instrumentation :connectedDebugAndroidTest -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true --stacktrace
 pull_result journey-results "$build/journey-results.json"
 python3 tools/check-android-journey.py "$build/journey-results.json"
+pull_result answered-elsewhere-results "$build/answered-elsewhere-results.json"
+python3 tools/check-answered-elsewhere.py "$build/answered-elsewhere-results.json"
 pull_result native-media-results "$build/native-media-results.json"
 pull_result native-webrtc-results "$build/native-webrtc-results.json"
 full_results_saved=true

@@ -3,10 +3,10 @@ name: v2 Android
 on:
   pull_request:
     branches: [v2]
-    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
+    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
   push:
     branches: [v2]
-    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', '.github/workflows/v2-android.yml']
+    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
 
 permissions:
   contents: read
@@ -64,6 +64,7 @@ jobs:
           path: |
             android/instrumentation/build/outputs/androidTest-results/**/*.xml
             android/instrumentation/build/journey-results.json
+            android/instrumentation/build/answered-elsewhere-results.json
             android/instrumentation/build/native-media-results.json
             android/instrumentation/build/native-webrtc-results.json
             android/instrumentation/build/native-latency-livekit.json
