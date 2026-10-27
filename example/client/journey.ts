@@ -20,7 +20,7 @@ export async function runJourney(): Promise<readonly string[]> {
     const stamp = Date.now().toString();
     const incoming = await reportIncomingConversation({
       eventId: `example-event-${stamp}`, serverCallId: `example-call-${stamp}`,
-      caller: { id: "example-caller", displayName: "Example caller" }, hasVideo: false,
+      caller: { handleType: "generic", value: "example-caller", displayName: "Example caller" }, hasVideo: false,
     });
     if (incoming.status !== "reported") throw new Error(`Incoming report: ${incoming.status}`);
     const id = incoming.id;

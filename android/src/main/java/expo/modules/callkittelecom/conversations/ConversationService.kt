@@ -40,9 +40,12 @@ class ConversationService : Service() {
                 Intent(context, ConversationReceiver::class.java).setAction(name).putExtra("id", id),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val member = (state["members"] as? List<*>)?.firstOrNull() as? Map<*, *>
-            val callerUri = callerAddress(context, member)?.toString()
-            val person = Person.Builder().setUri(callerUri).setName(member
-                ?.get("displayName")?.toString() ?: "Caller").setImportant(true).build()
+            val payload = state["payload"] as? Map<*, *>
+            val caller = (payload?.get("caller") as? Map<*, *>)?.let(NativeCaller::parse)
+            val callerUri = caller?.address()?.toString() ?: callerAddress(context, member)?.toString()
+            val person = Person.Builder().setUri(callerUri).setKey(caller?.hostContactID)
+                .setName(caller?.displayName ?: member?.get("displayName")?.toString() ?: "Caller")
+                .setImportant(true).build()
             val builder = NotificationCompat.Builder(context, channelId)
                 .addPerson(person)
                 .setSmallIcon(android.R.drawable.sym_call_incoming).setOngoing(true).setOnlyAlertOnce(true)

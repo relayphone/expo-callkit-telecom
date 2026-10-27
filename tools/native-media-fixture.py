@@ -96,7 +96,7 @@ async def invitation(request):
         return web.Response(status=401)
     server_id = request.match_info["server_id"]
     payload = {"eventId": "event-" + server_id, "serverCallId": server_id,
-               "caller": {"id": "fixture-caller", "displayName": "Fixture caller"}, "hasVideo": False}
+               "caller": {"handleType": "generic", "value": "fixture-caller", "displayName": "Fixture caller"}, "hasVideo": False}
     if request.query.get("media") == "1":
         payload["media"] = await credentials(server_id)
     return web.json_response(payload)

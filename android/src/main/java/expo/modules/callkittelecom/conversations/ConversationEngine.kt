@@ -126,11 +126,12 @@ class ConversationEngine(val context: Context) {
     }
 
     @Suppress("UNCHECKED_CAST")
-    suspend fun incoming(payload: Map<String, Any?>): Map<String, Any?> {
-        val eventId = payload["eventId"] as? String ?: return failure("invalid_arguments")
-        val serverId = payload["serverCallId"] as? String ?: return failure("invalid_arguments")
-        val caller = payload["caller"] as? Map<String, Any?> ?: return failure("invalid_arguments")
-        if (eventId.isBlank() || serverId.isBlank() || (caller["id"] as? String).isNullOrBlank()) return failure("invalid_arguments")
+    suspend fun incoming(input: Map<String, Any?>): Map<String, Any?> {
+        val eventId = input["eventId"] as? String ?: return failure("invalid_arguments")
+        val serverId = input["serverCallId"] as? String ?: return failure("invalid_arguments")
+        val caller = (input["caller"] as? Map<*, *>)?.let(NativeCaller::parse) ?: return failure("invalid_arguments")
+        if (eventId.isBlank() || serverId.isBlank()) return failure("invalid_arguments")
+        val payload = input + ("caller" to caller.asPayload())
         val now = android.os.SystemClock.elapsedRealtime()
         recent.entries.removeAll { now - it.value.first > 120_000 }
         val duplicate = recent["event:$eventId"] ?: recent["call:$serverId"]
@@ -141,7 +142,7 @@ class ConversationEngine(val context: Context) {
         val pending = CompletableDeferred<Map<String, Any?>>()
         incomingTasks["event:$eventId"] = pending; incomingTasks["call:$serverId"] = pending
         val outcome = try {
-            add(id, caller, payload["hasVideo"] == true, payload)
+            add(id, caller.asParticipant(), payload["hasVideo"] == true, payload, caller.coreAddress())
             val appFilter = incomingPolicy.custom(payload)
             val filter = appFilter ?: incomingPolicy.system(payload)
             call(id).permitted.complete(filter == null)
@@ -216,7 +217,7 @@ class ConversationEngine(val context: Context) {
         try { action(id, "start", "app") } catch (e: Exception) { finish(id, "failed"); throw e }
         return id
     }
-    private suspend fun add(id: String, member: Map<String, Any?>, video: Boolean, payload: Map<String, Any?>?) {
+    private suspend fun add(id: String, member: Map<String, Any?>, video: Boolean, payload: Map<String, Any?>?, address: Uri? = null) {
         val incoming = payload != null
         val call = Call(linkedMapOf("id" to id, "direction" to if (incoming) "incoming" else "outgoing",
             "status" to if (incoming) "ringing" else "dialing", "members" to listOf(member),
@@ -232,7 +233,7 @@ class ConversationEngine(val context: Context) {
             "cached" to if (preferredEndpoint != null) 1L else 0L,
             "type" to (preferredEndpoint?.type?.toLong() ?: 0L),
             "availableCount" to startingEndpoints.size.toLong()))
-        val attributes = CallAttributesCompat((member["displayName"] ?: handle).toString(), Uri.fromParts("sip", handle, null),
+        val attributes = CallAttributesCompat((member["displayName"] ?: handle).toString(), address ?: Uri.fromParts("sip", handle, null),
             if (incoming) CallAttributesCompat.DIRECTION_INCOMING else CallAttributesCompat.DIRECTION_OUTGOING,
             if (video) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL,
             CallAttributesCompat.SUPPORTS_SET_INACTIVE, preferredStartingCallEndpoint = preferredEndpoint)

@@ -12,6 +12,7 @@ import type {
   JoinPolicy,
   IncomingCallPayload,
   NativeMediaCredentials,
+  Caller,
 } from "../conversations";
 
 declare const api: ConversationsApi;
@@ -43,7 +44,7 @@ conversation.members.push({ id: "someone" });
 void api.reportIncomingConversation({
   eventId: "e",
   serverCallId: "s",
-  caller: { id: "p" },
+  caller: { handleType: "generic", value: "p", displayName: "Caller" },
   hasVideo: false,
   // @ts-expect-error Payload metadata is JSON, not arbitrary class instances.
   metadata: { date: new Date() },
@@ -115,7 +116,7 @@ void handlerPolicy;
 const invitation: IncomingCallPayload = {
   eventId: "event",
   serverCallId: "call",
-  caller: { id: "owner" },
+  caller: { handleType: "generic", value: "owner", displayName: "Owner" },
   hasVideo: false,
   media: {
     provider: "livekit",
@@ -153,3 +154,25 @@ const nativeHttpPolicy: JoinPolicy = {
   },
 };
 void nativeHttpPolicy;
+
+// Match the SDK #150 public input shape, including mutability and optional host ID.
+type Same<Left, Right> = (<T>() => T extends Left ? 1 : 2) extends <
+  T
+>() => T extends Right ? 1 : 2
+  ? true
+  : false;
+const callerShape: Same<
+  Caller,
+  {
+    handleType: "phone" | "email" | "generic";
+    value: string;
+    displayName: string;
+    hostContactID?: string;
+  }
+> = true;
+void callerShape;
+const obsoleteCaller: Caller = {
+  // @ts-expect-error Incoming callers no longer use the Participant id child.
+  id: "legacy",
+};
+void obsoleteCaller;
