@@ -91,6 +91,13 @@ export type EndedReason =
   | "answeredElsewhere"
   | "declinedElsewhere";
 
+/** A backend/host ownership signal; local hangs up through endConversation instead. @category Reports */
+export interface CallEndedPayload {
+  eventId: string;
+  serverCallId: string;
+  reason: Exclude<EndedReason, "local">;
+}
+
 /** Operations the system supports for this conversation. @category State */
 export interface ConversationCapabilities {
   readonly hold: boolean;
@@ -361,6 +368,12 @@ export interface ConversationEventMap {
   readonly audioActivationFailed: { readonly conversationId: ConversationId };
   readonly pushTokenUpdated: PushToken | null;
   readonly dialRequest: { readonly handle: string; readonly video: boolean };
+  /** Correlated server ownership signal, emitted after the terminal conversation snapshot. */
+  readonly answeredElsewhere: {
+    conversationId: ConversationId;
+    serverCallId: string;
+    eventId: string;
+  };
   readonly providerReset: Record<string, never>;
   readonly providerOwnershipLost: Record<string, never>;
 }
@@ -396,5 +409,7 @@ export interface ConversationsApi {
   reportIncomingConversation(
     payload: IncomingCallPayload
   ): Promise<IncomingConversationOutcome>;
+  /** Accept a known incoming call's server end signal; observe state/events for completion. */
+  receiveCallEnded(payload: CallEndedPayload): Promise<boolean>;
   selectAudioRoute(id: string): Promise<void>;
 }

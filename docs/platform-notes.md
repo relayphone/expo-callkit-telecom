@@ -56,7 +56,7 @@ A complete working setup ships in the example app: `example/client/` sets `andro
 
 ### Ending a call from the server
 
-The reverse direction has the same problem. If the caller hangs up while the callee's phone is still ringing, a killed app has no way to act on it: the ring was reported natively, so there is no JS observer to call `reportCallEnded`, and the phone rings on until `incomingCallTimeout`.
+If the caller hangs up or another endpoint answers, the backend can stop a known incoming conversation without waiting for JavaScript. Send a `callEnded` FCM data message, or call `receiveCallEnded({ eventId, serverCallId, reason })` from the host.
 
 Send a second FCM data message and the module ends the call natively:
 
@@ -67,11 +67,11 @@ Send a second FCM data message and the module ends the call natively:
 }
 ```
 
-`eventId` is required and must be unique per push, like the `eventId` on `IncomingCallEvent`: the module drops a repeat delivery of the same `eventId`, so a redelivered `callEnded` can't end a later ring for the same call. `serverCallId` is the one you set on the `IncomingCallEvent` when you started the call. `reason` is optional and takes any `CallEndedReason` (`remoteEnded`, `answeredElsewhere`, `declinedElsewhere`, `unanswered`, `failed`, `unknown`); it defaults to `remoteEnded`, and an unrecognized value falls back to `remoteEnded` with a warning in logcat.
+`eventId` and `serverCallId` are required. End event IDs are deduplicated for two minutes before lookup, including unknown calls. Unknown signals create no future-call tombstone. The wire reason defaults to `remoteEnded` when missing, local, or unrecognized; recognized remote reasons are `remoteEnded`, `answeredElsewhere`, `declinedElsewhere`, `unanswered`, and `failed`. The typed host API requires a non-local `EndedReason`; local hangups use `endConversation`.
 
-The module looks up the session reported for that `serverCallId` and ends it through the same path as `reportCallEnded` from JS: the system call UI is dismissed and JS (if it's running) receives `onCallReportedEnded` with the `reason`. It does **not** check the call's state, so a `callEnded` for a call this device has already answered hangs it up — only send it for calls the device should stop. A `serverCallId` with no session on the device (already ended, or never delivered) is ignored.
+The signal targets retained incoming ownership for the exact `serverCallId`, including an admission still in flight. It bypasses the End handler and does not require ringing status, so the server must send it only when this device should stop. For `answeredElsewhere`, an ended SDK snapshot precedes the correlated `answeredElsewhere` event carrying `conversationId`, `serverCallId`, and `eventId`. The host promise returns acceptance, not completed platform or UI dismissal.
 
-These messages are consumed by the module and are never passed on to `expo-notifications`, so they don't reach notification listeners or background notification tasks; react to `onCallReportedEnded` instead. On a killed app that event is delivered through the call-event broadcast above.
+These messages are consumed by the module and are never passed on to `expo-notifications`. Native cleanup works without a JS listener; registered JS listeners can use `useConversationEvent("answeredElsewhere", listener)`. The [Android answered-elsewhere contract](contracts/android-answered-elsewhere.md) documents retention, the API34+ native disconnect-code limit, and visible SystemUI dismissal checks.
 
 The example server sends it with `bun send-test-push.ts --end --serverCallId call-123 [--reason answeredElsewhere]`.
 
