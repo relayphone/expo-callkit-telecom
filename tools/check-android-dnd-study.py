@@ -66,6 +66,31 @@ def expected_allowed(senders, caller, repeat, ordinal):
     return membership or (ordinal == "B" and repeat)
 
 
+def retain_failure(log_path, result_path, lane, run):
+    require(CASE_PATTERN.fullmatch(result_path.name) is not None
+            and result_path.name.startswith(f"dnd-study-{lane}-"), "invalid diagnostic result filename")
+    # Retain only structural failure evidence; never copy messages or raw stack lines.
+    text = ""
+    if log_path.is_file():
+        with log_path.open("rb") as source:
+            text = source.read(65_536).decode("utf-8", errors="replace")
+    classes = re.findall(r"\b((?:org\.junit|junit|java|javax|kotlin|kotlinx|android|androidx|expo\.modules\.callkittelecom)\.[A-Za-z_$][A-Za-z0-9_.$]*(?:Error|Exception))\b", text)
+    diagnostic = {"exceptionClasses": list(dict.fromkeys(classes))[:6],
+                  "testMethodMustReturnVoid": "Method typedCallerPolicyPair() should be void" in text,
+                  "statusCodes": [int(value) for value in re.findall(r"^INSTRUMENTATION_STATUS_CODE:\s*(-?\d+)\s*$", text, re.MULTILINE)[:8]],
+                  "resultCodes": [int(value) for value in re.findall(r"^INSTRUMENTATION_CODE:\s*(-?\d+)\s*$", text, re.MULTILINE)[:8]]}
+    try:
+        result = json.loads(result_path.read_text())
+    except (OSError, ValueError):
+        result = None
+    failure = {"schemaVersion": 1, "passed": False, "lane": lane, "run": run,
+               "case": result_path.stem, "instrumentationFailure": diagnostic}
+    if not isinstance(result, dict) or type(result.get("passed")) is not bool:
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        result_path.write_text(json.dumps(failure, indent=2) + "\n")
+    print("DND study diagnostic: " + json.dumps(failure))
+
+
 def check_case(path, lane, run):
     match = CASE_PATTERN.fullmatch(path.name)
     require(match is not None, "unexpected study result filename")
@@ -76,9 +101,9 @@ def check_case(path, lane, run):
                       parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON constant")))
     data = object_value(data, "result")
     require(type(data.get("schemaVersion")) is int and data["schemaVersion"] == 1, "unsupported schemaVersion")
+    require(data.get("passed") is True, "study invocation did not pass")
     require(type(data.get("apiLevel")) is int and data["apiLevel"] == 35
             and type(data.get("targetSdk")) is int and data["targetSdk"] == 35, "API35/target35 evidence required")
-    require(data.get("passed") is True, "study invocation did not pass")
     require(data.get("lane") == lane and data.get("run") == run, "lane/run mismatch")
     require(data.get("senders") == senders and data.get("caller") == caller and data.get("repeat") is repeat,
             "case labels disagree with filename")
@@ -186,12 +211,17 @@ def main():
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--case-file", type=Path)
     source.add_argument("--input-dir", type=Path)
+    source.add_argument("--diagnostic-log", type=Path)
+    parser.add_argument("--result-file", type=Path)
     parser.add_argument("--lane", choices=("platform", "native"), required=True)
     parser.add_argument("--run", required=True)
     args = parser.parse_args()
     try:
         require(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", args.run) is not None, "invalid study run label")
-        if args.case_file is not None:
+        if args.diagnostic_log is not None:
+            require(args.result_file is not None, "diagnostic result path required")
+            retain_failure(args.diagnostic_log, args.result_file, args.lane, args.run)
+        elif args.case_file is not None:
             check_case(args.case_file, args.lane, args.run)
             print(f"DND study pair checked: {args.case_file.stem}")
         else:

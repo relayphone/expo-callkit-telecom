@@ -92,6 +92,9 @@ for sample in 1 2 3; do
           :
         else
           failed_attempts=$((failed_attempts + 1))
+          name="dnd-study-$lane-$senders-$repeat-$caller-$sample"
+          python3 tools/check-android-dnd-study.py --diagnostic-log "$logs/$name.log" \
+            --result-file "$results/$name.json" --lane "$lane" --run "$run_id" || true
           # End a timed-out instrumentation process before the next unique case.
           # This is recovery between attempts, never a retry of the failed case.
           timeout 10s adb shell am force-stop "$app" >/dev/null 2>&1 || true

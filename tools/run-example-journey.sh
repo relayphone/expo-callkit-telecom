@@ -3,8 +3,14 @@ set -euo pipefail
 app_id=com.example.expocallkittelecom
 result_path=/data/user/0/$app_id/files/conversation-journey.json
 # The google_apis test image permits root ADB; the app itself remains a normal release build.
-adb root
-adb wait-for-device
+# adbd can close the root request while it restarts. Verify the resulting
+# device identity rather than treating that transport closure as the outcome.
+timeout 15s adb root >/dev/null 2>&1 || true
+timeout 30s adb wait-for-device
+if [[ "$(timeout 10s adb shell id -u | tr -d '\r')" != 0 ]]; then
+  echo 'The example journey requires the test image to provide root ADB' >&2
+  exit 1
+fi
 adb install -r example-apk/app-release.apk
 adb shell pm grant "$app_id" android.permission.RECORD_AUDIO
 adb shell pm grant "$app_id" android.permission.POST_NOTIFICATIONS

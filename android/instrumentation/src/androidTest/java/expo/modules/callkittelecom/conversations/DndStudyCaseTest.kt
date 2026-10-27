@@ -45,7 +45,7 @@ class DndStudyCaseTest {
     private var stage = "arguments"
     private var partialObservation: Map<String, Any?>? = null
 
-    @Test fun typedCallerPolicyPair() = runBlocking {
+    @Test fun typedCallerPolicyPair(): Unit = runBlocking {
         val args = InstrumentationRegistry.getArguments()
         val laneArgument = args.getString("dndStudyLane")
         // This opt-in study must not expand the ordinary Gradle instrumentation suite.
