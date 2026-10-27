@@ -29,6 +29,11 @@ candidate-pair/ICE and DTLS readiness observations. Stats are polled every 25 ms
 may be cached for 50 ms; request and callback times expose additional scheduling
 uncertainty. These are first-observed states, not exact handshake durations.
 No candidate addresses, certificate data, credentials or raw PCM are retained.
+Physical recording checks compare session identity sets with the idle snapshot,
+monitoring changes from before invitation through cleanup. Android's public list
+is device-wide, so global zero is not an app-specific assertion. Session IDs stay
+only in memory; artifacts contain counts, source/silenced enums and observation
+times. This is delta evidence in an isolated emulator, not UID attribution.
 Overlapping intervals must not be added as if they were sequential phases.
 
 `tools/check-native-media.py` checks ordering, audio authority, PCM content, sample

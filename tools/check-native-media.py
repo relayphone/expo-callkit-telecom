@@ -31,6 +31,9 @@ for sample in result["samples"]:
     assert 0 <= elapsed <= result["budgetMs"]
     assert sample["pcm"]["frames"] > 0 and sample["pcm"]["peak"] >= 128
     assert sample["preanswerCapture"] is False
+    if samples_per_path > 1:
+        assert sample["preanswerRecording"]["newObservedCount"] == 0
+        assert sample["activeRecording"]["newActiveCount"] > 0
     print(f'{sample["credentials"]}: native answer to remote PCM {elapsed:.1f} ms (target {result["targetMs"]} ms)')
 assert result["jsJoinHandlerCalls"] == 0
 assert result["jsWarmRequests"] == len(expected_sources) * samples_per_path + 4
