@@ -3,10 +3,10 @@ name: v2 iOS boundary
 on:
   pull_request:
     branches: [v2]
-    paths: ['apple/**', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', 'tools/run-ios-m35-journeys.py', '.github/workflows/v2-ios-boundary.yml']
+    paths: ['apple/**', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', 'tools/run-ios-m35-journeys.py', 'tools/tests/test_ios_m35_runner.py', '.github/workflows/v2-ios-boundary.yml']
   push:
     branches: [v2]
-    paths: ['apple/**', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', 'tools/run-ios-m35-journeys.py', '.github/workflows/v2-ios-boundary.yml']
+    paths: ['apple/**', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', 'tools/run-ios-m35-journeys.py', 'tools/tests/test_ios_m35_runner.py', '.github/workflows/v2-ios-boundary.yml']
 
 permissions:
   contents: read
@@ -49,6 +49,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+      - name: Check runner inventory selection and failure receipts
+        run: python3 -m unittest discover -s tools/tests -p test_ios_m35_runner.py
       - name: Read pinned SDK revision
         id: sdk
         run: |

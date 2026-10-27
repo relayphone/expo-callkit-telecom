@@ -42,6 +42,18 @@ measured. No Focus or physical-device result is inferred from these tests.
 Foreground `reportIncomingConversation` currently requests no prewarm; that gap
 is preserved as an explicit negative control rather than patched around locally.
 
+Local qualification on October 27, 2026 used Xcode27.1 and iPhone17 Pro / iOS27.0
+arm64: the generic simulator build passed, and each named journey passed once
+with zero failures/skips. The same two journeys also passed through the CI runner
+locally. Test execution durations are not media latency measurements.
+The [draft PR checks](https://github.com/ziahamza/expo-callkit-telecom/pull/33/checks)
+and [lane receipt](https://github.com/ziahamza/expo-callkit-telecom/issues/11#issuecomment-6417788391)
+track completed CI runs and source-hashed artifacts. The first CI attempt
+compiled the adapter but failed before testing: its selected iPhone17 Pro was
+incompatible with the runner's iOS27.1 runtime. That attempt is not a passing
+journey. The runner must select an iPhone from the runtime's advertised supported
+device types rather than assuming a locally available model is compatible.
+
 The [CI runner](../../tools/run-ios-m35-journeys.py) creates and deletes its own
 iOS27 simulator, gives each local subprocess a hard timeout, and checks exact
 test identities, one pass per process and zero failures/skips. Artifacts contain
