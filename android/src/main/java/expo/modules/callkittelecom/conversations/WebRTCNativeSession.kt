@@ -202,13 +202,22 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
     }
     override suspend fun close(reason: String) {
         if (closed) return
-        withContext(worker) {
-            if (closed) return@withContext
-            closed = true
-            scope.coroutineContext.cancelChildren()
-            try { if (exchangeAttempted) withTimeoutOrNull(500) { runCatching { signal(reason) } } }
-            finally { dispose(); emit(NativeMediaStage.CLOSED) }
-        }
-        scope.cancel(); worker.close()
+        try {
+            withContext(worker) {
+                if (closed) return@withContext
+                closed = true
+                val targetServer = serverId
+                val targetUrl = url
+                val authorization = token
+                val terminal = if (exchangeAttempted) mapOf("type" to "state", "state" to reason,
+                    "eventId" to eventId, "serverCallId" to serverId, "negotiationId" to negotiationId) else null
+                scope.coroutineContext.cancelChildren()
+                try { dispose() }
+                finally {
+                    emit(NativeMediaStage.CLOSED)
+                    if (terminal != null) WebRTCTerminalSignal.send(targetServer, targetUrl, authorization, terminal)
+                }
+            }
+        } finally { scope.cancel(); worker.close() }
     }
 }

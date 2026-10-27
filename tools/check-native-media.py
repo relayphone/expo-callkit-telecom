@@ -37,4 +37,7 @@ if provider == "webrtc":
     assert receipt["clients"] == 0 and "declined" in receipt["states"]
     times = receipt["terminalTimes"]
     assert 0 < times["receivedNanos"] <= times["releasedNanos"] <= times["recordedNanos"]
-    print("WebRTC decline: transport closure observed before independent server receipt")
+    acknowledgment = result["declineTerminalSignal"]
+    assert acknowledgment["delivered"] == 1 and acknowledgment["httpErrorStatus"] == 0
+    assert acknowledgment["nanos"] >= result["declineClosedNanos"] > 0
+    print("WebRTC decline: local closure precedes independently acknowledged server receipt")

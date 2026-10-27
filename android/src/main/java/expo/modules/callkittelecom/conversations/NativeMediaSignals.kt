@@ -14,7 +14,8 @@ enum class NativeMediaStage(val value: String) {
     FIRST_AUDIO("firstAudio"), CAPTURE_STARTED("captureStarted"),
     CAPTURE_STOPPED("captureStopped"), PLAYBACK_STARTED("playbackStarted"),
     PLAYBACK_STOPPED("playbackStopped"), REMOTE_SUBSCRIBED("remoteSubscribed"),
-    REMOTE_UNSUBSCRIBED("remoteUnsubscribed"), CLOSED("closed")
+    REMOTE_UNSUBSCRIBED("remoteUnsubscribed"), CLOSED("closed"),
+    TERMINAL_SIGNAL_COMPLETED("terminalSignalCompleted")
 }
 
 /** Native lifecycle observations contain timings/counts, never credentials or audio samples. */

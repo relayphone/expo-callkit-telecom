@@ -47,6 +47,8 @@ class NativeMediaJourneyTest {
             var declineObservation: JSONObject? = null
             var declineFirstZeroObservation: JSONObject? = null
             var declinePendingObserved = false
+            var declineClosedNanos = 0L
+            var declineTerminalSignal: Map<String, Long>? = null
             val owned = mutableSetOf<String>()
             val output = File(context.filesDir, if (provider == "livekit") "native-media-results.json" else "native-webrtc-results.json")
             output.delete()
@@ -164,7 +166,7 @@ class NativeMediaJourneyTest {
                 val declined = incoming(declinedServer, provider == "livekit")
                 stage(declinedServer, NativeMediaStage.PREJOINED)
                 engine.end(declined)
-                absent(declined); stage(declinedServer, NativeMediaStage.CLOSED)
+                absent(declined); declineClosedNanos = stage(declinedServer, NativeMediaStage.CLOSED).elapsedRealtimeNanos
                 val declineState = noClient(declinedServer, if (provider == "webrtc") "declined" else null)
                 if (provider == "webrtc") {
                     assertTrue(declineState.getJSONArray("states").toString().contains("declined"))
@@ -173,6 +175,10 @@ class NativeMediaJourneyTest {
                     val times = declineState.getJSONObject("terminalTimes")
                     assertTrue(times.getLong("receivedNanos") <= times.getLong("releasedNanos"))
                     assertTrue(times.getLong("releasedNanos") <= times.getLong("recordedNanos"))
+                    val acknowledgment = stage(declinedServer, NativeMediaStage.TERMINAL_SIGNAL_COMPLETED)
+                    declineTerminalSignal = acknowledgment.measurements + ("nanos" to acknowledgment.elapsedRealtimeNanos)
+                    assertEquals(1L, acknowledgment.measurements["delivered"])
+                    assertTrue(acknowledgment.elapsedRealtimeNanos >= declineClosedNanos)
                 }
                 assertFalse(events(declinedServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
                 owned -= declined; cleanupResults += "declined"
@@ -202,11 +208,13 @@ class NativeMediaJourneyTest {
                     "pcmThreshold" to 128, "budgetMs" to 3000, "targetMs" to 300, "samples" to results,
                     "cleanup" to cleanupResults, "declineObservation" to declineObservation,
                     "declineFirstZeroObservation" to declineFirstZeroObservation, "declinePendingObserved" to declinePendingObserved,
+                    "declineClosedNanos" to declineClosedNanos, "declineTerminalSignal" to declineTerminalSignal,
                     "jsJoinHandlerCalls" to joinHandlerCalls, "jsWarmRequests" to warmRequests)).toString())
             } } catch (error: Throwable) {
                 output.writeText(JSONObject(mapOf("passed" to false, "stage" to "native-$provider-journey", "samples" to results,
                     "cleanup" to cleanupResults, "declineObservation" to declineObservation,
-                    "declineFirstZeroObservation" to declineFirstZeroObservation, "declinePendingObserved" to declinePendingObserved, "observedStages" to signals.map { mapOf("stage" to it.stage.value,
+                    "declineFirstZeroObservation" to declineFirstZeroObservation, "declinePendingObserved" to declinePendingObserved,
+                    "declineClosedNanos" to declineClosedNanos, "declineTerminalSignal" to declineTerminalSignal, "observedStages" to signals.map { mapOf("stage" to it.stage.value,
                         "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) })).toString())
                 throw error
             } finally {
