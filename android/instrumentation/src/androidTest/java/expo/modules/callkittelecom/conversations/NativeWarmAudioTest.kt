@@ -5,6 +5,8 @@ import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.Closeable
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import livekit.org.webrtc.audio.JavaAudioDeviceModule
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -193,6 +195,52 @@ class NativeWarmAudioTest {
             }
             audio.close()
             assertTrue(withTimeout(2000) { closing.await() }.exceptionOrNull() is CancellationException)
+        }
+    }
+
+    @Test fun zeroOutputAfterReleaseCannotMasqueradeAsAHoldMuteObservation() = runBlocking {
+        withAudio("warm-audio-output-epochs") {
+            fun output(value: Short) {
+                val data = ByteBuffer.allocate(8).order(ByteOrder.nativeOrder()).apply {
+                    repeat(4) { putShort(value) }
+                }.array()
+                audio.onWebRtcAudioTrackSamplesReady(JavaAudioDeviceModule.AudioSamples(
+                    AudioFormat.ENCODING_PCM_16BIT, 1, SAMPLE_RATE, data))
+            }
+            output(0)
+            audio.releaseOutput()
+            output(0) // A valid silence buffer immediately after unmute is not a mute transition.
+            output(512)
+            drainSignals()
+            assertEquals(1, signals.count { it.stage == NativeMediaStage.OUTPUT_MUTED })
+            assertEquals(1, signals.count { it.stage == NativeMediaStage.OUTPUT_FIRST_NONZERO })
+            audio.muteOutput()
+            output(0)
+            drainSignals()
+            val muted = signals.filter { it.stage == NativeMediaStage.OUTPUT_MUTED }
+            assertEquals(2, muted.size)
+            assertNotEquals(muted[0].measurements["epoch"], muted[1].measurements["epoch"])
+            assertFalse(signals.any { it.stage == NativeMediaStage.OUTPUT_BEFORE_AUTHORITY })
+        }
+    }
+
+    @Test fun nonzeroOutputBeforeAuthorityIsReportedAndClosedCallbacksCannotEmitMore() = runBlocking {
+        withAudio("warm-audio-output-before-authority") {
+            val sample = JavaAudioDeviceModule.AudioSamples(AudioFormat.ENCODING_PCM_16BIT,
+                1, SAMPLE_RATE, ByteBuffer.allocate(8).order(ByteOrder.nativeOrder()).apply {
+                    repeat(4) { putShort(512.toShort()) }
+                }.array())
+            audio.onWebRtcAudioTrackSamplesReady(sample)
+            audio.onWebRtcAudioTrackSamplesReady(sample)
+            drainSignals()
+            assertEquals(1, signals.count { it.stage == NativeMediaStage.OUTPUT_BEFORE_AUTHORITY })
+            assertFalse(signals.any { it.stage == NativeMediaStage.OUTPUT_FIRST_NONZERO })
+            val count = signals.size
+            audio.close()
+            audio.releaseOutput()
+            audio.onWebRtcAudioTrackSamplesReady(sample)
+            drainSignals()
+            assertEquals(count, signals.size)
         }
     }
 

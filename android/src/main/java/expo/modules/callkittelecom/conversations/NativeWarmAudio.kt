@@ -17,7 +17,7 @@ import livekit.org.webrtc.audio.JavaAudioDeviceModule
 
 /** Observes real device reads/output and clocks the SDK's recordingless buffer pump. */
 internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallback,
-    JavaAudioDeviceModule.AudioBufferCallback {
+    JavaAudioDeviceModule.AudioBufferCallback, JavaAudioDeviceModule.PlaybackSamplesReadyCallback {
     private class CaptureEpoch(val id: Long, val startedNanos: Long) {
         val ready = CompletableDeferred<Unit>()
     }
@@ -133,7 +133,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         // This pinned SDK copies playback samples using directBuffer.array().
         outputObservationAvailable = ByteBuffer.allocateDirect(8).hasArray()
         if (outputObservationAvailable) {
-            builder.setPlaybackSamplesReadyCallback { samples -> observeOutput(samples) }
+            builder.setPlaybackSamplesReadyCallback(this)
         } else {
             emit(NativeMediaStage.OUTPUT_OBSERVATION_UNAVAILABLE, mapOf("directBufferHasArray" to 0L))
         }
@@ -240,7 +240,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
             "durationNs" to window.durationNanos), window.lastNanos)
     }
 
-    private fun observeOutput(samples: JavaAudioDeviceModule.AudioSamples) {
+    override fun onWebRtcAudioTrackSamplesReady(samples: JavaAudioDeviceModule.AudioSamples) {
         val observedNanos = SystemClock.elapsedRealtimeNanos()
         val epoch = output.get()
         if (closed.get() || samples.audioFormat != AudioFormat.ENCODING_PCM_16BIT) return
@@ -255,7 +255,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         if (output.get() !== epoch || observedNanos < epoch.startedNanos) return
         val measurements = mapOf("epoch" to epoch.id, "peak" to peak.toLong(),
             "sampleRate" to samples.sampleRate.toLong(), "channels" to samples.channelCount.toLong())
-        if (peak == 0 && epoch.mutedObserved.compareAndSet(false, true)) {
+        if (peak == 0 && !epoch.released && epoch.mutedObserved.compareAndSet(false, true)) {
             emit(NativeMediaStage.OUTPUT_MUTED, measurements, observedNanos)
             epoch.mutedReady.complete(Unit)
         } else if (peak > 0 && epoch.released && epoch.nonzeroObserved.compareAndSet(false, true)) {
