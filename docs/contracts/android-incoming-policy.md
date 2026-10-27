@@ -72,8 +72,7 @@ requires prejoin→DND change→filtered outcome, Core removal, native closure,
 server participant departure and no capture. Native blockList/other outcomes and
 deduplication are also checked, including a delayed rejecting filter that exposes
 neither a notification nor an early Answer. Platform CallsManager dump counts
-independently verify Core removal; raw dumps are not uploaded. Qualification is pending until these artifacts
-pass on the exact PR head.
+independently verify Core removal; raw dumps are not uploaded. These artifacts must pass on the exact PR head before merge.
 
 References: [Android caller-filter API](https://developer.android.com/reference/android/app/NotificationManager#matchesCallFilter(android.net.Uri)),
 [Android15 policy behavior](https://developer.android.com/about/versions/15/behavior-changes-15#dnd-changes).

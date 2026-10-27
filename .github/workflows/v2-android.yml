@@ -65,6 +65,7 @@ jobs:
             android/instrumentation/build/outputs/androidTest-results/**/*.xml
             android/instrumentation/build/journey-results.json
             android/instrumentation/build/native-media-results.json
+            android/instrumentation/build/native-webrtc-results.json
             android/instrumentation/build/dnd-results
           if-no-files-found: error
 

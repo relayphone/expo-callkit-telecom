@@ -7,7 +7,10 @@ result = json.loads(Path(sys.argv[1]).read_text())
 assert result["passed"] is True, result
 assert result["metric"] == "native-answer-request-to-first-remote-pcm"
 assert result["pcmThreshold"] == 128
-assert {sample["credentials"] for sample in result["samples"]} == {"push", "fetcher"}
+provider = result.get("provider", "livekit")
+assert provider in ("livekit", "webrtc")
+expected_sources = {"push", "fetcher"} if provider == "livekit" else {"fetcher", "livekitPush"}
+assert {sample["credentials"] for sample in result["samples"]} == expected_sources
 for sample in result["samples"]:
     assert sample["highPriority"] is True
     assert sample["pushNanos"] <= sample["reportedNanos"]
@@ -23,5 +26,5 @@ for sample in result["samples"]:
     assert sample["preanswerCapture"] is False
     print(f'{sample["credentials"]}: native answer to remote PCM {elapsed:.1f} ms (target {result["targetMs"]} ms)')
 assert result["jsJoinHandlerCalls"] == 0
-assert result["jsWarmRequests"] == 6
+assert result["jsWarmRequests"] == len(expected_sources) + 4
 assert set(result["cleanup"]) == {"hold-capture-stopped-resumed", "declined", "unanswered", "404", "410"}

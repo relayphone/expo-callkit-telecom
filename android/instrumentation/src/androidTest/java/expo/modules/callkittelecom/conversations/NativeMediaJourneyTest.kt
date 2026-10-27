@@ -30,7 +30,10 @@ class NativeMediaJourneyTest {
         }
     }
 
-    @Test fun realNativeLiveKitAudioAndCleanup() = runBlocking {
+    @Test fun realNativeLiveKitAudioAndCleanup() = journey("livekit", listOf("push", "fetcher"))
+    @Test fun realNativeWebRTCAudioAndCleanup() = journey("webrtc", listOf("fetcher", "livekitPush"))
+
+    private fun journey(provider: String, sources: List<String>) = runBlocking {
         withContext(Dispatchers.Main) {
             val engine = ConversationEngine.get(context)
             val previousPolicy = engine.policy
@@ -42,14 +45,14 @@ class NativeMediaJourneyTest {
             val results = mutableListOf<Map<String, Any?>>()
             val cleanupResults = mutableListOf<String>()
             val owned = mutableSetOf<String>()
-            val output = File(context.filesDir, "native-media-results.json")
+            val output = File(context.filesDir, if (provider == "livekit") "native-media-results.json" else "native-webrtc-results.json")
             output.delete()
             var warmRequests = 0
             var joinHandlerCalls = 0
             NativeMediaAuthenticationProviders.providers["fixture"] = {
                 NativeMediaAuthentication(settings.getString("authentication"), "fixture-device")
             }
-            engine.policy = JSONObject(mapOf("type" to "native", "media" to "livekit", "credentials" to "fromPush",
+            engine.policy = JSONObject(mapOf("type" to "native", "media" to provider, "credentials" to "fromPush",
                 "fallback" to mapOf("type" to "http", "baseUrl" to settings.getString("baseUrl"), "authentication" to "fixture")))
             engine.actions.resetBridge()
             engine.emit = { name, _ -> if (name == "handlerAction") joinHandlerCalls++ }
@@ -62,7 +65,10 @@ class NativeMediaJourneyTest {
             fun present(id: String) = (engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id }
             suspend fun absent(id: String) = withTimeout(7000) { while (present(id)) delay(10) }
             suspend fun incoming(serverId: String, pushedMedia: Boolean): String {
-                val payload = fixture("/fixture/invitation/$serverId?media=${if (pushedMedia) 1 else 0}")
+                val payload = fixture("/fixture/invitation/$serverId?media=${if (pushedMedia && provider == "livekit") 1 else 0}")
+                if (pushedMedia && provider == "webrtc") payload.put("media", JSONObject(mapOf("provider" to "livekit",
+                    "url" to "wss://unused.invalid", "room" to "unused", "identity" to "fixture", "token" to "unused-fixture",
+                    "expiresAt" to System.currentTimeMillis()/1000 + 120)))
                 val result = entry.handle(mapOf("messageType" to "incomingCall", "incomingCall" to payload.toString()), true)!!
                 assertEquals("reported", result["status"])
                 return (result["id"] as String).also { owned += it }
@@ -73,12 +79,13 @@ class NativeMediaJourneyTest {
                 value
             }
             val stamp = android.os.SystemClock.elapsedRealtime().toString()
+            val prefix = if (provider == "webrtc") "rtc-" else ""
             try { withTimeout(120_000) {
-                for ((index, source) in listOf("push", "fetcher").withIndex()) {
+                for ((index, source) in sources.withIndex()) {
                     // Isolate each measurement from the previous test/call's audio teardown.
                     withTimeout(5000) { while (context.getSystemService(android.media.AudioManager::class.java).mode != android.media.AudioManager.MODE_NORMAL) delay(25) }
-                    val serverId = "timing-$source-$stamp"
-                    val id = incoming(serverId, source == "push")
+                    val serverId = "${prefix}timing-$source-$stamp"
+                    val id = incoming(serverId, source != "fetcher")
                     val prejoined = stage(serverId, NativeMediaStage.PREJOINED)
                     delay(150)
                     assertFalse(events(serverId).any { it.stage in setOf(NativeMediaStage.CAPTURE_STARTED,
@@ -138,18 +145,19 @@ class NativeMediaJourneyTest {
                     engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                     absent(id); stage(serverId, NativeMediaStage.CLOSED); noClient(serverId); owned -= id
                 }
-                val declinedServer = "decline-$stamp"
-                val declined = incoming(declinedServer, true)
+                val declinedServer = "${prefix}decline-$stamp"
+                val declined = incoming(declinedServer, provider == "livekit")
                 stage(declinedServer, NativeMediaStage.PREJOINED)
                 engine.end(declined)
                 absent(declined); stage(declinedServer, NativeMediaStage.CLOSED)
-                noClient(declinedServer)
+                val declineState = noClient(declinedServer)
+                if (provider == "webrtc") assertTrue(declineState.getJSONArray("states").toString().contains("declined"))
                 assertFalse(events(declinedServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
                 owned -= declined; cleanupResults += "declined"
 
                 engine.incomingTimeoutMillis = 3000
-                val timedServer = "timeout-$stamp"
-                val timed = incoming(timedServer, true)
+                val timedServer = "${prefix}timeout-$stamp"
+                val timed = incoming(timedServer, provider == "livekit")
                 stage(timedServer, NativeMediaStage.PREJOINED)
                 absent(timed); stage(timedServer, NativeMediaStage.CLOSED); noClient(timedServer)
                 assertFalse(events(timedServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
@@ -166,14 +174,14 @@ class NativeMediaJourneyTest {
                     assertFalse(events(goneServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
                     owned -= gone; cleanupResults += code.toString()
                 }
-                assertEquals(6, warmRequests)
+                assertEquals(sources.size + 4, warmRequests)
                 assertEquals(0, joinHandlerCalls)
-                output.writeText(JSONObject(mapOf("passed" to true, "metric" to "native-answer-request-to-first-remote-pcm",
+                output.writeText(JSONObject(mapOf("passed" to true, "provider" to provider, "metric" to "native-answer-request-to-first-remote-pcm",
                     "pcmThreshold" to 128, "budgetMs" to 3000, "targetMs" to 300, "samples" to results,
                     "cleanup" to cleanupResults,
                     "jsJoinHandlerCalls" to joinHandlerCalls, "jsWarmRequests" to warmRequests)).toString())
             } } catch (error: Throwable) {
-                output.writeText(JSONObject(mapOf("passed" to false, "stage" to "native-livekit-journey", "samples" to results,
+                output.writeText(JSONObject(mapOf("passed" to false, "stage" to "native-$provider-journey", "samples" to results,
                     "cleanup" to cleanupResults, "observedStages" to signals.map { mapOf("stage" to it.stage.value,
                         "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) })).toString())
                 throw error
