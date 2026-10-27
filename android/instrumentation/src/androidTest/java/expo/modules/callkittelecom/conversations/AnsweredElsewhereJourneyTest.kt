@@ -2,11 +2,13 @@ package expo.modules.callkittelecom.conversations
 
 import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.Person
 import android.graphics.Rect
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -27,6 +29,8 @@ class AnsweredElsewhereJourneyTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
     private fun now() = SystemClock.elapsedRealtimeNanos()
+    @Volatile private var lastUi: Map<String, Any?> = emptyMap()
+    private var expansionAttempts = 0
     private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
         instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }
 
@@ -37,22 +41,45 @@ class AnsweredElsewhereJourneyTest {
             "answerVisible" to answer, "declineVisible" to decline)
     }
 
+    private fun displayState(): Map<String, Any?> = mapOf(
+        "interactive" to context.getSystemService(PowerManager::class.java).isInteractive,
+        "keyguardLocked" to context.getSystemService(KeyguardManager::class.java).isKeyguardLocked)
+
+    /** Emulator boot/build may outlast its screen timeout. Establish UI conditions before ringing. */
+    private suspend fun prepareDisplay() = withContext(Dispatchers.IO) {
+        withTimeout(5000) {
+            shell("timeout -k 1 1 input keyevent KEYCODE_WAKEUP")
+            shell("timeout -k 1 1 wm dismiss-keyguard")
+            while (true) {
+                val state = displayState()
+                lastUi = state + ("expansionAttempts" to expansionAttempts)
+                if (state["interactive"] == true && state["keyguardLocked"] == false) break
+                delay(25)
+            }
+        }
+    }
+
     /** A missing/different active window is inconclusive, never evidence of dismissal. */
     private fun visibleRing(label: String): VisibleRing? {
-        val root = instrumentation.uiAutomation.rootInActiveWindow ?: return null
-        if (root.packageName?.toString() != "com.android.systemui" || root.windowId < 0) return null
+        val root = instrumentation.uiAutomation.rootInActiveWindow
+        lastUi = displayState() + mapOf("rootAvailable" to (root != null),
+            "rootPackage" to root?.packageName?.toString(), "windowId" to root?.windowId,
+            "expansionAttempts" to expansionAttempts)
+        if (root == null || root.packageName?.toString() != "com.android.systemui" || root.windowId < 0) return null
         fun visible(value: String) = root.findAccessibilityNodeInfosByText(value).any { node ->
             val bounds = Rect(); node.getBoundsInScreen(bounds)
             node.isVisibleToUser && !bounds.isEmpty &&
                 (node.text?.toString()?.contains(value) == true || node.contentDescription?.toString()?.contains(value) == true)
         }
         val observed = VisibleRing(root.packageName.toString(), root.windowId, visible(label), visible("Answer"), visible("Decline"))
+        lastUi = lastUi + observed.json()
         if (observed.caller && !observed.present) {
             // Expand the notification's public accessibility affordance if the shade collapsed it.
-            root.findAccessibilityNodeInfosByViewId("android:id/expand_button")
-                .firstOrNull { it.isVisibleToUser && it.isClickable }
-                ?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            val expand = root.findAccessibilityNodeInfosByViewId("android:id/expand_button")
+                .firstOrNull { it.isVisibleToUser && it.isClickable && it.contentDescription?.toString() == "Expand" }
+            if (expand?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) expansionAttempts++
         }
+        lastUi = lastUi + ("expansionAttempts" to expansionAttempts)
         return observed
     }
 
@@ -160,6 +187,9 @@ class AnsweredElsewhereJourneyTest {
             automation.serviceInfo = automation.serviceInfo.apply { flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS }
             try {
                 for (source in listOf("host", "push")) for (index in 1..3) {
+                    expansionAttempts = 0
+                    phase = "$source/$index display-ready"
+                    prepareDisplay()
                     phase = "$source/$index incoming"
                     withTimeout(5000) { while (TelecomEvidence.calls().isNotEmpty()) delay(25) }
                     val key = "elsewhere-$source-$index-${SystemClock.elapsedRealtime()}"
@@ -219,7 +249,8 @@ class AnsweredElsewhereJourneyTest {
                     "pushEntry" to "NativeCallPush.handle (not cloud FCM)")).toString())
             } catch (error: Throwable) {
                 output.writeText(JSONObject(mapOf("passed" to false, "samples" to samples,
-                    "phase" to phase, "failure" to error.javaClass.simpleName)).toString())
+                    "phase" to phase, "failure" to error.javaClass.simpleName,
+                    "uiObservation" to lastUi)).toString())
                 throw error
             } finally {
                 owned?.let { id -> runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) } }
