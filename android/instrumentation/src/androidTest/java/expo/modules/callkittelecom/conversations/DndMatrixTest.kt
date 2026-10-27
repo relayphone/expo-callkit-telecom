@@ -7,7 +7,6 @@ import android.media.AudioAttributes
 import android.media.AudioPlaybackConfiguration
 import android.os.Handler
 import android.os.Looper
-import android.net.Uri
 import android.provider.ContactsContract
 import android.telecom.DisconnectCause
 import androidx.core.telecom.*
@@ -41,9 +40,10 @@ class DndMatrixTest {
         var stage = "contacts"
         try {
         val phone = when (caller) { "contact" -> "+15550001001"; "starred" -> "+15550001002"; "repeat" -> "+15550001003"; else -> "+1555${name.hashCode().toUInt().toString().take(7)}" }
-        val member = if (caller == "opaque") mapOf("id" to "opaque-$name", "displayName" to name)
-            else mapOf("id" to phone, "phoneNumber" to phone, "displayName" to name)
-        val callerUri = callerAddress(context, member)!!
+        val identity = NativeCaller.parse(mapOf("handleType" to (if (caller == "opaque") "generic" else "phone"),
+            "value" to (if (caller == "opaque") "opaque-$name" else phone), "displayName" to name))!!
+        val member = identity.asParticipant()
+        val callerUri = identity.address()
         if (caller in listOf("contact", "starred")) {
             val operations = arrayListOf(
                 ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
@@ -76,10 +76,10 @@ class DndMatrixTest {
             val telecom = CallsManager(context).apply { registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE) }
             DndObservationService.observations.remove(name)
             val raw = scope.launch {
-                try { telecom.addCall(CallAttributesCompat(name, Uri.fromParts("tel", phone, null),
+                try { telecom.addCall(CallAttributesCompat(name, identity.coreAddress(),
                     CallAttributesCompat.DIRECTION_INCOMING, CallAttributesCompat.CALL_TYPE_AUDIO_CALL),
                     onAnswer = {}, onDisconnect = {}, onSetActive = {}, onSetInactive = {}) {
-                    ConversationService.show(context, id, mapOf("status" to "ringing", "members" to listOf(member)))
+                    ConversationService.show(context, id, mapOf("status" to "ringing", "members" to listOf(member), "payload" to mapOf("caller" to identity.asPayload())))
                     ready.complete(this)
                 } } catch (error: Exception) { ready.completeExceptionally(error) }
             }
@@ -121,7 +121,7 @@ class DndMatrixTest {
                 try {
                     engine.policy = JSONObject(mapOf("type" to "handler"))
                     val payload = mapOf("eventId" to "native-$name", "serverCallId" to "native-$name", "hasVideo" to false,
-                        "caller" to (member + ("displayName" to "Native $name")))
+                        "caller" to (identity.asPayload() + ("displayName" to "Native $name")))
                     // The raw first call records repeat-call history. Both assertions above
                     // describe the first call; the library uses Android's current decision.
                     val nativeAllowed = withContext(Dispatchers.IO) { manager.matchesCallFilter(callerUri) }

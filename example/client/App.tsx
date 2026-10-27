@@ -49,7 +49,7 @@ export default function App() {
       <Button title="Report incoming" disabled={busy} onPress={() => void perform(async () => {
         const stamp = Date.now().toString();
         const result = await reportIncomingConversation({ eventId: stamp, serverCallId: `manual-${stamp}`,
-          caller: { id: "caller", displayName: "Example caller" }, hasVideo: false });
+          caller: { handleType: "generic", value: "caller", displayName: "Example caller" }, hasVideo: false });
         if (result.status !== "reported") throw new Error(result.status);
       })} />
       <Button title="Start outgoing" disabled={busy} onPress={() => void perform(async () => {

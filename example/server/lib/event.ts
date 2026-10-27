@@ -1,17 +1,12 @@
 import { randomUUID } from "node:crypto";
+import type { Caller } from "../../../src/conversations/types";
 
 export interface IncomingCallEvent {
   eventId: string;
   serverCallId: string;
   hasVideo: boolean;
   startedAt: string;
-  caller: {
-    id: string;
-    displayName?: string;
-    avatarUrl?: string;
-    phoneNumber?: string;
-    email?: string;
-  };
+  caller: Caller;
   metadata?: Record<string, unknown>;
 }
 
@@ -26,9 +21,12 @@ export interface BuildEventArgs {
 }
 
 export function buildEvent(args: BuildEventArgs = {}): IncomingCallEvent {
-  if (args.phoneNumber && !/^\+[1-9]\d{1,14}$/.test(args.phoneNumber)) {
+  if (
+    args.phoneNumber !== undefined &&
+    !/^\+[1-9]\d{1,14}$/.test(args.phoneNumber)
+  ) {
     throw new Error(
-      `phoneNumber must be E.164 (e.g. +14155551234), got: ${args.phoneNumber}`,
+      `phoneNumber must be E.164 (e.g. +14155551234), got: ${args.phoneNumber}`
     );
   }
   return {
@@ -37,9 +35,9 @@ export function buildEvent(args: BuildEventArgs = {}): IncomingCallEvent {
     hasVideo: args.hasVideo ?? false,
     startedAt: new Date().toISOString(),
     caller: {
-      id: args.callerId ?? "test-caller",
+      handleType: args.phoneNumber ? "phone" : "generic",
+      value: args.phoneNumber ?? args.callerId ?? "test-caller",
       displayName: args.displayName ?? "Test Caller",
-      ...(args.phoneNumber ? { phoneNumber: args.phoneNumber } : {}),
     },
     ...(args.metadata ? { metadata: args.metadata } : {}),
   };

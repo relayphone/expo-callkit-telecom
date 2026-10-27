@@ -21,6 +21,16 @@ export interface Participant {
   readonly email?: string;
 }
 
+/** Host-supplied caller identity. Phone values require an international + country code. @category State */
+export interface Caller {
+  handleType: "phone" | "email" | "generic";
+  /** Phone formatting normalizes to E.164; email/generic values are not reinterpreted. */
+  value: string;
+  displayName: string;
+  /** Opaque identifier in the host contact store, not an operating-system Contacts identifier. */
+  hostContactID?: string;
+}
+
 /**
  * Short-lived credentials for a muted native pre-join, shared by APNs and FCM.
  * The server must not treat prejoined as answered. Never log this object or its token.
@@ -63,7 +73,7 @@ export type NativeMediaCredentials =
 export interface IncomingCallPayload {
   readonly eventId: string;
   readonly serverCallId: string;
-  readonly caller: Participant;
+  readonly caller: Caller;
   readonly hasVideo: boolean;
   /** Optional native pre-warm credentials; keep this outside application metadata. */
   readonly media?: LiveKitMediaCredentials;

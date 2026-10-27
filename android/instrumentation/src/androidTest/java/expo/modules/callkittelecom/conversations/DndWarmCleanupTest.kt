@@ -81,7 +81,7 @@ class DndWarmCleanupTest {
                     val release = CompletableDeferred<Unit>()
                     NativeIncomingFilters.evaluate = { value -> assertFalse(value.containsKey("media")); entered.complete(Unit); release.await(); NativeIncomingFilter(reason, "test.nativePolicy") }
                     val key = "app-${reason.value}-${android.os.SystemClock.elapsedRealtime()}"
-                    val request = mapOf("eventId" to key, "serverCallId" to key, "caller" to mapOf("id" to "caller", "displayName" to key), "hasVideo" to false)
+                    val request = mapOf("eventId" to key, "serverCallId" to key, "caller" to mapOf("handleType" to "generic", "value" to "caller", "displayName" to key), "hasVideo" to false)
                     val reporting = async { engine.incoming(request) }
                     withTimeout(5000) { entered.await() }
                     val earlyAnswer = async { runCatching { engine.join(CallIdentity.forServerCallId(key).toString()) } }

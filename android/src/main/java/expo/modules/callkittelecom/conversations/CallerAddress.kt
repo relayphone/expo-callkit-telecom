@@ -5,6 +5,7 @@ import android.net.Uri
 
 /** One identity for notification affinity and the platform caller filter/repeat history. */
 internal fun callerAddress(context: Context, member: Map<*, *>?): Uri? {
+    member?.let(NativeCaller::parse)?.let { return it.address() }
     (member?.get("phoneNumber") as? String)?.takeIf { it.isNotBlank() }?.let { return Uri.fromParts("tel", it, null) }
     (member?.get("email") as? String)?.takeIf { it.isNotBlank() }?.let { return Uri.fromParts("mailto", it, null) }
     val id = (member?.get("id") as? String)?.takeIf { it.isNotBlank() } ?: return null

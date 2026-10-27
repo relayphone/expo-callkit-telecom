@@ -64,3 +64,9 @@ bun send-test-push.ts --production          # iOS prod APNs (default: sandbox)
 3. Run `bun send-test-push.ts`. The script works the same regardless of whether the client is foregrounded, backgrounded, or force-quit — force-quit is just the most interesting case, since the native parser has to wake the app from cold.
 4. The OS delivers the push, the native parser reads the payload, and CallKit / Telecom shows the call with the info from the push (caller name, server call id, etc.). The *Session* card on the client UI shows the parsed event verbatim.
 
+
+The v2 incoming `caller` child uses the shared typed `Caller` contract. The
+`--phoneNumber` option produces `handleType: "phone"` with that explicit E.164
+value; otherwise `--callerId` is a `generic` value. `displayName` is always
+supplied. The former participant-only `{ id, phoneNumber? }` caller child is no
+longer a valid v2 invitation.

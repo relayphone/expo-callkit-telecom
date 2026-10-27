@@ -40,7 +40,7 @@ class ConversationJourneyTest {
             }
             withTimeout(30_000) {
                 val payload = mapOf("eventId" to "journey-event", "serverCallId" to "journey-incoming",
-                    "caller" to mapOf("id" to "caller", "displayName" to "Emulator caller"), "hasVideo" to false)
+                    "caller" to mapOf("handleType" to "generic", "value" to "caller", "displayName" to "Emulator caller"), "hasVideo" to false)
                 val outcome = engine.incoming(payload)
                 assertEquals("reported", outcome["status"])
                 val id = outcome["id"] as String
@@ -137,7 +137,7 @@ class ConversationJourneyTest {
             engine.emit = { name, _ -> assertNotEquals("handlerAction", name) }
             try {
                 val outcome = engine.incoming(mapOf("eventId" to "native-event", "serverCallId" to "native-call",
-                    "caller" to mapOf("id" to "native-caller"), "hasVideo" to false))
+                    "caller" to mapOf("handleType" to "generic", "value" to "native-caller", "displayName" to "Native caller"), "hasVideo" to false))
                 assertEquals("reported", outcome["status"])
                 val id = outcome["id"] as String
                 val began = android.os.SystemClock.elapsedRealtime()
@@ -218,7 +218,7 @@ class ConversationJourneyTest {
             try {
                 engine.answerTimeoutMillis = 200
                 val outcome = engine.incoming(mapOf("eventId" to "timeout-event", "serverCallId" to "timeout-call",
-                    "caller" to mapOf("id" to "caller")))
+                    "caller" to mapOf("handleType" to "generic", "value" to "caller", "displayName" to "Caller")))
                 assertEquals("reported", outcome["status"])
                 val id = outcome["id"] as String
                 engine.join(id)
