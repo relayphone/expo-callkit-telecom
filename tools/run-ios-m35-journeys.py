@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the draft adapter's real simulator tests; publish only checked summaries."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -68,6 +69,10 @@ def main():
     phone = next(d for d in device_types if d["name"] == "iPhone 17 Pro")
     device = command(["xcrun", "simctl", "create", "Expo v2 M35 CI", phone["identifier"], runtime["identifier"]]).strip()
     report = {"schemaVersion": 1, "sourceRevision": command(["git", "-C", str(ROOT), "rev-parse", "HEAD"]).strip(),
+              "sourceDirty": bool(command(["git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=no"]).strip()),
+              "sourceHashes": {path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest() for path in (
+                  "apple/Package.swift", "apple/Sources/ExpoConversationsBoundary/SDKConversationAdapter.swift",
+                  "apple/Tests/ExpoConversationsBoundaryTests/AdapterJourneyTests.swift", "tools/run-ios-m35-journeys.py")},
               "sdkRevision": revision, "runId": os.environ.get("GITHUB_RUN_ID"), "status": "running", "journeys": {}}
     phase = "boot"
     try:
