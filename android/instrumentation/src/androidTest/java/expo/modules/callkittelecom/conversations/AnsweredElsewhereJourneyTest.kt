@@ -83,12 +83,74 @@ class AnsweredElsewhereJourneyTest {
         return observed
     }
 
+    /** Failure-only, bounded structure: never retain node text, descriptions, or window titles. */
+    private fun uiStructure(label: String): Map<String, Any?> {
+        val automation = instrumentation.uiAutomation
+        val originalFlags = automation.serviceInfo.flags
+        val deadline = now() + 2_000_000_000L
+        fun tree(root: AccessibilityNodeInfo?, limit: Int): Map<String, Any?> {
+            if (root == null) return mapOf("rootAvailable" to false)
+            val nodes = mutableListOf<Map<String, Any?>>()
+            val queue = java.util.ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+            queue.add(root to 0)
+            while (queue.isNotEmpty() && nodes.size < limit && now() < deadline) {
+                val (node, depth) = queue.removeFirst()
+                val bounds = Rect(); node.getBoundsInScreen(bounds)
+                fun contains(value: String) = node.text?.contains(value) == true || node.contentDescription?.contains(value) == true
+                nodes += mapOf("depth" to depth, "class" to node.className?.toString()?.take(160),
+                    "resourceId" to node.viewIdResourceName?.take(160), "visible" to node.isVisibleToUser,
+                    "bounds" to listOf(bounds.left, bounds.top, bounds.right, bounds.bottom),
+                    "clickable" to node.isClickable, "children" to node.childCount,
+                    "textLength" to (node.text?.length ?: 0), "descriptionLength" to (node.contentDescription?.length ?: 0),
+                    "callerFull" to contains(label), "callerPrefix" to contains(label.substringBeforeLast('-')),
+                    "answer" to contains("Answer"), "decline" to contains("Decline"),
+                    "expand" to contains("Expand"), "collapse" to contains("Collapse"))
+                if (depth < 16) for (index in 0 until minOf(node.childCount, 32)) {
+                    if (queue.size >= 256 || now() >= deadline) break
+                    node.getChild(index)?.let { queue.add(it to depth + 1) }
+                }
+            }
+            return mapOf("rootAvailable" to true, "windowId" to root.windowId,
+                "rootClass" to root.className?.toString()?.take(160), "rootResourceId" to root.viewIdResourceName?.take(160),
+                "rootChildren" to root.childCount, "truncated" to queue.isNotEmpty(), "nodes" to nodes)
+        }
+        val activeRoot = automation.rootInActiveWindow
+        val active = tree(activeRoot, 128)
+        val searches = listOf("callerFull" to label, "callerPrefix" to label.substringBeforeLast('-'),
+            "answer" to "Answer", "decline" to "Decline").associate { (key, query) ->
+            val matches = if (now() < deadline) activeRoot?.findAccessibilityNodeInfosByText(query).orEmpty() else emptyList()
+            key to mapOf("matches" to matches.size, "visibleMatches" to matches.count { node ->
+                val bounds = Rect(); node.getBoundsInScreen(bounds)
+                node.isVisibleToUser && !bounds.isEmpty
+            })
+        }
+        try {
+            // Inventory other visible windows only after failure; the pass/fail oracle is unchanged.
+            automation.serviceInfo = automation.serviceInfo.apply {
+                flags = originalFlags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            }
+            val windows = automation.windows.take(6).map { window ->
+                val bounds = Rect(); window.getBoundsInScreen(bounds)
+                mapOf("id" to window.id, "type" to window.type, "layer" to window.layer,
+                    "active" to window.isActive, "focused" to window.isFocused,
+                    "bounds" to listOf(bounds.left, bounds.top, bounds.right, bounds.bottom),
+                    "tree" to tree(window.root, 64))
+            }
+            return mapOf("serviceFlags" to originalFlags, "activeTree" to active, "searchCounts" to searches, "windows" to windows,
+                "budgetMs" to 2000, "limitReached" to (now() >= deadline))
+        } finally { automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags } }
+    }
+
     private suspend fun showRing(label: String): VisibleRing = withContext(Dispatchers.IO) {
         shell("cmd statusbar expand-notifications")
-        withTimeout(5000) {
+        try { withTimeout(5000) {
             var result: VisibleRing? = null
             while (result?.present != true) { result = visibleRing(label); if (result?.present != true) delay(25) }
             result!!
+        } } catch (error: TimeoutCancellationException) {
+            lastUi = lastUi + ("structure" to runCatching { uiStructure(label) }
+                .getOrElse { mapOf("diagnosticError" to it.javaClass.simpleName) })
+            throw error
         }
     }
 
