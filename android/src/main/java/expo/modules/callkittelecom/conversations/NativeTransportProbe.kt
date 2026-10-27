@@ -12,7 +12,7 @@ internal class NativeTransportProbe(private val serverId: String, private val sc
         val requestedAt: Long, val observedAt: Long)
 
     // role: 0 raw WebRTC, 1 LiveKit publisher, 2 LiveKit subscriber.
-    fun watch(role: Long, getStats: (RTCStatsCollectorCallback) -> Unit) = scope.launch {
+    fun watch(role: Long, getStats: (RTCStatsCollectorCallback) -> Unit, ready: CompletableDeferred<Unit>? = null) = scope.launch {
         val emitted = mutableSetOf<NativeMediaStage>()
         while (isActive) {
             val requestedAt = SystemClock.elapsedRealtimeNanos()
@@ -29,7 +29,7 @@ internal class NativeTransportProbe(private val serverId: String, private val sc
                     observed.ice to NativeMediaStage.ICE_CONNECTED, observed.dtls to NativeMediaStage.DTLS_CONNECTED)) {
                     if (ready && emitted.add(stage)) NativeMediaSignals.emit(serverId, stage, values, observed.observedAt)
                 }
-                if (observed.ice && observed.dtls) break
+                if (observed.ice && observed.dtls) { ready?.complete(Unit); break }
             }
             delay(25)
         }
