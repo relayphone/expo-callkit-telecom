@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.withTimeout
 import livekit.org.webrtc.audio.JavaAudioDeviceModule
 
 /** Observes real device reads/output and clocks the SDK's recordingless buffer pump. */
@@ -64,6 +65,14 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         return epoch.ready
     }
 
+    /** Call after ADM.setAudioRecordEnabled(true), following Core audio authorization. */
+    fun publishRecordingEnabled() {
+        // The pinned ADM recording flag is plain Java state. pace() acquires this write
+        // before the pump's next iteration reads that flag, and wakes without a 10 ms wait.
+        pumpGeneration.incrementAndGet()
+        parkedThread.get()?.let { LockSupport.unpark(it) }
+    }
+
     fun pumpStarted() {
         if (closed.get()) return
         pumpGeneration.incrementAndGet()
@@ -105,6 +114,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         else awaitPlaybackStarted()
     }
 
+    /** Publish authorization before unmuting the ADM; output callbacks may run immediately. */
     fun releaseOutput() {
         if (closed.get()) return
         val epoch = OutputEpoch(sequence.incrementAndGet(), SystemClock.elapsedRealtimeNanos(), true)

@@ -33,6 +33,10 @@ internal class NativeTransportProbe(private val serverId: String, private val sc
             }
             delay(25)
         }
+    }.also { job ->
+        // Cover cancellation before the coroutine body starts as well as cancellation
+        // while a stats callback is pending. A readiness waiter must not outlive its watch.
+        job.invokeOnCompletion { ready?.cancel() }
     }
 
     private fun read(report: RTCStatsReport, requestedAt: Long, observedAt: Long): Observation {

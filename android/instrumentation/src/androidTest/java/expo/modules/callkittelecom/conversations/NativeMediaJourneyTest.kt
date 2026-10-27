@@ -11,6 +11,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -30,10 +31,26 @@ class NativeMediaJourneyTest {
         }
     }
 
+    private fun stageForRole(events: List<NativeMediaSignal>, kind: NativeMediaStage, role: Long) =
+        events.first { it.stage == kind && it.measurements["role"] == role }
+
     @Test fun realNativeLiveKitAudioAndCleanup() = journey("livekit", listOf("push", "fetcher"))
     @Test fun realNativeWebRTCAudioAndCleanup() = journey("webrtc", listOf("fetcher", "livekitPush"))
 
-    private fun journey(provider: String, sources: List<String>) = runBlocking {
+    @Test fun nativeAnswerLatencySample() {
+        val arguments = InstrumentationRegistry.getArguments()
+        val provider = arguments.getString("latencyProvider")
+        assumeTrue("Dedicated fresh-process latency sample", provider != null)
+        require(provider in setOf("livekit", "webrtc"))
+        val source = requireNotNull(arguments.getString("latencySource"))
+        val allowed = if (provider == "livekit") setOf("push", "fetcher") else setOf("fetcher", "livekitPush")
+        require(source in allowed)
+        val sampleIndex = requireNotNull(arguments.getString("latencySample")).toInt()
+        require(sampleIndex in 1..5)
+        journey(requireNotNull(provider), listOf(source), sampleIndex)
+    }
+
+    private fun journey(provider: String, sources: List<String>, benchmarkSample: Int? = null) = runBlocking {
         withContext(Dispatchers.Main) {
             val engine = ConversationEngine.get(context)
             val previousPolicy = engine.policy
@@ -98,12 +115,13 @@ class NativeMediaJourneyTest {
             }
             val stamp = android.os.SystemClock.elapsedRealtime().toString()
             val prefix = if (provider == "webrtc") "rtc-" else ""
-            val measurements = (1..5).flatMap { sampleIndex ->
-                sources.shuffled(kotlin.random.Random(132 + sampleIndex)).map { it to sampleIndex }
-            }
+            val measurements = sources.map { it to (benchmarkSample ?: 1) }
             try { withTimeout(240_000) {
                 for ((index, measurement) in measurements.withIndex()) {
                     val (source, sampleIndex) = measurement
+                    // Platform removal is asynchronous to the app snapshot and media close.
+                    // Keep isolation outside PUSH_RECEIVED and use the same barrier in both profiles.
+                    withTimeout(7000) { while (TelecomEvidence.calls().isNotEmpty()) delay(40) }
                     // Isolate each measurement from the previous test/call's audio teardown.
                     withTimeout(5000) { while (context.getSystemService(android.media.AudioManager::class.java).mode != android.media.AudioManager.MODE_NORMAL) delay(25) }
                     val audio = context.getSystemService(android.media.AudioManager::class.java)
@@ -114,7 +132,15 @@ class NativeMediaJourneyTest {
                         val prejoined = stage(serverId, NativeMediaStage.PREJOINED)
                         delay(150)
                         assertFalse(events(serverId).any { it.stage in setOf(NativeMediaStage.CAPTURE_STARTED,
-                            NativeMediaStage.PLAYBACK_STARTED, NativeMediaStage.REMOTE_SUBSCRIBED, NativeMediaStage.FIRST_AUDIO) })
+                            NativeMediaStage.CAPTURE_BEFORE_AUTHORITY, NativeMediaStage.OUTPUT_BEFORE_AUTHORITY,
+                            NativeMediaStage.FIRST_AUDIO) })
+                        val decoded = stage(serverId, NativeMediaStage.DECODER_FIRST_PCM)
+                        val warmPlayback = stage(serverId, NativeMediaStage.PLAYBACK_STARTED)
+                        val warmSubscribed = stage(serverId, NativeMediaStage.REMOTE_SUBSCRIBED)
+                        val mutedOutput = stage(serverId, NativeMediaStage.OUTPUT_MUTED)
+                        for (warm in listOf(decoded, warmPlayback, warmSubscribed, mutedOutput))
+                            assertTrue("Tone fixture receive path must be hot at PREJOINED", warm.elapsedRealtimeNanos <= prejoined.elapsedRealtimeNanos)
+                        assertFalse(events(serverId).any { it.stage == NativeMediaStage.OUTPUT_OBSERVATION_UNAVAILABLE })
                         val preanswerRecording = recording.snapshot()
                         recordingObservation = preanswerRecording
                         assertEquals(0, preanswerRecording["newObservedCount"])
@@ -149,12 +175,20 @@ class NativeMediaJourneyTest {
                         assertTrue(reported.elapsedRealtimeNanos <= jsWarm.elapsedRealtimeNanos)
                         assertTrue(accepted.elapsedRealtimeNanos <= authorized.elapsedRealtimeNanos)
                         assertTrue(authorized.elapsedRealtimeNanos <= first.elapsedRealtimeNanos)
-                        for (started in listOf(capture, playback, subscribed))
-                            assertTrue(authorized.elapsedRealtimeNanos <= started.elapsedRealtimeNanos)
+                        assertTrue(authorized.elapsedRealtimeNanos <= capture.elapsedRealtimeNanos)
+                        val outputAudio = stage(serverId, NativeMediaStage.OUTPUT_FIRST_NONZERO)
+                        assertTrue(authorized.elapsedRealtimeNanos <= outputAudio.elapsedRealtimeNanos)
+                        assertTrue(events(serverId).none { it.stage in setOf(
+                            NativeMediaStage.CAPTURE_BEFORE_AUTHORITY, NativeMediaStage.OUTPUT_BEFORE_AUTHORITY) })
+                        for (role in roles) assertTrue(stageForRole(events(serverId), NativeMediaStage.DTLS_CONNECTED, role)
+                            .elapsedRealtimeNanos <= prejoined.elapsedRealtimeNanos)
+                        assertEquals(1, events(serverId).count { it.stage == NativeMediaStage.MEDIA_CONNECT_STARTED })
+                        if (provider == "livekit") assertTrue(stage(serverId, NativeMediaStage.MICROPHONE_PUBLISHED)
+                            .elapsedRealtimeNanos <= prejoined.elapsedRealtimeNanos)
                         val elapsedMs = (first.elapsedRealtimeNanos - requested.elapsedRealtimeNanos) / 1_000_000.0
                         assertTrue("Native answer-to-PCM exceeded bound", elapsedMs in 0.0..3000.0)
                         results += mapOf("credentials" to source, "sampleIndex" to sampleIndex,
-                            "processAgeMs" to processAgeMs, "preanswerAudioMode" to preanswerAudioMode, "preanswerRecording" to preanswerRecording,
+                            "processAgeMs" to processAgeMs, "platformCallsBefore" to 0, "preanswerAudioMode" to preanswerAudioMode, "preanswerRecording" to preanswerRecording,
                             "activeRecording" to activeRecording,
                             "events" to events(serverId).map { mapOf("stage" to it.stage.value,
                                 "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) }, "pushNanos" to pushed.elapsedRealtimeNanos,
@@ -164,9 +198,11 @@ class NativeMediaJourneyTest {
                             "audioAuthorizedNanos" to authorized.elapsedRealtimeNanos, "firstAudioNanos" to first.elapsedRealtimeNanos,
                             "captureStartedNanos" to capture.elapsedRealtimeNanos, "playbackStartedNanos" to playback.elapsedRealtimeNanos,
                             "remoteSubscribedNanos" to subscribed.elapsedRealtimeNanos,
+                            "decoderFirstPcmNanos" to decoded.elapsedRealtimeNanos, "outputMutedNanos" to mutedOutput.elapsedRealtimeNanos,
+                            "outputFirstAudioNanos" to outputAudio.elapsedRealtimeNanos,
                             "answerToFirstAudioMs" to elapsedMs, "pcm" to first.measurements, "preanswerCapture" to false)
                         assertEquals(0, joinHandlerCalls)
-                        if (index == 0) {
+                        if (index == 0 && benchmarkSample == null) {
                             // Non-Join signaling is accepted by a native test consumer; Join above had no JS handler.
                             engine.emit = { name, body -> if (name == "handlerAction") {
                                 if (body["kind"] == "join") joinHandlerCalls++
@@ -176,68 +212,80 @@ class NativeMediaJourneyTest {
                             val holdRequested = android.os.SystemClock.elapsedRealtimeNanos()
                             engine.hold(id, true)
                             assertTrue(stage(serverId, NativeMediaStage.CAPTURE_STOPPED).elapsedRealtimeNanos >= holdRequested)
-                            assertTrue(stage(serverId, NativeMediaStage.PLAYBACK_STOPPED).elapsedRealtimeNanos >= holdRequested)
+                            val muted = stage(serverId, NativeMediaStage.OUTPUT_MUTED, 2)
+                            assertTrue(muted.elapsedRealtimeNanos >= holdRequested)
                             val starts = events(serverId).count { it.stage == NativeMediaStage.CAPTURE_STARTED }
                             val playbackStarts = events(serverId).count { it.stage == NativeMediaStage.PLAYBACK_STARTED }
+                            val outputStarts = events(serverId).count { it.stage == NativeMediaStage.OUTPUT_FIRST_NONZERO }
                             delay(100)
                             assertEquals(starts, events(serverId).count { it.stage == NativeMediaStage.CAPTURE_STARTED })
                             assertEquals(playbackStarts, events(serverId).count { it.stage == NativeMediaStage.PLAYBACK_STARTED })
+                            assertEquals(outputStarts, events(serverId).count { it.stage == NativeMediaStage.OUTPUT_FIRST_NONZERO })
                             engine.hold(id, false)
                             val resumed = stage(serverId, NativeMediaStage.AUDIO_AUTHORIZED, 2)
-                            for (kind in listOf(NativeMediaStage.CAPTURE_STARTED, NativeMediaStage.PLAYBACK_STARTED, NativeMediaStage.FIRST_AUDIO))
+                            for (kind in listOf(NativeMediaStage.CAPTURE_STARTED, NativeMediaStage.OUTPUT_FIRST_NONZERO, NativeMediaStage.FIRST_AUDIO))
                                 assertTrue(stage(serverId, kind, 2).elapsedRealtimeNanos >= resumed.elapsedRealtimeNanos)
                             cleanupResults += "hold-capture-stopped-resumed"
                         }
                         engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
-                        absent(id); stage(serverId, NativeMediaStage.CLOSED); noClient(serverId); owned -= id
+                        absent(id); stage(serverId, NativeMediaStage.CLOSED); noClient(serverId)
+                        if (provider == "webrtc") assertEquals(1L,
+                            stage(serverId, NativeMediaStage.TERMINAL_SIGNAL_COMPLETED).measurements["delivered"])
+                        owned -= id
+                        if (benchmarkSample != null) cleanupResults += "ended"
                         withTimeout(3000) { while (recording.activeNewCount() != 0) delay(10) }
+                        withTimeout(7000) { while (TelecomEvidence.calls().isNotEmpty()) delay(40) }
                     } finally { recording.close() }
                 }
-                val declinedServer = "${prefix}decline-$stamp"
-                val declined = incoming(declinedServer, provider == "livekit")
-                stage(declinedServer, NativeMediaStage.PREJOINED)
-                engine.end(declined)
-                absent(declined); declineClosedNanos = stage(declinedServer, NativeMediaStage.CLOSED).elapsedRealtimeNanos
-                val declineState = noClient(declinedServer, if (provider == "webrtc") "declined" else null)
-                if (provider == "webrtc") {
-                    assertTrue(declineState.getJSONArray("states").toString().contains("declined"))
-                    assertFalse(declineFirstZeroObservation!!.getJSONArray("states").toString().contains("declined"))
-                    assertTrue(declinePendingObserved)
-                    val times = declineState.getJSONObject("terminalTimes")
-                    assertTrue(times.getLong("receivedNanos") <= times.getLong("releasedNanos"))
-                    assertTrue(times.getLong("releasedNanos") <= times.getLong("recordedNanos"))
-                    val acknowledgment = stage(declinedServer, NativeMediaStage.TERMINAL_SIGNAL_COMPLETED)
-                    declineTerminalSignal = acknowledgment.measurements + ("nanos" to acknowledgment.elapsedRealtimeNanos)
-                    assertEquals(1L, acknowledgment.measurements["delivered"])
-                    assertTrue(acknowledgment.elapsedRealtimeNanos >= declineClosedNanos)
-                }
-                assertFalse(events(declinedServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
-                owned -= declined; cleanupResults += "declined"
+                if (benchmarkSample == null) {
+                    val declinedServer = "${prefix}decline-$stamp"
+                    val declined = incoming(declinedServer, provider == "livekit")
+                    stage(declinedServer, NativeMediaStage.PREJOINED)
+                    engine.end(declined)
+                    absent(declined); declineClosedNanos = stage(declinedServer, NativeMediaStage.CLOSED).elapsedRealtimeNanos
+                    val declineState = noClient(declinedServer, if (provider == "webrtc") "declined" else null)
+                    if (provider == "webrtc") {
+                        assertTrue(declineState.getJSONArray("states").toString().contains("declined"))
+                        assertFalse(declineFirstZeroObservation!!.getJSONArray("states").toString().contains("declined"))
+                        assertTrue(declinePendingObserved)
+                        val times = declineState.getJSONObject("terminalTimes")
+                        assertTrue(times.getLong("receivedNanos") <= times.getLong("releasedNanos"))
+                        assertTrue(times.getLong("releasedNanos") <= times.getLong("recordedNanos"))
+                        val acknowledgment = stage(declinedServer, NativeMediaStage.TERMINAL_SIGNAL_COMPLETED)
+                        declineTerminalSignal = acknowledgment.measurements + ("nanos" to acknowledgment.elapsedRealtimeNanos)
+                        assertEquals(1L, acknowledgment.measurements["delivered"])
+                        assertTrue(acknowledgment.elapsedRealtimeNanos >= declineClosedNanos)
+                    }
+                    assertFalse(events(declinedServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
+                    owned -= declined; cleanupResults += "declined"
 
-                engine.incomingTimeoutMillis = 3000
-                val timedServer = "${prefix}timeout-$stamp"
-                val timed = incoming(timedServer, provider == "livekit")
-                stage(timedServer, NativeMediaStage.PREJOINED)
-                absent(timed); stage(timedServer, NativeMediaStage.CLOSED); noClient(timedServer)
-                assertFalse(events(timedServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
-                owned -= timed; cleanupResults += "unanswered"
-                engine.incomingTimeoutMillis = previousTimeout
+                    engine.incomingTimeoutMillis = 3000
+                    val timedServer = "${prefix}timeout-$stamp"
+                    val timed = incoming(timedServer, provider == "livekit")
+                    stage(timedServer, NativeMediaStage.PREJOINED)
+                    absent(timed); stage(timedServer, NativeMediaStage.CLOSED); noClient(timedServer)
+                    assertFalse(events(timedServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
+                    owned -= timed; cleanupResults += "unanswered"
+                    engine.incomingTimeoutMillis = previousTimeout
 
-                for (code in listOf(404, 410)) {
-                    val goneServer = "gone$code-$stamp"
-                    val gone = incoming(goneServer, false)
-                    withTimeout(5000) { while (fixture("/fixture/observations/$goneServer").getInt("fetches") < 1) delay(20) }
-                    engine.join(gone)
-                    absent(gone); stage(goneServer, NativeMediaStage.CLOSED)
-                    assertEquals(2, fixture("/fixture/observations/$goneServer").getInt("fetches"))
-                    assertFalse(events(goneServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
-                    owned -= gone; cleanupResults += code.toString()
+                    for (code in listOf(404, 410)) {
+                        val goneServer = "gone$code-$stamp"
+                        val gone = incoming(goneServer, false)
+                        withTimeout(5000) { while (fixture("/fixture/observations/$goneServer").getInt("fetches") < 1) delay(20) }
+                        engine.join(gone)
+                        absent(gone); stage(goneServer, NativeMediaStage.CLOSED)
+                        assertEquals(2, fixture("/fixture/observations/$goneServer").getInt("fetches"))
+                        assertFalse(events(goneServer).any { it.stage == NativeMediaStage.CAPTURE_STARTED })
+                        owned -= gone; cleanupResults += code.toString()
+                    }
                 }
-                assertEquals(measurements.size + 4, warmRequests)
+                assertEquals(measurements.size + (if (benchmarkSample == null) 4 else 0), warmRequests)
                 assertEquals(0, joinHandlerCalls)
                 output.writeText(JSONObject(mapOf("passed" to true, "provider" to provider, "metric" to "native-answer-request-to-first-remote-pcm",
                     "pcmThreshold" to 128, "budgetMs" to 3000, "targetMs" to 300, "samples" to results,
-                    "profile" to "baseline", "samplesPerPath" to 5,
+                    "profile" to "optimized", "samplesPerPath" to 1, "sources" to sources,
+                    "benchmarkOnly" to (benchmarkSample != null), "processIsolation" to
+                        (if (benchmarkSample == null) "full-journey" else "fresh-app-process"),
                     "cleanup" to cleanupResults, "recordingObservation" to recordingObservation, "declineObservation" to declineObservation,
                     "declineFirstZeroObservation" to declineFirstZeroObservation, "declinePendingObserved" to declinePendingObserved,
                     "declineClosedNanos" to declineClosedNanos, "declineTerminalSignal" to declineTerminalSignal,

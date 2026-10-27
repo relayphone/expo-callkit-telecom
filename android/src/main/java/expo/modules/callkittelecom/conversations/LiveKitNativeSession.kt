@@ -66,6 +66,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         candidate.setSpeakerMute(true); heat.muteOutput()
         val publisherReady = CompletableDeferred<Unit>()
         val subscriberReady = CompletableDeferred<Unit>()
+        val remoteTrackReady = CompletableDeferred<Unit>()
         val transportJobs = mutableListOf<Job>()
         val collector = scope.launch(start = CoroutineStart.UNDISPATCHED) { candidate.events.collect { event ->
             when (event) {
@@ -75,6 +76,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
                     NativeMediaSignals.emit(serverId, NativeMediaStage.REMOTE_TRACK_AVAILABLE, mapOf("role" to 2L))
                     tracks += track; track.enabled = true
                     track.addSink(decode.decoderSink); track.addSink(decode.answerSink)
+                    remoteTrackReady.complete(Unit)
                 }
                 is RoomEvent.TrackUnsubscribed -> (event.track as? RemoteAudioTrack)?.let { track ->
                     NativeMediaSignals.emit(serverId, NativeMediaStage.REMOTE_UNSUBSCRIBED)
@@ -103,8 +105,19 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             NativeMediaSignals.emit(serverId, NativeMediaStage.MEDIA_CONNECT_COMPLETED)
             NativeMediaSignals.emit(serverId, NativeMediaStage.ROOM_CONNECTED)
             publishMutedMicrophone()
-            publisherReady.await(); subscriberReady.await()
-            decode.awaitDecoded(); heat.awaitPlaybackStarted(); heat.awaitMutedOutput()
+            // The prepublished sender must be negotiated before answer. Remote media is
+            // optional: a silent/muted caller, or one not yet publishing, remains answerable.
+            publisherReady.await()
+            try {
+                withTimeoutOrNull(2000) {
+                    remoteTrackReady.await(); subscriberReady.await()
+                    heat.awaitPlaybackStarted(); heat.awaitMutedOutput(); decode.awaitDecoded()
+                }
+            } catch (_: CancellationException) {
+                // Silent, unpublished or retired remote tracks must remain answerable.
+                currentCoroutineContext().ensureActive()
+            }
+            check(!closed && room === candidate)
             NativeMediaSignals.emit(serverId, NativeMediaStage.PREJOINED)
         } catch (error: Throwable) {
             collector.cancel(); transportJobs.forEach { it.cancel() }
@@ -143,8 +156,9 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         setMicrophone(!muted)
     }
     private fun releaseOutput() {
+        warmth.releaseOutput()
         room?.setSpeakerMute(false)
-        warmth.releaseOutput(); pcm.arm()
+        pcm.arm()
     }
     override suspend fun setHeld(held: Boolean): Unit = withContext(Dispatchers.Main.immediate) {
         check(!closed); this@LiveKitNativeSession.held = held
@@ -164,6 +178,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             warmth.flushSilentWindow()
             captureEnabled = true
             recording?.setAudioRecordEnabled(true)
+            warmth.publishRecordingEnabled()
             publication!!.muted = false
             withTimeout(1500) { ready.await() }
         } else if (captureEnabled) {
