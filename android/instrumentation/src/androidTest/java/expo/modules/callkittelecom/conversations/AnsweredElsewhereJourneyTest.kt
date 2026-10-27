@@ -60,23 +60,57 @@ class AnsweredElsewhereJourneyTest {
     }
 
     /** A missing/different active window is inconclusive, never evidence of dismissal. */
+    private data class NodeScan(val nodes: List<AccessibilityNodeInfo>, val complete: Boolean)
+    private fun nodeTree(root: AccessibilityNodeInfo, stopAt: String? = null): NodeScan {
+        val pending = java.util.ArrayDeque<AccessibilityNodeInfo>()
+        pending.add(root)
+        val nodes = mutableListOf<AccessibilityNodeInfo>()
+        var complete = true
+        while (pending.isNotEmpty() && nodes.size < 512) {
+            val node = pending.removeLast()
+            nodes += node
+            if (stopAt != null && node.viewIdResourceName == stopAt) return NodeScan(nodes, false)
+            if (node.childCount > 32) complete = false
+            for (index in minOf(node.childCount, 32) - 1 downTo 0) {
+                if (pending.size >= 512) { complete = false; break }
+                val child = runCatching { node.getChild(index) }.getOrNull()
+                if (child == null) complete = false else pending.add(child)
+            }
+        }
+        return NodeScan(nodes, complete && pending.isEmpty())
+    }
+
+    private fun notificationStack(root: AccessibilityNodeInfo): AccessibilityNodeInfo? =
+        nodeTree(root, "com.android.systemui:id/notification_stack_scroller").nodes
+        .firstOrNull { it.viewIdResourceName == "com.android.systemui:id/notification_stack_scroller" }
+
     private fun visibleRing(label: String): VisibleRing? {
         val root = instrumentation.uiAutomation.rootInActiveWindow
         lastUi = displayState() + mapOf("rootAvailable" to (root != null),
             "rootPackage" to root?.packageName?.toString(), "windowId" to root?.windowId,
             "expansionAttempts" to expansionAttempts)
-        if (root == null || root.packageName?.toString() != "com.android.systemui" || root.windowId < 0) return null
-        fun visible(value: String) = root.findAccessibilityNodeInfosByText(value).any { node ->
+        if (root == null || root.packageName?.toString() != "com.android.systemui" || root.windowId < 0 ||
+            root.viewIdResourceName != "com.android.systemui:id/legacy_window_root") return null
+        val stack = notificationStack(root) ?: return null
+        val stackBounds = Rect(); stack.getBoundsInScreen(stackBounds)
+        if (!stack.isVisibleToUser || stackBounds.isEmpty) return null
+        val scan = nodeTree(stack)
+        val nodes = scan.nodes
+        lastUi = lastUi + mapOf("shadeVerified" to true, "notificationNodes" to nodes.size,
+            "traversalComplete" to scan.complete)
+        fun visible(value: String) = nodes.any { node ->
             val bounds = Rect(); node.getBoundsInScreen(bounds)
             node.isVisibleToUser && !bounds.isEmpty &&
                 (node.text?.toString()?.contains(value) == true || node.contentDescription?.toString()?.contains(value) == true)
         }
         val observed = VisibleRing(root.packageName.toString(), root.windowId, visible(label), visible("Answer"), visible("Decline"))
         lastUi = lastUi + observed.json()
+        // Partial trees can prove visible presence, never absence of a still-visible card.
+        if (!observed.caller && !scan.complete) return null
         if (observed.caller && !observed.present) {
             // Expand the notification's public accessibility affordance if the shade collapsed it.
-            val expand = root.findAccessibilityNodeInfosByViewId("android:id/expand_button")
-                .firstOrNull { it.isVisibleToUser && it.isClickable && it.contentDescription?.toString() == "Expand" }
+            val expand = nodes.firstOrNull { it.viewIdResourceName == "android:id/expand_button" &&
+                it.isVisibleToUser && it.isClickable && it.contentDescription?.toString() == "Expand" }
             if (expand?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) expansionAttempts++
         }
         lastUi = lastUi + ("expansionAttempts" to expansionAttempts)
@@ -116,6 +150,7 @@ class AnsweredElsewhereJourneyTest {
         }
         val activeRoot = automation.rootInActiveWindow
         val active = tree(activeRoot, 128)
+        val callContent = activeRoot?.let(::notificationStack)?.let { tree(it, 128) }
         val searches = listOf("callerFull" to label, "callerPrefix" to label.substringBeforeLast('-'),
             "answer" to "Answer", "decline" to "Decline").associate { (key, query) ->
             val matches = if (now() < deadline) activeRoot?.findAccessibilityNodeInfosByText(query).orEmpty() else emptyList()
@@ -136,7 +171,8 @@ class AnsweredElsewhereJourneyTest {
                     "bounds" to listOf(bounds.left, bounds.top, bounds.right, bounds.bottom),
                     "tree" to tree(window.root, 64))
             }
-            return mapOf("serviceFlags" to originalFlags, "activeTree" to active, "searchCounts" to searches, "windows" to windows,
+            return mapOf("serviceFlags" to originalFlags, "activeTree" to active, "notificationTree" to callContent,
+                "searchCounts" to searches, "windows" to windows,
                 "budgetMs" to 2000, "limitReached" to (now() >= deadline))
         } finally { automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags } }
     }
