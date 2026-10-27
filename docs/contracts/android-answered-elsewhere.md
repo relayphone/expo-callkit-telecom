@@ -93,11 +93,9 @@ API35 configures a [2,000 ms heads-up minimum](https://android.googlesource.com/
 Incoming notifications carry a full-screen intent, making heads-up entries
 [sticky](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/packages/SystemUI/src/com/android/systemui/statusbar/policy/BaseHeadsUpManager.java#836);
 [SystemUI may retain a cancelled entry until its earliest removal time](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/packages/SystemUI/src/com/android/systemui/statusbar/notification/collection/coordinator/HeadsUpCoordinator.kt#662).
-An initial diagnostic observed SDK termination at 45.8 ms, notification-manager
-absence at 90.9 ms, verified Core removal at 233.6 ms and visible absence at
-1,941 ms. This does not establish a universal floor or physical-device timing.
-The original one-second UI bound was an engineering assumption, not a user
-requirement or a measured platform guarantee.
+The [six-sample results](./android-answered-elsewhere-results.md) report native
+completion and visible-card removal separately, including runtime policy and
+observer cost. They do not establish a universal floor or physical-device timing.
 
 Each sample collapses the shade before posting its invitation, then requires the
 actual caller and incoming actions before signalling. Receipts include incoming,

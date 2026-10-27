@@ -1,0 +1,332 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "b1af396992b0869a3c8a85d4b7c9f00934a91f3e",
+  "run": "https://github.com/ziahamza/expo-callkit-telecom/actions/runs/40464699410",
+  "environment": {
+    "runner": "ubuntu-latest",
+    "acceleration": "KVM",
+    "apiLevel": 35,
+    "target": "google_apis",
+    "architecture": "x86_64",
+    "profile": "pixel_6"
+  },
+  "method": {
+    "metric": "native-end-signal-to-visible-ringing-card-absence",
+    "unit": "ms",
+    "nativeBudgetMs": 1000,
+    "uiBudgetMs": 3000,
+    "headsUpMinimumMs": 2000,
+    "uiObserverAllowanceMs": 1000,
+    "sources": [
+      "direct native host API",
+      "NativeCallPush.handle with production callEnded data envelope"
+    ],
+    "cloudFcmDeliveryMeasured": false,
+    "absenceObservations": 2,
+    "uiObservation": "Second consecutive complete notification-tree scan; 20 ms requested gap; same verified SystemUI shade window",
+    "incomingPolicy": {
+      "type": "handler",
+      "prewarm": false
+    },
+    "validSystemUiWindowRequired": true,
+    "provenance": "Commit/run supplied by the collector; hashes bind exact checked bytes."
+  },
+  "artifactSha256": {
+    "answered-elsewhere-results.json": "c46f684c0869db88fed8b5d5040dcbe67553cdae141336f2e46700ceee738f56"
+  },
+  "sourceSha256": {
+    "tools/check-answered-elsewhere.py": "084b2dc88d66754527f41c9a76359a4dba87c72df79ee7744b715391df9634c6",
+    "android/instrumentation/src/androidTest/java/expo/modules/callkittelecom/conversations/AnsweredElsewhereJourneyTest.kt": "6732b7e5021b165663e4a21f73aef5e3b3583b6fdbe70c715d8a64824104aae0",
+    ".github/workflows/v2-android.yml": "be0f1f6a2bcab8b5ef8e6ec7d32236c873cfac7a02f573b2df27034ca695107c"
+  },
+  "samples": [
+    {
+      "source": "host",
+      "sampleIndex": 1,
+      "acceptedMs": 4.000733,
+      "terminalSnapshotMs": 60.464365,
+      "eventMs": 60.603422,
+      "emptyHookMs": 61.955484,
+      "notificationGoneMs": 78.219406,
+      "uiGoneMs": 1872.460835,
+      "platformGoneMs": 446.285297,
+      "nativeCode": 3,
+      "nativeReason": "answeredElsewhere",
+      "nativeEvidence": "telecom-historical-SET_DISCONNECTED",
+      "correlatedEvents": 1,
+      "endHandlerCalls": 0,
+      "uiAbsenceObservations": 2,
+      "before": {
+        "packageName": "com.android.systemui",
+        "windowId": 8,
+        "callerVisible": true,
+        "answerVisible": true,
+        "declineVisible": true,
+        "traversalComplete": true
+      },
+      "incomingToReportedMs": 167.252424,
+      "reportedToSignalMs": 1471.475759,
+      "visibleBeforeToSignalMs": 0.015743,
+      "firstUiCallerAbsentMs": 1848.101156,
+      "uiScans": 63,
+      "uiCompleteScans": 63,
+      "maximumUiScanMs": 181.024238,
+      "finalUiScans": [
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1667.076918,
+          "returnedMs": 1848.101156
+        },
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1868.549956,
+          "returnedMs": 1872.331172
+        }
+      ]
+    },
+    {
+      "source": "host",
+      "sampleIndex": 2,
+      "acceptedMs": 0.667343,
+      "terminalSnapshotMs": 35.838661,
+      "eventMs": 36.090536,
+      "emptyHookMs": 66.537508,
+      "notificationGoneMs": 85.177211,
+      "uiGoneMs": 1902.873227,
+      "platformGoneMs": 599.283896,
+      "nativeCode": 3,
+      "nativeReason": "answeredElsewhere",
+      "nativeEvidence": "telecom-historical-SET_DISCONNECTED",
+      "correlatedEvents": 1,
+      "endHandlerCalls": 0,
+      "uiAbsenceObservations": 2,
+      "before": {
+        "packageName": "com.android.systemui",
+        "windowId": 8,
+        "callerVisible": true,
+        "answerVisible": true,
+        "declineVisible": true,
+        "traversalComplete": true
+      },
+      "incomingToReportedMs": 318.587958,
+      "reportedToSignalMs": 1185.38875,
+      "visibleBeforeToSignalMs": 0.012289,
+      "firstUiCallerAbsentMs": 1868.144407,
+      "uiScans": 65,
+      "uiCompleteScans": 65,
+      "maximumUiScanMs": 153.512774,
+      "finalUiScans": [
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1714.631633,
+          "returnedMs": 1868.144407
+        },
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1888.609431,
+          "returnedMs": 1902.830483
+        }
+      ]
+    },
+    {
+      "source": "host",
+      "sampleIndex": 3,
+      "acceptedMs": 0.511371,
+      "terminalSnapshotMs": 36.5947,
+      "eventMs": 36.656452,
+      "emptyHookMs": 44.77017,
+      "notificationGoneMs": 58.166155,
+      "uiGoneMs": 1834.401159,
+      "platformGoneMs": 443.678496,
+      "nativeCode": 3,
+      "nativeReason": "answeredElsewhere",
+      "nativeEvidence": "telecom-historical-SET_DISCONNECTED",
+      "correlatedEvents": 1,
+      "endHandlerCalls": 0,
+      "uiAbsenceObservations": 2,
+      "before": {
+        "packageName": "com.android.systemui",
+        "windowId": 8,
+        "callerVisible": true,
+        "answerVisible": true,
+        "declineVisible": true,
+        "traversalComplete": true
+      },
+      "incomingToReportedMs": 500.345954,
+      "reportedToSignalMs": 1222.017767,
+      "visibleBeforeToSignalMs": 0.010115,
+      "firstUiCallerAbsentMs": 1806.911748,
+      "uiScans": 67,
+      "uiCompleteScans": 67,
+      "maximumUiScanMs": 118.528775,
+      "finalUiScans": [
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1691.142949,
+          "returnedMs": 1806.911748
+        },
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1827.676102,
+          "returnedMs": 1834.373328
+        }
+      ]
+    },
+    {
+      "source": "push",
+      "sampleIndex": 1,
+      "acceptedMs": 1.517659,
+      "terminalSnapshotMs": 10.530641,
+      "eventMs": 10.576138,
+      "emptyHookMs": 11.420244,
+      "notificationGoneMs": 64.13964,
+      "uiGoneMs": 1935.218505,
+      "platformGoneMs": 533.948427,
+      "nativeCode": 3,
+      "nativeReason": "answeredElsewhere",
+      "nativeEvidence": "telecom-historical-SET_DISCONNECTED",
+      "correlatedEvents": 1,
+      "endHandlerCalls": 0,
+      "uiAbsenceObservations": 2,
+      "before": {
+        "packageName": "com.android.systemui",
+        "windowId": 8,
+        "callerVisible": true,
+        "answerVisible": true,
+        "declineVisible": true,
+        "traversalComplete": true
+      },
+      "incomingToReportedMs": 343.596327,
+      "reportedToSignalMs": 1177.471623,
+      "visibleBeforeToSignalMs": 0.012048,
+      "firstUiCallerAbsentMs": 1907.702458,
+      "uiScans": 69,
+      "uiCompleteScans": 69,
+      "maximumUiScanMs": 166.30165,
+      "finalUiScans": [
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1752.592302,
+          "returnedMs": 1907.702458
+        },
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1929.324874,
+          "returnedMs": 1935.170513
+        }
+      ]
+    },
+    {
+      "source": "push",
+      "sampleIndex": 2,
+      "acceptedMs": 1.669174,
+      "terminalSnapshotMs": 17.624587,
+      "eventMs": 17.694511,
+      "emptyHookMs": 20.157616,
+      "notificationGoneMs": 54.387067,
+      "uiGoneMs": 1934.18154,
+      "platformGoneMs": 510.679289,
+      "nativeCode": 3,
+      "nativeReason": "answeredElsewhere",
+      "nativeEvidence": "telecom-historical-SET_DISCONNECTED",
+      "correlatedEvents": 1,
+      "endHandlerCalls": 0,
+      "uiAbsenceObservations": 2,
+      "before": {
+        "packageName": "com.android.systemui",
+        "windowId": 8,
+        "callerVisible": true,
+        "answerVisible": true,
+        "declineVisible": true,
+        "traversalComplete": true
+      },
+      "incomingToReportedMs": 452.517701,
+      "reportedToSignalMs": 1187.130602,
+      "visibleBeforeToSignalMs": 0.008893,
+      "firstUiCallerAbsentMs": 1902.406206,
+      "uiScans": 68,
+      "uiCompleteScans": 68,
+      "maximumUiScanMs": 168.279854,
+      "finalUiScans": [
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1734.126352,
+          "returnedMs": 1902.406206
+        },
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1922.857849,
+          "returnedMs": 1934.160178
+        }
+      ]
+    },
+    {
+      "source": "push",
+      "sampleIndex": 3,
+      "acceptedMs": 1.175039,
+      "terminalSnapshotMs": 31.506193,
+      "eventMs": 56.381399,
+      "emptyHookMs": 63.325873,
+      "notificationGoneMs": 66.372286,
+      "uiGoneMs": 1895.371849,
+      "platformGoneMs": 515.672585,
+      "nativeCode": 3,
+      "nativeReason": "answeredElsewhere",
+      "nativeEvidence": "telecom-historical-SET_DISCONNECTED",
+      "correlatedEvents": 1,
+      "endHandlerCalls": 0,
+      "uiAbsenceObservations": 2,
+      "before": {
+        "packageName": "com.android.systemui",
+        "windowId": 8,
+        "callerVisible": true,
+        "answerVisible": true,
+        "declineVisible": true,
+        "traversalComplete": true
+      },
+      "incomingToReportedMs": 525.505573,
+      "reportedToSignalMs": 1073.602053,
+      "visibleBeforeToSignalMs": 0.008903,
+      "firstUiCallerAbsentMs": 1864.034466,
+      "uiScans": 68,
+      "uiCompleteScans": 68,
+      "maximumUiScanMs": 132.787038,
+      "finalUiScans": [
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1745.581499,
+          "returnedMs": 1864.034466
+        },
+        {
+          "sameWindow": true,
+          "complete": true,
+          "callerPresent": false,
+          "requestedMs": 1884.466891,
+          "returnedMs": 1895.346541
+        }
+      ]
+    }
+  ]
+}
