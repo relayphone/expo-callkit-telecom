@@ -104,6 +104,9 @@ class NativeMediaJourneyTest {
             try { withTimeout(240_000) {
                 for ((index, measurement) in measurements.withIndex()) {
                     val (source, sampleIndex) = measurement
+                    // Platform removal is asynchronous to the app snapshot and media close.
+                    // Keep isolation outside PUSH_RECEIVED and use the same barrier in both profiles.
+                    withTimeout(7000) { while (TelecomEvidence.calls().isNotEmpty()) delay(40) }
                     // Isolate each measurement from the previous test/call's audio teardown.
                     withTimeout(5000) { while (context.getSystemService(android.media.AudioManager::class.java).mode != android.media.AudioManager.MODE_NORMAL) delay(25) }
                     val audio = context.getSystemService(android.media.AudioManager::class.java)
@@ -154,7 +157,7 @@ class NativeMediaJourneyTest {
                         val elapsedMs = (first.elapsedRealtimeNanos - requested.elapsedRealtimeNanos) / 1_000_000.0
                         assertTrue("Native answer-to-PCM exceeded bound", elapsedMs in 0.0..3000.0)
                         results += mapOf("credentials" to source, "sampleIndex" to sampleIndex,
-                            "processAgeMs" to processAgeMs, "preanswerAudioMode" to preanswerAudioMode, "preanswerRecording" to preanswerRecording,
+                            "processAgeMs" to processAgeMs, "platformCallsBefore" to 0, "preanswerAudioMode" to preanswerAudioMode, "preanswerRecording" to preanswerRecording,
                             "activeRecording" to activeRecording,
                             "events" to events(serverId).map { mapOf("stage" to it.stage.value,
                                 "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) }, "pushNanos" to pushed.elapsedRealtimeNanos,
@@ -191,6 +194,7 @@ class NativeMediaJourneyTest {
                         engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                         absent(id); stage(serverId, NativeMediaStage.CLOSED); noClient(serverId); owned -= id
                         withTimeout(3000) { while (recording.activeNewCount() != 0) delay(10) }
+                        withTimeout(7000) { while (TelecomEvidence.calls().isNotEmpty()) delay(40) }
                     } finally { recording.close() }
                 }
                 val declinedServer = "${prefix}decline-$stamp"

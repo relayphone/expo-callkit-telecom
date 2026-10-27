@@ -12,7 +12,10 @@ room/peer; the application process remains alive. Process age is retained, so
 these samples must not be presented as five process-cold launches. Answer follows
 PREJOINED plus 150 ms. Prior call cleanup must restore MODE_NORMAL before the
 next invitation; Core may enter MODE_RINGTONE while ringing. Communication mode
-remains gated by native answer/audio authority.
+remains gated by native answer/audio authority. Before PUSH_RECEIVED and after
+cleanup, a bounded platform CallsManager dump must show zero calls. This separates
+app snapshot/media teardown from asynchronous platform removal. The same isolation
+barrier applies to baseline and optimized profiles; it is outside timed phases.
 
 The baseline profile preserves the existing media behavior. Production signaling,
 subscription, capture, playout and route choices are unchanged. The receive-only
