@@ -1,11 +1,10 @@
-# 📞 expo-callkit-telecom — CallKit & Core-Telecom for React Native + Expo (with VoIP push)
+# 📞 expo-callkit-telecom — LiveCommunicationKit & Core-Telecom for React Native + Expo (with VoIP push)
 
 ## Fork v2 rollout
 
 This fork's **`v2` branch** replaces the v1 session/listener API with typed
 conversations. Use the fork source and its lockfiles for evaluation; the inherited
-package version and `bun add expo-callkit-telecom` instructions below do not
-identify a published v2 release.
+package version doesn't identify a published v2 release.
 
 | Platform | v2 status |
 | --- | --- |
@@ -31,24 +30,15 @@ records 40 optimized emulator samples across two runs, all below 300 ms after
 completed pre-warm. This measures decoded remote PCM, excludes cloud push/process
 launch/acoustic latency, and does not establish production percentiles.
 
-## Upstream v1 reference
+## What the module does
 
-The remaining README preserves upstream v1 installation, API and platform
-examples. They are not v2 instructions.
+> An Expo module, written in Swift and Kotlin, that presents your app's calls in the system's call UI: **LiveCommunicationKit** on iOS, through [ios-voip-sdk](https://github.com/relayphone/ios-voip-sdk), and **Jetpack Core-Telecom** on Android, behind one typed TypeScript API. It receives VoIP pushes natively and coordinates call audio; your app owns the media (LiveKit, plain WebRTC, etc.).
 
-> An Expo module — written in Swift and Kotlin — that wraps **CallKit** on iOS and **Jetpack Core-Telecom** on Android with API parity. It owns the system call UI, the audio session, and VoIP push — your app owns the media (LiveKit, plain WebRTC, etc.).
-
-📖 **Full documentation:** [expo-callkit-telecom.mfairley.com](https://expo-callkit-telecom.mfairley.com/)
-
-<p>
-  <a href="https://www.npmjs.com/package/expo-callkit-telecom"><img alt="npm version" src="https://img.shields.io/npm/v/expo-callkit-telecom.svg"></a>
-  <a href="https://www.npmjs.com/package/expo-callkit-telecom"><img alt="npm downloads" src="https://img.shields.io/npm/dm/expo-callkit-telecom.svg"></a>
-  <a href="https://expo-callkit-telecom.mfairley.com/"><img alt="docs" src="https://img.shields.io/badge/docs-online-blue"></a>
-  <img alt="platform" src="https://img.shields.io/badge/platform-iOS%20%7C%20Android-blue">
-  <img alt="license" src="https://img.shields.io/npm/l/expo-callkit-telecom">
-</p>
+📖 **Documentation:** the published site, [expo-callkit-telecom.mfairley.com](https://expo-callkit-telecom.mfairley.com/), describes upstream v1. For v2, use the guides linked above and this branch's [docs](docs/).
 
 <h2 align="center">📱 See it in action</h2>
+
+These recordings show upstream v1's system call UI.
 
 <table align="center">
   <tr>
@@ -79,32 +69,23 @@ examples. They are not v2 instructions.
   </tr>
 </table>
 
-<p align="center"><sub>▶︎ Click an outgoing-call thumbnail above to watch the video. Or see the full demo on the <a href="https://expo-callkit-telecom.mfairley.com/">docs site</a>.</sub></p>
-
 ## ✨ Features
 
-- 📱 **Native calling UI** — CallKit on iOS, Core-Telecom incoming-call notification + full-screen intent on Android
-- 🔔 **VoIP notifications** — APNs VoIP on iOS (PushKit), FCM data messages on Android, parsed natively so calls can be reported from a terminated state
-- 🎵 **Ringtones** — system ringtone for incoming calls, configurable via the config plugin
+- 📱 **System call UI** — LiveCommunicationKit on iOS; on Android, Core-Telecom with a call-style notification and full-screen intent
+- 🔔 **VoIP push** — APNs VoIP pushes through PushKit on iOS, FCM data messages on Android, decoded natively from launch so a call is reported before JavaScript runs
+- 🎵 **Ringtones** — the system ringtone, or a bundled sound, for incoming calls
 - ☎️ **Dialtone** — looped dialtone with fade-in for outgoing calls, configurable
-- 🖼️ **Branded CallKit icon** — show your app's icon on the iOS call screen via `iconTemplateIos`
-- 🎧 **Audio session management** — cross-platform port types (`builtInReceiver`, `builtInSpeaker`, `headphones`, `bluetoothA2DP`, `bluetoothHFP`, `bluetoothLE`, `airPlay`, `hdmi`, `carAudio`, `usbAudio`, `lineOut`)
-- 🔊 **Speaker override** and live route-change events
-- 🎚️ **Mute, hold, video, DTMF** — both directions: app → system and system → app (e.g. native mute button → your media)
-- 🗣️ **Call intents on iOS** — Recents list, Siri ("call Jane")
-- 🧩 **Typed TypeScript API** with a single `CallSession` object that tracks state across the call lifecycle
-
-## 🧪 Verified against
-
-Tested end-to-end on real devices via the runnable `example/` app. Full compatibility matrix: **[Verified against](https://expo-callkit-telecom.mfairley.com/verified-against)**.
+- 🖼️ **App icon on the iOS call UI** — a template image via `iconTemplateIos`
+- 🎧 **Audio routes** — the current route and the available ones, with `useAudioRoutes()` and `selectAudioRoute()`
+- 🎚️ **Mute, hold and tones** — commands from your app, and mute and hold from the system's call UI
+- 🗣️ **Dial requests on iOS** — calls started from Recents, Siri or Contacts arrive as `dialRequest` events
+- 🧩 **Typed conversations API** — immutable `Conversation` snapshots, hooks, one module-scope handler, commands and transport reports
 
 ## 📦 Install
 
-```sh
-bun add expo-callkit-telecom
-```
+v2 isn't published to npm. Build the package from a reviewed checkout of this fork's `v2` branch, as the [Android quick-start](docs/android-quick-start.md) describes, and rebuild the native app.
 
-Your app also needs `expo-notifications` and a `react-native-webrtc` build:
+Your app also needs `expo-notifications` and, on iOS unless `mediaAdapter` is `"none"`, a `react-native-webrtc` build:
 
 ```sh
 bun add @livekit/react-native-webrtc expo-notifications
@@ -139,7 +120,7 @@ With custom sounds and options:
           "defaultRingtoneIos": "ringtone.wav",
           "defaultRingtoneAndroid": "ringtone.wav",
           "defaultDialtone": "dialtone.wav",
-          "iconTemplateIos": "./assets/callkit-icon.png",
+          "iconTemplateIos": "./assets/call-icon.png",
           "incomingCallTimeout": 45,
           "outgoingCallTimeout": 60,
           "fulfillAnswerCallTimeout": 30,
@@ -154,73 +135,56 @@ With custom sounds and options:
 
 Files in `sounds` are copied into the iOS bundle and Android raw resources at prebuild time. The full prop type is `ExpoCallKitTelecomPluginProps` in `plugin/src/`.
 
-`iconTemplateIos` is the app's icon on the iOS CallKit call screen (`CXProviderConfiguration.iconTemplateImageData`). CallKit renders it as a **template** — only the image's alpha channel is used (RGB is ignored) and the system tints it — so provide a ~40×40pt square PNG whose alpha describes the glyph. Android brands the incoming-call UI from the launcher icon automatically, so this option is iOS-only.
+On iOS, the plugin passes these options to LiveCommunicationKit's `ConversationManager.Configuration`:
 
-## 🧠 Concepts
+- `defaultRingtoneIos` becomes `ringtoneName`, the sound resource in the app bundle that rings for incoming calls; `"default"` uses the system ringtone.
+- `iconTemplateIos` becomes `iconTemplateImageData`, which Apple documents only as the PNG data for the app's icon image. The property is named for a template image, so provide a square PNG, about 40×40 points, whose alpha channel describes the glyph. Android's call UI uses the app's launcher icon, so this option is iOS-only.
+- `includesCallsInRecents` becomes `includesConversationInRecents`, whether the system's Recents list includes a call after it ends.
 
-The TS API is organised into three verbs:
+On iOS, `incomingCallTimeout` also bounds how long an outgoing call dials, and `fulfillAnswerCallTimeout` bounds how long a call stays connecting before it ends as failed. The [migration guide](docs/migrating-v1-to-v2.md#ios) describes `mediaAdapter` and the iOS-only `simulator` option.
 
-| Verb         | Direction              | Examples                                                              |
-| ------------ | ---------------------- | --------------------------------------------------------------------- |
-| **Request**  | App → System           | `startOutgoingCall`, `answerCall`, `endCall`, `setMuted`              |
-| **Report**   | App → System (state)   | `reportIncomingCall`, `reportOutgoingCallConnected`, `reportCallEnded` |
-| **Fulfill**  | App → System (ack)     | `fulfillIncomingCallConnected`                                        |
+## 🧠 API
 
-Events flow the other way (System → App) via `addXxxListener`.
+The [migration guide](docs/migrating-v1-to-v2.md) maps every v1 function to its v2 replacement, and the [v2 types](src/conversations/types.ts) document the full model. In short:
+
+- **State** — `getConversations()`, `useConversations()` and `useConversation(id)` read immutable snapshots of every call.
+- **Handler** — one `setConversationHandler({ start, end, join?, hold?, mute?, tones? })`, registered at module scope, places calls and hears about actions.
+- **Commands** — `startConversation`, `joinConversation`, `endConversation`, `setMuted`, `setHeld`, `playTones`, `selectAudioRoute`.
+- **Reports** — `reportConversation(id, { type: "connected" })` and the other transport facts, `reportIncomingConversation(payload)` and `receiveCallEnded(payload)`.
+- **Events** — `useConversationEvent(...)` for signals a snapshot can't show, such as `dialRequest` and `answeredElsewhere`.
 
 ## 🚀 VoIP push payload
 
-When the OS delivers a VoIP push (PushKit on iOS, an FCM data message on Android), the module parses the payload natively — before JS is running — and reports the call to the OS.
-
-The event itself is always the same shape on both transports. All keys are camelCase:
+When a VoIP push arrives (PushKit on iOS, an FCM data message on Android), the module decodes it natively, before JavaScript runs, and reports the call to the system. The invitation is an `IncomingCallPayload` with a typed `Caller`:
 
 ```jsonc
-// IncomingCallEvent (the "inner" event)
 {
-  "eventId": "550e8400-e29b-41d4-a716-446655440000",   // required (UUID), for dedup
-  "serverCallId": "9e7f...",                           // required — your backend's call id
-                                                       //   (distinct from CallSession.id,
-                                                       //    which is the OS-assigned UUID)
-  "hasVideo": false,
-  "startedAt": "2026-01-15T19:42:11.000Z",             // RFC 3339, optional
+  "eventId": "550e8400-e29b-41d4-a716-446655440000",   // required: identifies this delivery, for deduplication
+  "serverCallId": "call-456",                          // required: your backend's call ID
   "caller": {
-    "id": "<caller id>",                               // required — opaque, stable
+    "handleType": "phone",                             // "phone", "email" or "generic"
+    "value": "+14155551234",                           // phone numbers must be E.164
     "displayName": "Jane Smith",
-    "avatarUrl": "https://...",
-    "phoneNumber": "+14155551234",                     // optional; must be E.164 if present
-    "email": "jane@example.com"
+    "hostContactID": "host-contact-42"                 // optional, opaque
   },
-  "metadata": {                                        // optional, opaque pass-through
-    "chatId": "abc-123",
-    "tenantId": "acme-co"
-  }
+  "hasVideo": false,
+  "metadata": { "chatId": "abc-123" }                  // optional, opaque JSON passed through to `payload.metadata`
 }
 ```
 
-Any keys you put under `metadata` are forwarded verbatim from the push payload all the way through to your JS event handler. The lib treats them as opaque — you cast at the read site:
-
-```ts
-Calls.addCallAnsweredListener(({ id }) => {
-  const session = /* lookup */;
-  const chatId = session?.incomingCallEvent?.metadata?.chatId as string | undefined;
-});
-```
-
-Both transports wrap the event under an `incomingCall` key, just at different layers — APNs in the push payload dictionary, FCM in the data block. (The snake_case `incoming_call` is also accepted for backwards compatibility.)
-
 ### 🍎 iOS — APNs VoIP push
 
-Send a VoIP push (`apns-push-type: voip`) whose dictionary payload nests the event under `incomingCall`:
+Send a VoIP push (`apns-push-type: voip`) whose payload nests the invitation under `incomingCall`:
 
 ```jsonc
 {
-  "incomingCall": { /* IncomingCallEvent — see above */ }
+  "incomingCall": { /* IncomingCallPayload — see above */ }
 }
 ```
 
 ### 🤖 Android — FCM data message
 
-FCM data values must be strings, so JSON-encode the inner event and put it under `incomingCall`:
+FCM data values must be strings, so JSON-encode the invitation and put it under `incomingCall`:
 
 ```jsonc
 {
@@ -231,60 +195,27 @@ FCM data values must be strings, so JSON-encode the inner event and put it under
 }
 ```
 
-The module also handles `callEnded` pushes for ending a call from the server (see [platform notes](docs/platform-notes.md#ending-a-call-from-the-server)); every call push carries a unique `eventId`, and repeat deliveries are dropped. Other data messages are forwarded to `expo-notifications`'s service for normal handling.
+On both platforms a `callEnded` message ends a known incoming call from the server (see [platform notes](docs/platform-notes.md#ending-a-call-from-the-server)). On Android, other data messages are forwarded to `expo-notifications`'s service.
+
+## 🔑 Push token
+
+Each platform registers for its pushes at launch. Read the token with `usePushToken()`, which returns `{ type: "apns-voip", value }` on iOS (the hex-encoded PushKit VoIP token) or `{ type: "fcm", value }` on Android, and `null` until a token exists or after it's invalidated. Send it to your backend with its type so it knows which transport to use.
 
 ## 🧪 Example
 
-`example/` contains a runnable Expo app (`example/client/`) and a zero-dep push-sender script (`example/server/`). See their READMEs for setup and how to validate VoIP push end-to-end.
-
-## 🔑 Registering for VoIP push
-
-```ts
-import {
-  registerVoIPPush,
-  useVoIPPushToken,
-} from "expo-callkit-telecom";
-
-// Once, early in app lifecycle:
-registerVoIPPush();
-
-// In a React component:
-function App() {
-  const voip = useVoIPPushToken();
-  useEffect(() => {
-    if (voip) {
-      // voip.type is "APNS_VOIP" on iOS, "FCM" on Android.
-      sendToBackend(voip.token, voip.type);
-    }
-  }, [voip]);
-}
-```
-
-## 📚 API surface
-
-See `src/Calls.ts` for full JSDoc. Main areas:
-
-- **Sessions** — `getActiveCallSession`, `addCallSession{Added,Updated,Removed}Listener`
-- **Outgoing** — `startOutgoingCall`, `addOutgoingCallStartedListener`, `reportOutgoingCallConnected`
-- **Incoming** — `reportIncomingCall`, `addIncomingCallReportedListener`, `answerCall`, `addCallAnsweredListener`, `fulfillIncomingCallConnected`, `failIncomingCallConnected`
-- **End** — `endCall`, `addCallEndedListener`, `reportCallEnded`
-- **Audio** — `getAudioSession`, `setAudioSessionPortOverride`, `prepareAudioSessionForCall`, `addAudioRouteChangedListener`
-- **Mute / Hold / Video / DTMF** — `setMuted`, `setHeld`, `reportVideo`, `playDTMF` and their listeners
-- **VoIP push** — `registerVoIPPush`, `getVoIPPushToken`, `useVoIPPushToken`, `addVoIPPushTokenUpdatedListener`
+`example/` contains a runnable Expo app (`example/client/`) and a push-sender script (`example/server/`). See their READMEs for setup.
 
 ## 📝 Platform notes
 
-- 🍎 **iOS** — requires the `voip` background mode and a VoIP push certificate. Uses CallKit + PushKit + WebRTC's `RTCAudioSession` for manual audio control. Min iOS 16.0.
-- 🤖 **Android** — requires `MANAGE_OWN_CALLS` permission, min SDK 26. Uses `androidx.core:core-telecom`. Incoming calls come via FCM data messages — the config plugin registers `ExpoCallKitTelecomMessagingService` automatically. Firebase is optional: without a `google-services.json`, VoIP push registration is skipped with a warning and calls reported from JS still work.
-- 🎟️ VoIP push token type is reported as `"APNS_VOIP"` on iOS and `"FCM"` on Android — send both to your backend so it knows which transport to use.
+- 🍎 **iOS** — iOS 26 or later. Calls are presented with LiveCommunicationKit through ios-voip-sdk, which the plugin pins in the Podfile. The plugin adds the `voip` and `audio` background modes and the push entitlement; sending VoIP pushes needs an APNs key or VoIP services certificate. With `mediaAdapter` `"webrtc"` or `"livekit"`, the module puts WebRTC's `RTCAudioSession` in manual audio mode, so WebRTC's audio starts when the system activates the call's audio session.
+- 🤖 **Android** — requires `MANAGE_OWN_CALLS` permission, min SDK 26. Uses `androidx.core:core-telecom`. Incoming calls come via FCM data messages — the config plugin registers `ExpoCallKitTelecomMessagingService` automatically.
 
 ## ⏰ Keeping connections alive in the background
 
-This module hands the OS a CallKit/Core-Telecom call, which keeps the *process* alive during a call — but JS timers (`setInterval`, `setTimeout`) and JS-side network heartbeats are still subject to background throttling once the screen locks. If your media stack needs an app-level heartbeat (e.g. a WebSocket signalling channel) to survive the background, pair this module with [`react-native-nitro-keepalive-timer`](https://www.npmjs.com/package/react-native-nitro-keepalive-timer) to get native timers that fire reliably while a call is active.
+This module hands the system a LiveCommunicationKit or Core-Telecom call, which keeps the *process* alive during a call — but JS timers (`setInterval`, `setTimeout`) and JS-side network heartbeats are still subject to background throttling once the screen locks. If your media stack needs an app-level heartbeat (e.g. a WebSocket signalling channel) to survive the background, pair this module with [`react-native-nitro-keepalive-timer`](https://www.npmjs.com/package/react-native-nitro-keepalive-timer) to get native timers that fire reliably while a call is active.
 
 ## 🆚 Comparison with `react-native-callkeep`
 
-[`react-native-callkeep`](https://github.com/react-native-webrtc/react-native-callkeep) is the long-standing React Native library in this space. `expo-callkit-telecom` solves the same problem but is built on the current generation of platform APIs: CallKit on iOS, Jetpack `androidx.core:core-telecom` on Android, Swift + Kotlin, the Expo Modules API with a config plugin, and `RTCAudioSession` coordination for manual-audio WebRTC stacks like LiveKit. It also parses APNs VoIP and FCM data payloads natively, so the cold-start incoming-call case works without app-side glue.
+[`react-native-callkeep`](https://github.com/react-native-webrtc/react-native-callkeep) is the long-standing React Native library in this space, built on CallKit on iOS and `ConnectionService` on Android. `expo-callkit-telecom` v2 uses LiveCommunicationKit on iOS and Jetpack `androidx.core:core-telecom` on Android, Swift + Kotlin, the Expo Modules API with a config plugin, and `RTCAudioSession` coordination for manual-audio WebRTC stacks like LiveKit. It also decodes APNs VoIP and FCM data payloads natively, so the cold-start incoming-call case works without app-side glue.
 
-Full side-by-side, compatibility matrix, and migration notes: **[docs/vs-callkeep.md](docs/vs-callkeep.md)**.
-
+More detail: **[docs/vs-callkeep.md](docs/vs-callkeep.md)**.

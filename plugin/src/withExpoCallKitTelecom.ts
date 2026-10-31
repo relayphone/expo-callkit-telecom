@@ -58,8 +58,8 @@ export type ExpoCallKitTelecomPluginProps = {
    */
   fulfillAnswerCallTimeout?: number;
   /**
-   * Whether completed calls appear in the phone's call history (Recents).
-   * Maps to CallKit's `CXProviderConfiguration.includesCallsInRecents`.
+   * Whether the system's Recents list includes a call after it ends. Sets LiveCommunicationKit's
+   * `ConversationManager.Configuration.includesConversationInRecents`.
    * @default true
    * @platform ios
    */
@@ -73,9 +73,10 @@ export type ExpoCallKitTelecomPluginProps = {
    */
   sounds?: string[];
   /**
-   * The default ringtone for incoming calls on iOS (CallKit).
-   * Can be the filename (with extension) of one of the provided sounds,
-   * or 'default' to use the system ringtone.
+   * The ringtone for incoming calls on iOS: the filename (with extension) of one of the provided
+   * sounds, which the plugin bundles with the app, or 'default' for the system ringtone. Sets
+   * LiveCommunicationKit's `ConversationManager.Configuration.ringtoneName`, the name of the
+   * sound resource in the app bundle for the app's ringtone.
    * @default 'default'
    * @platform ios
    */
@@ -95,12 +96,12 @@ export type ExpoCallKitTelecomPluginProps = {
    */
   defaultDialtone?: string;
   /**
-   * Path (relative to project root) to a PNG shown as the app's icon on the
-   * iOS CallKit call screen (`CXProviderConfiguration.iconTemplateImageData`).
-   * CallKit renders it as a *template*: only the alpha channel is used (RGB is
-   * ignored) and the system tints it. A ~40x40pt square PNG whose alpha
-   * describes the glyph is recommended. When omitted, CallKit derives a mask
-   * from the app icon, which renders as a solid square for opaque icons.
+   * Path (relative to the project root) to a PNG of the app's icon for the system's call UI on
+   * iOS. The plugin bundles it with the app, and the module passes its data to
+   * LiveCommunicationKit's `ConversationManager.Configuration.iconTemplateImageData`, which
+   * Apple documents only as the PNG data for the app's icon image. The property is named for a
+   * template image, so provide a square PNG, about 40x40 points, whose alpha channel describes
+   * the glyph. When omitted, the module passes no icon.
    * @platform ios
    */
   iconTemplateIos?: string;

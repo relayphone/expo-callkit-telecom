@@ -69,7 +69,7 @@ The right column is the current v2 runtime on both platforms.
 | `playDTMF`, `addDTMFListener` | `playTones(id, digits)` and optional `handler.tones`, whose context includes `digits`. |
 | `getAudioSession`, `addAudioRouteChangedListener`, `setAudioSessionPortOverride` | `useAudioRoutes()` and `selectAudioRoute(route.id)` using a currently available opaque route ID. There is no speaker boolean override. |
 | `addAudioSessionActivatedListener`, `addAudioSessionDeactivatedListener` | `useConversationEvent("audioActivated", callback)` / `"audioDeactivated"`. Watch the missing/failed activation events too. |
-| `setRTCAudioSessionConfiguration`, `prepareAudioSessionForCall`, `restoreAudioSession` | Remove JS audio-session ownership. Native media adapters coordinate activation and teardown with Core-Telecom. |
+| `setRTCAudioSessionConfiguration`, `prepareAudioSessionForCall`, `restoreAudioSession` | Remove JS audio-session ownership. Native media adapters coordinate activation and teardown with Core-Telecom on Android and LiveCommunicationKit on iOS (see `mediaAdapter` under [iOS](#ios)). |
 | `getCaptureSession` | No equivalent v2 export. The host manages permission/UI needs; conversation state is not a camera-permission API. |
 | `registerVoIPPush`, `getVoIPPushToken`, `useVoIPPushToken`, `addVoIPPushTokenUpdatedListener` | Native registration starts at launch; use `usePushToken()` or the `pushTokenUpdated` hook event. `{ token, type: "APNS_VOIP" / "FCM" }` becomes `{ value, type: "apns-voip" / "fcm" }`, or `null`. |
 | `addCallIntentReceivedListener` | Shared replacement: `useConversationEvent("dialRequest", ...)`. On iOS, a call intent from Recents, Siri or Contacts that arrives before a listener waits for the first `conversationEvent` listener. |
@@ -196,9 +196,11 @@ the app is reported and the user can answer before JavaScript runs.
 - **Native answer.** The SDK answers, ends, holds, mutes and plays tones itself, then
   tells the app. `joinPolicy` and media credentials are Android-only. Only `start`,
   and `join` from a call preview, wait for the handler: resolving them confirms that
-  the app placed the call, and rejecting them ends it. `end`, `hold`, `mute` and
-  `tones` reach the handler after they happened, and their results are ignored. An
-  answer doesn't reach the handler; observe `status === "connecting"`.
+  the app placed the call. Rejecting them, or missing their deadline, fails a start,
+  whose conversation ends with `failure.kind` `notPlaced`, and returns a join to its
+  call preview. `end`, `hold`, `mute` and `tones` reach the handler after they
+  happened, and their results are ignored. An answer doesn't reach the handler;
+  observe `status === "connecting"`.
 - **Call previews.** A call that the system filtered (Do Not Disturb, a Focus or the
   block list), or that was answered elsewhere, becomes `status === "previewing"`
   with a `previewReason`, instead of ringing or ending. `joinConversation` joins it
@@ -209,6 +211,9 @@ the app is reported and the user can answer before JavaScript runs.
 - **Media.** `mediaAdapter: "webrtc"` or `"livekit"` coordinates WebRTC's
   `RTCAudioSession` in manual audio mode, so the app must link a WebRTC build, such
   as `@livekit/react-native-webrtc`. `"none"` leaves the audio session to the app.
+- **System call UI.** `includesCallsInRecents`, `defaultRingtoneIos` and
+  `iconTemplateIos` set LiveCommunicationKit's `ConversationManager.Configuration`;
+  see [Getting started](./getting-started.md).
 - **Simulator.** `simulator: true` presents calls in the iOS Simulator in Debug
   builds, with ios-voip-sdk's simulator runtime. Release builds and devices are
   unaffected.

@@ -10,7 +10,7 @@ const ogImage = `${siteUrl}/og-image.png`;
 export default defineConfig({
   title: "expo-callkit-telecom",
   description:
-    "CallKit and Core-Telecom for React Native and Expo — VoIP push, incoming call UI, LiveKit-friendly audio. A modern react-native-callkeep alternative.",
+    "LiveCommunicationKit and Core-Telecom for React Native and Expo — VoIP push, incoming call UI, LiveKit-friendly audio. A modern react-native-callkeep alternative.",
 
   base,
 
@@ -62,7 +62,7 @@ export default defineConfig({
       "meta",
       {
         property: "og:title",
-        content: "expo-callkit-telecom — CallKit & Core-Telecom for React Native + Expo",
+        content: "expo-callkit-telecom — LiveCommunicationKit & Core-Telecom for React Native + Expo",
       },
     ],
     [
@@ -94,7 +94,7 @@ export default defineConfig({
       {
         property: "og:image:alt",
         content:
-          "expo-callkit-telecom — CallKit & Core-Telecom for React Native and Expo (VoIP push · LiveKit-friendly audio)",
+          "expo-callkit-telecom — LiveCommunicationKit & Core-Telecom for React Native and Expo (VoIP push · LiveKit-friendly audio)",
       },
     ],
     [
@@ -108,7 +108,7 @@ export default defineConfig({
       "meta",
       {
         name: "twitter:title",
-        content: "expo-callkit-telecom — CallKit & Core-Telecom for React Native + Expo",
+        content: "expo-callkit-telecom — LiveCommunicationKit & Core-Telecom for React Native + Expo",
       },
     ],
     [
@@ -131,7 +131,7 @@ export default defineConfig({
       {
         name: "twitter:image:alt",
         content:
-          "expo-callkit-telecom — CallKit & Core-Telecom for React Native and Expo (VoIP push · LiveKit-friendly audio)",
+          "expo-callkit-telecom — LiveCommunicationKit & Core-Telecom for React Native and Expo (VoIP push · LiveKit-friendly audio)",
       },
     ],
     [
@@ -142,7 +142,7 @@ export default defineConfig({
         "@type": "SoftwareSourceCode",
         name: "expo-callkit-telecom",
         description:
-          "CallKit and Core-Telecom for React Native and Expo — VoIP push, incoming call UI, LiveKit-friendly audio. A modern react-native-callkeep alternative.",
+          "LiveCommunicationKit and Core-Telecom for React Native and Expo — VoIP push, incoming call UI, LiveKit-friendly audio. A modern react-native-callkeep alternative.",
         codeRepository: "https://github.com/mfairley/expo-callkit-telecom",
         url: `${siteUrl}/`,
         license: "https://opensource.org/licenses/MIT",
@@ -174,7 +174,7 @@ export default defineConfig({
 
     nav: [
       { text: "v2 migration", link: "/migrating-v1-to-v2" },
-      { text: "v1 guide", link: "/getting-started" },
+      { text: "Getting started", link: "/getting-started" },
       { text: "v2 API", link: "/api/" },
       { text: "vs callkeep", link: "/vs-callkeep" },
       { text: "npm", link: "https://www.npmjs.com/package/expo-callkit-telecom" },
@@ -190,14 +190,14 @@ export default defineConfig({
         ],
       },
       {
-        text: "Upstream v1 introduction",
+        text: "Introduction",
         items: [
           { text: "Overview", link: "/" },
           { text: "Getting started", link: "/getting-started" },
         ],
       },
       {
-        text: "Upstream v1 reference",
+        text: "Reference",
         items: [
           { text: "VoIP push payload", link: "/voip-push" },
           { text: "Platform notes", link: "/platform-notes" },

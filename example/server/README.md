@@ -60,9 +60,9 @@ bun send-test-push.ts --production          # iOS prod APNs (default: sandbox)
 ## Validating
 
 1. Run the client app on a real device.
-2. Copy the *VoIP device token* logged to the client's console (`VoIP device token: ...`) into `.env` (`APNS_DEVICE_TOKEN` on iOS, `FCM_TOKEN` on Android).
+2. Copy the push token from `usePushToken()` into `.env`: its `value` is `APNS_DEVICE_TOKEN` when the type is `apns-voip` (iOS) and `FCM_TOKEN` when it's `fcm` (Android). The example screen only shows whether registration succeeded, so log the value from your build.
 3. Run `bun send-test-push.ts`. The script works the same regardless of whether the client is foregrounded, backgrounded, or force-quit — force-quit is just the most interesting case, since the native parser has to wake the app from cold.
-4. The OS delivers the push, the native parser reads the payload, and CallKit / Telecom shows the call with the info from the push (caller name, server call id, etc.). The *Session* card on the client UI shows the parsed event verbatim.
+4. The OS delivers the push, the native parser reads the payload, and LiveCommunicationKit (iOS) or Core-Telecom (Android) shows the call with the caller from the push. The client lists the conversation with its caller and status.
 
 
 The v2 incoming `caller` child uses the shared typed `Caller` contract. The

@@ -22,4 +22,5 @@ result JSON. Root ADB is used only to read this test image's private result file
 the example APK itself remains a normal release build. No Firebase credentials
 are needed for foreground reports; push delivery requires an app Firebase setup.
 
-The iOS v2 SDK adapter and compile-only CI are a separate foundation slice.
+On iOS, `bun run ios` builds the example for the Simulator, where Debug builds present calls
+with the plugin's `simulator` option. The `v2 iOS` workflow builds it for the Simulator.

@@ -1,19 +1,19 @@
 # expo-callkit-telecom
 
-> CallKit and Core-Telecom for React Native and Expo — VoIP push, incoming call UI, LiveKit-friendly audio. A modern react-native-callkeep alternative.
+> LiveCommunicationKit and Core-Telecom for React Native and Expo — VoIP push, incoming call UI, LiveKit-friendly audio. A modern react-native-callkeep alternative.
 
-`expo-callkit-telecom` is an Expo module (Swift + Kotlin) that wraps Apple's CallKit on iOS and Jetpack `androidx.core-telecom` on Android behind one typed TypeScript API. The module owns the system call UI, the audio session, and VoIP push parsing; the host app owns the media (LiveKit, plain WebRTC, etc.). An Expo config plugin handles entitlements, background modes, microphone permission, ringtone bundling, and FCM service registration at prebuild time.
+`expo-callkit-telecom` is an Expo module (Swift + Kotlin) that presents calls with Apple's LiveCommunicationKit on iOS, through ios-voip-sdk, and Jetpack `androidx.core-telecom` on Android, behind one typed TypeScript conversations API. The module presents calls in the system call UI, coordinates call audio and decodes VoIP pushes; the host app owns the media (LiveKit, plain WebRTC, etc.). An Expo config plugin handles entitlements, background modes, microphone permission, ringtone bundling, and FCM service registration at prebuild time.
 
-Minimum platforms: iOS 16.0, Android API 26, Expo SDK 55. Verified end-to-end on iOS 26 + Android 15 with Expo SDK 55, React Native 0.83, the New Architecture enabled, and the LiveKit React Native SDK.
+Minimum platforms for v2: iOS 26.0, Android API 26, Expo SDK 55. Upstream v1 (iOS 16.0, CallKit) was verified end-to-end on iOS 26 + Android 15 with Expo SDK 55, React Native 0.83, the New Architecture enabled, and the LiveKit React Native SDK.
 
 ## Docs
 
-- [Overview](https://mfairley.github.io/expo-callkit-telecom/): features, supported versions, and authoritative references for CallKit, Core-Telecom, VoIP push, and LiveKit.
-- [Getting started](https://mfairley.github.io/expo-callkit-telecom/getting-started): install, config plugin setup, the request/report/fulfill mental model, and VoIP push registration.
-- [VoIP push payload](https://mfairley.github.io/expo-callkit-telecom/voip-push): canonical `IncomingCallEvent` shape, APNs VoIP (PushKit) payload, and FCM data-message payload.
+- [Overview](https://mfairley.github.io/expo-callkit-telecom/): features, supported versions, and authoritative references for LiveCommunicationKit, Core-Telecom, VoIP push, and LiveKit.
+- [Getting started](https://mfairley.github.io/expo-callkit-telecom/getting-started): install, config plugin setup, the conversations API, and push tokens.
+- [VoIP push payload](https://mfairley.github.io/expo-callkit-telecom/voip-push): canonical `IncomingCallPayload` shape, APNs VoIP (PushKit) payload, and FCM data-message payload.
 - [Platform notes](https://mfairley.github.io/expo-callkit-telecom/platform-notes): iOS / Android requirements and background keep-alive guidance.
 - [vs react-native-callkeep](https://mfairley.github.io/expo-callkit-telecom/vs-callkeep): side-by-side comparison, when to pick which, and migration sketch.
-- [API reference](https://mfairley.github.io/expo-callkit-telecom/api/): generated TypeScript reference for sessions, requests, reporters, fulfillers, events, audio, capture, VoIP push, hooks, and permissions.
+- [API reference](https://mfairley.github.io/expo-callkit-telecom/api/): generated TypeScript reference for conversations, the handler, commands, reports, events, audio routes, push tokens, and hooks.
 
 ## Source
 
