@@ -12,7 +12,7 @@ description: Platform requirements for expo-callkit-telecom v2 — iOS 26+ (Live
 - The plugin adds the `voip` and `audio` background modes and the `aps-environment` entitlement. Sending VoIP pushes needs an APNs authentication key or a VoIP services certificate.
 - With `mediaAdapter` `"webrtc"` (the default) or `"livekit"`, the module puts [WebRTC](https://webrtc.org/)'s `RTCAudioSession` in manual audio mode: WebRTC's audio starts when the system activates the call's audio session and stops when it deactivates it. With `"none"`, the app manages the audio session.
 - A `callEnded` VoIP push, in the same format as [Android's data message](#ending-a-call-from-the-server), or `receiveCallEnded`, ends a known incoming call. Before iOS 26.4 every VoIP push must report a call, so for such a push the SDK reports the call again when the system still presents it, or else reports a placeholder call and ends it at once.
-- A call that the system filters, for example under a Focus, or that is answered elsewhere, becomes a call preview instead of ringing. See [iOS](./migrating-v1-to-v2#ios) for this and the other differences from Android.
+- A call that the system filters, for example under a Focus, or that is answered elsewhere, becomes a call preview instead of ringing. See [iOS](./migrating-v1-to-v2#ios) for this and the other differences from Android, and [iOS: Focus and call previews](./ios-call-previews) for reaching the user with call notifications.
 
 ## Expo
 

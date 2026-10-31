@@ -439,7 +439,76 @@ export interface ConversationConfiguration {
   readonly audioActivationTimeoutMs?: number;
   /** iOS: presents calls in the Simulator in Debug builds. Defaults to false. */
   readonly simulator?: boolean;
+  /**
+   * iOS: posts a call notification for each call that Do Not Disturb or a Focus filtered.
+   * Defaults to false. See {@link CallNotificationEvent}.
+   */
+  readonly callNotifications?: boolean;
 }
+
+/** iOS: what a call notification tells the user. @category Events */
+export type CallNotificationKind = "incoming" | "missed";
+
+/**
+ * iOS: why the system didn't post a call notification.
+ * - `notAuthorized`: the user hasn't allowed the app's notifications. The module never asks;
+ *   ask with expo-notifications.
+ * - `intentRejected`: the system didn't make it a communication notification, for example
+ *   because the app lacks the Communication Notifications capability.
+ * - `postFailed`: the system refused the notification.
+ * @category Events
+ */
+export type CallNotificationError =
+  | "notAuthorized"
+  | "intentRejected"
+  | "postFailed";
+
+/**
+ * iOS: a call notification, a communication notification from the caller about a conversation
+ * that the system filtered. A Focus lets it through for the people it allows, and it never rings.
+ * @category Events
+ */
+export interface CallNotification {
+  readonly conversationId: ConversationId;
+  /** `incoming` while the conversation is a call preview; `missed` once it ended unjoined. */
+  readonly kind: CallNotificationKind;
+  readonly caller: Participant;
+  readonly video: boolean;
+}
+
+/**
+ * iOS, with the `callNotifications` plugin option: what happened to a conversation's call
+ * notification. The module posts one when the system filters an incoming conversation because of
+ * Do Not Disturb or a Focus, and it becomes a call preview. It withdraws the notification when
+ * the conversation is joined here, and replaces it with a `missed` one when the conversation ends
+ * without being joined here.
+ * @category Events
+ */
+export type CallNotificationEvent =
+  | ({ readonly type: "posted" } & CallNotification)
+  | { readonly type: "withdrawn"; readonly conversationId: ConversationId }
+  | ({
+      readonly type: "failed";
+      readonly error: CallNotificationError;
+    } & CallNotification);
+
+/**
+ * iOS: where the user's response to a call notification led. The module routes the responses
+ * natively, as they arrive, before JavaScript loads.
+ * - `joining`: the conversation is live in a call preview here, and the module asked to join it,
+ *   because the user chose Join or tapped the notification. The join handler places it, as for
+ *   `joinConversation`.
+ * - `callBack`: the conversation is over. Show the caller, and call them back with
+ *   `startConversation({ to: caller, video })`.
+ * @category Events
+ */
+export type CallNotificationRoute =
+  | { readonly type: "joining"; readonly conversationId: ConversationId }
+  | {
+      readonly type: "callBack";
+      readonly caller: Participant;
+      readonly video: boolean;
+    };
 
 /** Push registers at launch; null state means unavailable or invalidated. @category Push */
 export interface PushToken {
@@ -460,7 +529,19 @@ export interface ConversationEventMap {
   readonly audioActivationMissing: { readonly conversationId: ConversationId };
   readonly audioActivationFailed: { readonly conversationId: ConversationId };
   readonly pushTokenUpdated: PushToken | null;
+  /**
+   * iOS: the user asked to call a handle from Recents, Siri or Contacts. The latest request waits
+   * for a listener. With `callNotifications`, a request for a party whose conversation is live in
+   * a call preview joins that conversation instead.
+   */
   readonly dialRequest: { readonly handle: string; readonly video: boolean };
+  /** iOS, with `callNotifications`: what happened to a call notification. */
+  readonly callNotification: CallNotificationEvent;
+  /**
+   * iOS, with `callNotifications`: where the user's response to a call notification led. The
+   * latest route waits for a listener, so a response that launched the app reaches it.
+   */
+  readonly callNotificationRoute: CallNotificationRoute;
   /**
    * Correlated server ownership signal, emitted after the snapshot in which the conversation
    * ended or, on iOS, became a call preview.

@@ -1,5 +1,4 @@
 public import ExpoModulesCore
-import Intents
 public import UIKit
 
 /// Starts the SDK's client when the app launches, before JavaScript runs, and passes the system's
@@ -16,18 +15,15 @@ public final class ExpoCallKitTelecomAppDelegateSubscriber: ExpoAppDelegateSubsc
     return true
   }
 
-  /// Delivers a call intent from Recents, Siri or Contacts as a `dialRequest` conversation event.
+  /// Passes a request to call someone from Recents, Siri or Contacts to the module, which
+  /// delivers it as a `dialRequest` conversation event, or, with call notifications, joins the
+  /// party's call preview.
   public func application(
     _ application: UIApplication,
     continue userActivity: NSUserActivity,
     restorationHandler: @escaping ([any UIUserActivityRestoring]?) -> Void
   ) -> Bool {
     defer { restorationHandler(nil) }
-    guard
-      let intent = userActivity.interaction?.intent as? INStartCallIntent,
-      let handle = intent.contacts?.first?.personHandle?.value
-    else { return false }
-    CallService.shared.dialRequested(handle: handle, video: intent.callCapability == .videoCall)
-    return true
+    return CallService.shared.continueCall(userActivity)
   }
 }
