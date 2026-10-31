@@ -148,11 +148,27 @@ private func json(_ value: [String: Any]) throws -> JSONValue {
 }
 
 extension CommandError {
-  /// The error that JavaScript receives. The TypeScript API decodes the failure from the
-  /// message's `expo-conversation:` line.
-  var exception: Exception {
-    let details = (try? json.data()).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-    return Exception(
-      name: "ConversationError", description: "expo-conversation:\(details)", code: code.rawValue)
+  /// The error that JavaScript receives.
+  var exception: Exception { ConversationException(self) }
+}
+
+/// A command's failure as an Expo exception. The TypeScript API decodes the failure from the
+/// message's `expo-conversation:` line.
+///
+/// Expo builds the JavaScript error's message from the exception's `reason`, not from its
+/// `description`, so the failure goes in `reason`.
+private final class ConversationException: Exception, @unchecked Sendable {
+  private let details: String
+
+  init(_ error: CommandError) {
+    let details = (try? error.json.data()).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    self.details = details
+    super.init(
+      name: "ConversationError", description: "expo-conversation:\(details)",
+      code: error.code.rawValue)
+  }
+
+  override var reason: String {
+    "expo-conversation:\(details)"
   }
 }
