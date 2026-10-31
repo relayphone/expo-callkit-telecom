@@ -327,7 +327,13 @@ final class CallService {
       let origin = takeRequest {
         if case .start(let start) = $0 { start.id == call.id } else { false }
       }
-      gate(.start, call, origin: origin)
+      // JavaScript is running, so no handler will place the call: it fails now instead of at
+      // the placement deadline.
+      if origin == .app, !handlers.isAttached, !handlers.acceptsUnhandled {
+        notPlaced(call.id, CommandError(code: .deadlineExceeded, message: "No handler is set"))
+      } else {
+        gate(.start, call, origin: origin)
+      }
     case .joinRequested(let call):
       gate(.join, call, origin: takeRequest { $0 == .join(call.id) })
     case .performed(let action, let call):

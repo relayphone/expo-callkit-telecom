@@ -53,9 +53,11 @@ final class HandlerActions {
   /// Whether a start or join that no handler received before its deadline is placed anyway.
   var acceptsUnhandled = false
 
+  /// Whether JavaScript attached a handler.
+  private(set) var isAttached = false
+
   private var gated: [Gated] = []
   private var generation = 0
-  private var isAttached = false
   private let send: @MainActor (String, JSONValue) -> Void
   private let conversation: @MainActor (CallID) -> JSONValue?
   private let complete: @MainActor (CallID, Outcome) -> Void

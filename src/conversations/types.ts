@@ -493,7 +493,9 @@ export interface ConversationsApi {
    *
    * Rejects, and the conversation ends as `failed`, when the call isn't placed: with
    * `handler_failed` when the start handler rejects, and with `deadline_exceeded` when it misses
-   * its deadline. On iOS the conversation's `ended.failure` is `notPlaced`.
+   * its deadline or no handler is set and `unhandledAction` isn't `"accept"`. Without a handler,
+   * iOS rejects at once; Android waits for one until the deadline. On iOS the conversation's
+   * `ended.failure` is `notPlaced`.
    */
   startConversation(options: StartConversationOptions): Promise<ConversationId>;
   joinConversation(id: ConversationId): Promise<void>;
