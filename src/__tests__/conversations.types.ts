@@ -17,6 +17,8 @@ import type {
   CallEndedPayload,
   ConversationEventMap,
   EndedReason,
+  IncomingFilterReason,
+  PreviewReason,
 } from "../conversations";
 
 declare const api: ConversationsApi;
@@ -72,9 +74,28 @@ if (action.kind === "hold") {
   // @ts-expect-error A hold action carries no tone digits.
   void action.digits;
 }
+if (conversation.status === "previewing") {
+  const incoming: "incoming" = conversation.direction;
+  const reason: PreviewReason = conversation.previewReason;
+  if (reason.type === "filtered") {
+    const cause: IncomingFilterReason = reason.cause;
+    void cause;
+  }
+  void incoming;
+}
+if (outcome.status === "previewed") {
+  // A call preview is a conversation, which the app can join.
+  void api.joinConversation(outcome.id);
+  const reason: PreviewReason = outcome.reason;
+  void reason;
+}
+if (outcome.status === "notShown") {
+  // @ts-expect-error A call that doesn't appear has no conversation id.
+  void outcome.id;
+}
 if (outcome.status === "reported") {
   void api.endConversation(outcome.id);
-} else {
+} else if (outcome.status !== "previewed") {
   // @ts-expect-error Filtered/failed reports cannot manufacture a conversation id.
   void outcome.id;
 }

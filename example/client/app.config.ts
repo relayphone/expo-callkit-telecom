@@ -42,7 +42,7 @@ const config: ExpoConfig = {
     [
       "expo-build-properties",
       {
-        ios: { deploymentTarget: "17.4", enableSceneSupport: true },
+        ios: { deploymentTarget: "26.0", enableSceneSupport: true },
         android: { minSdkVersion: 26 },
       },
     ],
@@ -58,6 +58,8 @@ const config: ExpoConfig = {
         defaultDialtone: "dialtone.wav",
         iconTemplateIos: "./assets/callkit-icon.png",
         joinPolicy: { type: "handler" },
+        // Debug builds present calls in the iOS Simulator.
+        simulator: true,
       },
     ],
   ],

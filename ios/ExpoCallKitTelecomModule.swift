@@ -1,503 +1,157 @@
-import CallKit
-import ExpoModulesCore
+public import ExpoModulesCore
+import Foundation
+import Synchronization
 
-public class ExpoCallKitTelecomModule: Module {
+/// The `ExpoCallKitTelecom` native module: the TypeScript API's `NativeTransport` on iOS.
+///
+/// It forwards every call to ``CallService``, which runs the SDK's client from launch. Expo calls
+/// the module from its own threads, and the module keeps no state of its own; it only sends
+/// events, which ExpoModulesCore delivers on the JavaScript thread.
+public final class ExpoCallKitTelecomModule: Module, @unchecked Sendable {
   public func definition() -> ModuleDefinition {
     Name("ExpoCallKitTelecom")
 
-    // MARK: - Events
-
     Events(
-      CallSessionAddedEvent.name,
-      CallSessionUpdatedEvent.name,
-      CallSessionRemovedEvent.name,
-      AudioSessionActivatedEvent.name,
-      AudioSessionDeactivatedEvent.name,
-      AudioRouteChangedEvent.name,
-      IncomingCallReportedEvent.name,
-      OutgoingCallStartedEvent.name,
-      CallAnsweredEvent.name,
-      CallEndedEvent.name,
-      CallReportedEnded.name,
-      SetMutedActionEvent.name,
-      VideoChangedEvent.name,
-      SetHeldActionEvent.name,
-      DTMFEvent.name,
-      CallIntentReceivedEvent.name,
-      VoIPPushTokenUpdatedEvent.name
-    )
-
-    // MARK: - Lifecycle
+      "conversationsChanged", "audioRoutesChanged", "pushTokenUpdated", "handlerAction",
+      "actionCancelled", "conversationEvent")
 
     OnCreate { [weak self] in
-      Task { @MainActor in
-        CallEventEmitter.shared.module = self
+      guard let self else { return }
+      let owner = ObjectIdentifier(self)
+      onMain { [weak self] service in
+        service.attach(owner: owner) { name, body in
+          self?.sendEvent(name, body.foundationObject)
+        }
       }
     }
 
-    // Register per-event observers
-    OnStartObserving(CallSessionAddedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: CallSessionAddedEvent.name
-        )
-      }
-    }
-    OnStopObserving(CallSessionAddedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: CallSessionAddedEvent.name
-        )
-      }
+    OnDestroy {
+      let owner = ObjectIdentifier(self)
+      onMain { $0.detach(owner: owner) }
     }
 
-    OnStartObserving(CallSessionUpdatedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: CallSessionUpdatedEvent.name
-        )
-      }
-    }
-    OnStopObserving(CallSessionUpdatedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: CallSessionUpdatedEvent.name
-        )
-      }
+    OnStartObserving("conversationEvent") {
+      onMain { $0.observeConversationEvents(true) }
     }
 
-    OnStartObserving(CallSessionRemovedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: CallSessionRemovedEvent.name
-        )
-      }
-    }
-    OnStopObserving(CallSessionRemovedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: CallSessionRemovedEvent.name
-        )
-      }
+    OnStopObserving("conversationEvent") {
+      onMain { $0.observeConversationEvents(false) }
     }
 
-    OnStartObserving(AudioSessionActivatedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: AudioSessionActivatedEvent.name
-        )
-      }
-    }
-    OnStopObserving(AudioSessionActivatedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: AudioSessionActivatedEvent.name
-        )
-      }
+    Property("snapshot") { () -> [String: Any] in
+      CallService.snapshot.withLock { $0 }.foundationObject
     }
 
-    OnStartObserving(AudioSessionDeactivatedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: AudioSessionDeactivatedEvent.name
-        )
-      }
-    }
-    OnStopObserving(AudioSessionDeactivatedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: AudioSessionDeactivatedEvent.name
-        )
-      }
+    Property("mediaAdapter") { () -> String in
+      Settings.main.mediaAdapter
     }
 
-    OnStartObserving(AudioRouteChangedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: AudioRouteChangedEvent.name
-        )
-      }
-    }
-    OnStopObserving(AudioRouteChangedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: AudioRouteChangedEvent.name
-        )
-      }
+    AsyncFunction("getConversations") { () async -> [String: Any] in
+      await CallService.shared.snapshotNow().foundationObject
     }
 
-    OnStartObserving(IncomingCallReportedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: IncomingCallReportedEvent.name
-        )
-      }
-    }
-    OnStopObserving(IncomingCallReportedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: IncomingCallReportedEvent.name
-        )
-      }
+    AsyncFunction("getAudioRoutes") { () async -> [String: Any] in
+      await CallService.shared.audioRoutes.foundationObject
     }
 
-    OnStartObserving(OutgoingCallStartedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: OutgoingCallStartedEvent.name
-        )
-      }
-    }
-    OnStopObserving(OutgoingCallStartedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: OutgoingCallStartedEvent.name
-        )
-      }
+    AsyncFunction("getPushToken") { () async -> [String: Any] in
+      await CallService.shared.pushToken.foundationObject
     }
 
-    OnStartObserving(CallAnsweredEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: CallAnsweredEvent.name
-        )
-      }
-    }
-    OnStopObserving(CallAnsweredEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: CallAnsweredEvent.name
-        )
-      }
+    AsyncFunction("startConversation") { (options: [String: Any]) async throws -> String in
+      let options = try json(options)
+      return try await bridged { try await CallService.shared.startConversation(options) }
     }
 
-    OnStartObserving(CallEndedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: CallEndedEvent.name
-        )
-      }
-    }
-    OnStopObserving(CallEndedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: CallEndedEvent.name
-        )
-      }
+    AsyncFunction("joinConversation") { (id: String) async throws in
+      try await bridged { try await CallService.shared.joinConversation(id) }
     }
 
-    OnStartObserving(CallReportedEnded.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: CallReportedEnded.name
-        )
-      }
-    }
-    OnStopObserving(CallReportedEnded.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: CallReportedEnded.name
-        )
-      }
+    AsyncFunction("endConversation") { (id: String) async throws in
+      try await bridged { try await CallService.shared.endConversation(id) }
     }
 
-    OnStartObserving(SetMutedActionEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: SetMutedActionEvent.name
-        )
-      }
-    }
-    OnStopObserving(SetMutedActionEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: SetMutedActionEvent.name
-        )
-      }
+    AsyncFunction("setHeld") { (id: String, held: Bool) async throws in
+      try await bridged { try await CallService.shared.setHeld(id, held) }
     }
 
-    OnStartObserving(VideoChangedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: VideoChangedEvent.name
-        )
-      }
-    }
-    OnStopObserving(VideoChangedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: VideoChangedEvent.name
-        )
-      }
+    AsyncFunction("setMuted") { (id: String, muted: Bool) async throws in
+      try await bridged { try await CallService.shared.setMuted(id, muted) }
     }
 
-    OnStartObserving(SetHeldActionEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: SetHeldActionEvent.name
-        )
-      }
-    }
-    OnStopObserving(SetHeldActionEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: SetHeldActionEvent.name
-        )
-      }
+    AsyncFunction("playTones") { (id: String, digits: String) async throws in
+      try await bridged { try await CallService.shared.playTones(id, digits) }
     }
 
-    OnStartObserving(DTMFEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: DTMFEvent.name
-        )
-      }
-    }
-    OnStopObserving(DTMFEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(eventName: DTMFEvent.name)
-      }
+    AsyncFunction("mergeConversations") { (first: String, second: String) async throws in
+      try await bridged { try await CallService.shared.mergeConversations(first, second) }
     }
 
-    OnStartObserving(CallIntentReceivedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: CallIntentReceivedEvent.name
-        )
-      }
-    }
-    OnStopObserving(CallIntentReceivedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: CallIntentReceivedEvent.name
-        )
-      }
+    AsyncFunction("reportConversation") { (id: String, report: [String: Any]) async throws in
+      let report = try json(report)
+      try await bridged { try await CallService.shared.reportConversation(id, report) }
     }
 
-    OnStartObserving(VoIPPushTokenUpdatedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.startObserving(
-          eventName: VoIPPushTokenUpdatedEvent.name
-        )
-      }
-    }
-    OnStopObserving(VoIPPushTokenUpdatedEvent.name) {
-      Task { @MainActor in
-        CallEventEmitter.shared.stopObserving(
-          eventName: VoIPPushTokenUpdatedEvent.name
-        )
-      }
+    AsyncFunction("reportIncomingConversation") {
+      (payload: [String: Any]) async throws -> [String: Any] in
+      let payload = try json(payload)
+      return try await bridged {
+        try await CallService.shared.reportIncomingConversation(payload)
+      }.foundationObject
     }
 
-    // MARK: - Call Session
-
-    AsyncFunction("getActiveCallSession") { () -> [String: Any]? in
-      guard let session = await CallManager.shared.store.firstSession
-      else {
-        return nil
-      }
-      return session.toDictionary()
+    AsyncFunction("receiveCallEnded") { (payload: [String: Any]) async throws -> Bool in
+      let payload = try json(payload)
+      return try await bridged { try await CallService.shared.receiveCallEnded(payload) }
     }
 
-    // MARK: - Audio Session
-
-    Function("getAudioSessionState") { () -> [String: Any] in
-      return AudioManager.shared.getAudioSessionState()
+    AsyncFunction("selectAudioRoute") { (id: String) async throws in
+      try await bridged { try await CallService.shared.selectAudioRoute(id) }
     }
 
-    Function("setRTCAudioSessionConfiguration") { (hasVideo: Bool) in
-      AudioManager.shared.setRTCAudioSessionConfiguration(hasVideo: hasVideo)
+    Function("setHandlerAttached") { (attached: Bool, generation: Int) in
+      onMain { $0.setHandlerAttached(attached, generation: generation) }
     }
 
-    Function("prepareAudioSessionForCall") { (hasVideo: Bool) in
-      AudioManager.shared.prepareAudioSessionForCall(hasVideo: hasVideo)
+    // Dial requests wait for a conversation event listener instead; see `OnStartObserving`.
+    Function("setDialRequestListenerAttached") { (_: Bool, _: Int) in }
+
+    Function("settleAction") {
+      (actionID: String, generation: Int, success: Bool, _: [String: Any]?) in
+      onMain { $0.settleAction(actionID, generation: generation, success: success) }
     }
+  }
+}
 
-    Function("restoreAudioSession") {
-      AudioManager.shared.restoreAudioSession()
-    }
+/// Runs work on the main actor in the order that JavaScript asked for it.
+private func onMain(_ work: @escaping @MainActor @Sendable (CallService) -> Void) {
+  DispatchQueue.main.async {
+    MainActor.assumeIsolated { work(CallService.shared) }
+  }
+}
 
-    Function("setAudioSessionPortOverride") { (enabled: Bool) in
-      AudioManager.shared.setAudioSessionPortOverride(enabled)
-    }
+/// Runs a command, throwing its failure as the error that JavaScript receives.
+private func bridged<Result: Sendable>(_ command: () async throws -> Result) async throws -> Result
+{
+  do {
+    return try await command()
+  } catch let error as CommandError {
+    throw error.exception
+  }
+}
 
-    // MARK: - Capture Session
+/// Converts arguments from JavaScript, or throws the TypeScript API's invalid arguments error.
+private func json(_ value: [String: Any]) throws -> JSON {
+  guard let json = JSON(value) else { throw CommandError.invalidArguments.exception }
+  return json
+}
 
-    Function("getCaptureSessionState") { () -> [String: Any] in
-      return CaptureSessionManager.shared.getCaptureSessionState()
-    }
-
-    // MARK: - Start Outgoing Call
-
-    AsyncFunction("startOutgoingCall") {
-      (recipient: CallParticipantRecord, options: CallOptionsRecord)
-        -> String in
-      let id = try await CallManager.shared.startOutgoingCall(
-        recipient: recipient.toModel(),
-        options: options.toModel()
-      )
-      return id.uuidString
-    }
-
-    // MARK: - Report Incoming Call
-
-    AsyncFunction("reportIncomingCall") {
-      (event: IncomingCallEventRecord) in
-      let incomingCallEvent = try event.toModel()
-      try await CallManager.shared.reportIncomingCall(
-        event: incomingCallEvent
-      )
-    }
-
-    // MARK: - Answer Call
-
-    AsyncFunction("answerCall") { (id: String) in
-      guard let uuid = UUID(uuidString: id) else {
-        throw Exception(
-          name: "InvalidUUID",
-          description: "Invalid call ID: \(id)"
-        )
-      }
-
-      try await CallManager.shared.answerCall(for: uuid)
-    }
-
-    AsyncFunction("fulfillIncomingCallAnswered") { (requestId: String) in
-      guard let requestUUID = UUID(uuidString: requestId) else {
-        throw Exception(
-          name: "InvalidUUID",
-          description: "Invalid request ID: \(requestId)"
-        )
-      }
-
-      await CallManager.shared.fulfillIncomingCall(requestId: requestUUID)
-    }
-
-    AsyncFunction("failIncomingCallConnected") { (requestId: String) in
-      guard let requestUUID = UUID(uuidString: requestId) else {
-        throw Exception(
-          name: "InvalidUUID",
-          description: "Invalid request ID: \(requestId)"
-        )
-      }
-
-      await CallManager.shared.failIncomingCallConnected(requestId: requestUUID)
-    }
-
-    AsyncFunction("reportOutgoingCallConnected") { (id: String) in
-      guard let uuid = UUID(uuidString: id) else {
-        throw Exception(
-          name: "InvalidUUID",
-          description: "Invalid call ID: \(id)"
-        )
-      }
-
-      await CallManager.shared.reportOutgoingCallConnected(for: uuid)
-    }
-
-    // MARK: - End Call
-
-    AsyncFunction("endCall") { (id: String) in
-      guard let uuid = UUID(uuidString: id) else {
-        throw Exception(
-          name: "InvalidUUID",
-          description: "Invalid call ID: \(id)"
-        )
-      }
-
-      try await CallManager.shared.endCall(for: uuid)
-    }
-
-    AsyncFunction("reportCallEnded") { (id: String, reason: String) in
-      guard let uuid = UUID(uuidString: id) else {
-        throw Exception(
-          name: "InvalidUUID",
-          description: "Invalid call ID: \(id)"
-        )
-      }
-
-      let endedReason: CXCallEndedReason
-      switch reason {
-      case "failed": endedReason = .failed
-      case "remoteEnded": endedReason = .remoteEnded
-      case "unanswered": endedReason = .unanswered
-      case "answeredElsewhere": endedReason = .answeredElsewhere
-      case "declinedElsewhere": endedReason = .declinedElsewhere
-      default: endedReason = .failed
-      }
-
-      await CallManager.shared.reportCallEnded(
-        for: uuid,
-        reason: endedReason
-      )
-    }
-
-    // MARK: - Mute Support
-
-    AsyncFunction("setMuted") { (id: String, muted: Bool) in
-      guard let uuid = UUID(uuidString: id) else {
-        throw Exception(
-          name: "InvalidUUID",
-          description: "Invalid call ID: \(id)"
-        )
-      }
-
-      try await CallManager.shared.setMuted(for: uuid, muted: muted)
-    }
-
-    // MARK: - Video Support
-
-    AsyncFunction("reportVideo") { (id: String, enabled: Bool) in
-      guard let uuid = UUID(uuidString: id) else {
-        throw Exception(
-          name: "InvalidUUID",
-          description: "Invalid call ID: \(id)"
-        )
-      }
-
-      await CallManager.shared.reportVideo(for: uuid, enabled: enabled)
-    }
-
-    // MARK: - Hold Support
-
-    AsyncFunction("setHeld") { (id: String, onHold: Bool) in
-      guard let uuid = UUID(uuidString: id) else {
-        throw Exception(
-          name: "InvalidUUID",
-          description: "Invalid call ID: \(id)"
-        )
-      }
-
-      try await CallManager.shared.setHeld(for: uuid, onHold: onHold)
-    }
-
-    // MARK: - DTMF Support
-
-    AsyncFunction("playDTMF") { (id: String, digits: String) in
-      guard let uuid = UUID(uuidString: id) else {
-        throw Exception(
-          name: "InvalidUUID",
-          description: "Invalid call ID: \(id)"
-        )
-      }
-
-      try await CallManager.shared.playDTMF(for: uuid, digits: digits)
-    }
-
-    // MARK: - VoIP Push
-
-    Function("registerVoIPPush") {
-      Task { @MainActor in
-        VoIPPushManager.shared.register()
-      }
-    }
-
-    Function("getVoIPPushToken") { () -> [String: Any?] in
-      return [
-        "token": VoIPPushManager.shared.token as Any?,
-        "type": "APNS_VOIP",
-      ]
-    }
-
+extension CommandError {
+  /// The error that JavaScript receives. The TypeScript API decodes the failure from the
+  /// message's `expo-conversation:` line.
+  var exception: Exception {
+    let details = (try? json.data()).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    return Exception(
+      name: "ConversationError", description: "expo-conversation:\(details)", code: code.rawValue)
   }
 }

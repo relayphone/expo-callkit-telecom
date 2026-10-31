@@ -1,0 +1,174 @@
+import Foundation
+import IosVoipSDK
+
+/// Why a command from JavaScript failed, in the codes that the TypeScript API decodes.
+struct CommandError: Error {
+  enum Code: String {
+    case invalidArguments = "invalid_arguments"
+    case unknownConversation = "unknown_conversation"
+    case unsupported
+    case conversation
+    case duplicateSDKLinkage = "duplicate_sdk_linkage"
+  }
+
+  let code: Code
+  let message: String
+
+  static let invalidArguments = CommandError(code: .invalidArguments, message: "Invalid arguments")
+  static let unknownConversation = CommandError(
+    code: .unknownConversation, message: "Unknown conversation")
+
+  /// The SDK's refusal of an action.
+  init(_ error: ActionError) {
+    switch error {
+    case .unknownCall:
+      self = .unknownConversation
+    case .notAllowed:
+      self.init(
+        code: .invalidArguments, message: "The conversation's status doesn't allow this action")
+    case .unsupported:
+      self.init(code: .unsupported, message: "This action isn't supported")
+    case .refused:
+      self.init(code: .conversation, message: "The system refused the action")
+    }
+  }
+
+  init(code: Code, message: String) {
+    self.code = code
+    self.message = message
+  }
+
+  /// The failure as the TypeScript API's `ConversationFailure`.
+  var json: JSON {
+    .object(["code": .string(code.rawValue), "message": .string(message)])
+  }
+}
+
+extension Party {
+  /// The party that a TypeScript `Participant` names, reached at its phone number, else its email
+  /// address, else its ID.
+  ///
+  /// A phone number may contain spaces, parentheses, hyphens and periods, which are removed; it
+  /// must then be in E.164 format.
+  init(participant: JSON) throws(CommandError) {
+    let handle: Handle
+    do {
+      if var number = participant["phoneNumber"]?.string {
+        number.removeAll { " ()-.".contains($0) }
+        handle = try Handle(kind: .phoneNumber, value: number)
+      } else if let email = participant["email"]?.string {
+        handle = try Handle(kind: .emailAddress, value: email)
+      } else if let id = participant["id"]?.string {
+        handle = try Handle(kind: .generic, value: id)
+      } else {
+        throw CommandError.invalidArguments
+      }
+    } catch {
+      throw .invalidArguments
+    }
+    let name = participant["displayName"]?.string
+    self.init(handle: handle, displayName: name?.isEmpty == false ? name : nil)
+  }
+
+  /// The party as a TypeScript `Participant`, identified by its presented handle.
+  var participant: JSON {
+    var fields: [String: JSON] = ["id": .string(presentedHandle.value)]
+    if let displayName { fields["displayName"] = .string(displayName) }
+    switch presentedHandle.kind {
+    case .phoneNumber: fields["phoneNumber"] = .string(presentedHandle.value)
+    case .emailAddress: fields["email"] = .string(presentedHandle.value)
+    case .generic: break
+    }
+    return .object(fields)
+  }
+}
+
+extension FilterCause {
+  /// The TypeScript API's `IncomingFilterReason`.
+  var json: JSON {
+    switch self {
+    case .doNotDisturb: .string("doNotDisturb")
+    case .blockList: .string("blockList")
+    case .unspecified: .string("other")
+    }
+  }
+}
+
+extension PreviewReason {
+  /// The TypeScript API's `PreviewReason`.
+  var json: JSON {
+    switch self {
+    case .filtered(let cause): .object(["type": .string("filtered"), "cause": cause.json])
+    case .answeredElsewhere: .object(["type": .string("answeredElsewhere")])
+    case .policy: .object(["type": .string("policy")])
+    }
+  }
+}
+
+extension EndReason {
+  /// The TypeScript API's `EndedReason`.
+  ///
+  /// A call ends as filtered only when the presentation policy doesn't preview filtered calls,
+  /// which this module never configures, so the TypeScript API has no reason for it.
+  var json: JSON {
+    switch self {
+    case .endedHere: .string("local")
+    case .endedRemotely: .string("remoteEnded")
+    case .unanswered: .string("unanswered")
+    case .answeredElsewhere: .string("answeredElsewhere")
+    case .declinedElsewhere: .string("declinedElsewhere")
+    case .filtered, .failed: .string("failed")
+    }
+  }
+}
+
+extension PresentationOutcome {
+  /// The TypeScript API's `IncomingConversationOutcome` for a call with the given ID.
+  func json(id: CallID) -> JSON {
+    switch self {
+    case .presented:
+      .object(["status": .string("reported"), "id": .string(id.rawValue)])
+    case .previewed(let reason):
+      .object(["status": .string("previewed"), "id": .string(id.rawValue), "reason": reason.json])
+    case .notShown:
+      .object(["status": .string("notShown")])
+    case .filtered(let cause):
+      .object(["status": .string("filtered"), "reason": cause.json])
+    case .refused(.atCapacity):
+      .object(["status": .string("atCapacity")])
+    case .refused:
+      .object([
+        "status": .string("failed"),
+        "error": CommandError(code: .conversation, message: "The system refused the call").json,
+      ])
+    }
+  }
+}
+
+extension CallStatus {
+  /// The fields of a TypeScript `Conversation` that its status determines.
+  ///
+  /// A call on hold is `held`. The TypeScript API has no reconnecting status, and its reports
+  /// can't make a call reconnect, so a reconnecting call is `connecting`.
+  func fields(isOnHold: Bool, endedAt: Date) -> [String: JSON] {
+    switch self {
+    case .ringing:
+      ["status": .string("ringing")]
+    case .previewing(let reason):
+      ["status": .string("previewing"), "previewReason": reason.json]
+    case .ended(let reason):
+      [
+        "status": .string("ended"),
+        "ended": .object(["at": .date(endedAt), "reason": reason.json]),
+      ]
+    case _ where isOnHold:
+      ["status": .string("held")]
+    case .dialing:
+      ["status": .string("dialing")]
+    case .connecting, .reconnecting:
+      ["status": .string("connecting")]
+    case .connected:
+      ["status": .string("connected")]
+    }
+  }
+}

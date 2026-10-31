@@ -13,7 +13,7 @@ head:
 hero:
   name: expo-callkit-telecom
   text: CallKit & Core-Telecom for React Native + Expo
-  tagline: "Fork v2 has an Android conversations API; iOS v2 is pending M3.5 (draft PR #33). The demonstrations below describe upstream v1."
+  tagline: "Fork v2 has a conversations API on Android and iOS. The demonstrations below describe upstream v1."
   actions:
     - theme: brand
       text: Android v2 quick-start
@@ -55,8 +55,7 @@ This homepage and its demonstrations describe upstream v1. The fork's `v2`
 branch uses a breaking conversations API on Android: start with the
 [v1 → v2 migration](./migrating-v1-to-v2.md) and
 [Android quick-start](./android-quick-start.md).
-**iOS v2 is pending M3.5**; [draft #33](https://github.com/relayphone/expo-callkit-telecom/pull/33)
-is an unmerged adapter spike, not a shipped iOS v2 implementation.
+On iOS, v2 runs over ios-voip-sdk; see [iOS](./migrating-v1-to-v2.md#ios).
 
 ## See it in action on iOS and Android
 

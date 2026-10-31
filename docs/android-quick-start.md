@@ -1,10 +1,9 @@
 # Android v2 quick-start
 
 This guide uses the fork's **`v2` branch**, not a published npm v2 release.
-Android uses Core-Telecom and native FCM intake. **iOS v2 is pending M3.5**;
-the [draft adapter spike #33](https://github.com/relayphone/expo-callkit-telecom/pull/33)
-does not ship full iOS runtime/media integration. For API replacements and
-breaking changes, start with [Migrating from v1](./migrating-v1-to-v2.md).
+Android uses Core-Telecom and native FCM intake. For iOS, see
+[iOS](./migrating-v1-to-v2.md#ios). For API replacements and breaking changes,
+start with [Migrating from v1](./migrating-v1-to-v2.md).
 
 ## Run the example's signaling journey
 
@@ -210,7 +209,7 @@ needed to inspect the checked results.
 
 ## DND, contacts and repeat callers
 
-| Allowance | Android Core-Telecom, API 35 emulator | iPhone 13/iOS 27 LCK research; iOS v2 pending M3.5 |
+| Allowance | Android Core-Telecom, API 35 emulator | iPhone 13/iOS 27 LCK research |
 | --- | --- | --- |
 | Contact/person allowed | Matching contacts rang under Contacts/Anyone; starred contacts also rang under Starred, 3/3 per cell in each lane. | Caller-only People allowance remained filtered with no call UI. |
 | Repeat callers enabled | Second genuine call from an otherwise excluded caller rang, 3/3 per cell in each lane. | The second call 69.4 s later remained filtered with no call UI. |
@@ -221,8 +220,8 @@ exact `tel:` handles matched against actual contacts. It observes ringtone
 playback, not physical sound. The linked pinned iPhone research has one sample
 per measured row and no acoustic/haptic or CallKit qualification; app allowance
 did admit its tested LCK calls. Neither result is a universal platform guarantee.
-**iOS v2 remains pending M3.5** ([draft #33](https://github.com/relayphone/expo-callkit-telecom/pull/33));
-those iPhone findings are SDK research, not shipped fork behavior.
+Those iPhone findings are SDK research, not measurements of this module; on iOS a
+filtered call becomes a call preview rather than ringing.
 
 On Android the host can read `NotificationManager.currentInterruptionFilter`
 and the effective consolidated policy. On API 33+, caller-specific

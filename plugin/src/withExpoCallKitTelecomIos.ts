@@ -3,16 +3,20 @@ import {
   IOSConfig,
   withEntitlementsPlist,
   withInfoPlist,
+  withPodfile,
+  withPodfileProperties,
   withXcodeProject,
 } from "expo/config-plugins";
 import { copyFileSync, existsSync } from "fs";
 import { basename, resolve } from "path";
 
 import {
+  DEFAULT_CALLING_FRAMEWORK,
   DEFAULT_FULFILL_ANSWER_CALL_TIMEOUT,
   DEFAULT_INCLUDES_CALLS_IN_RECENTS,
   DEFAULT_INCOMING_CALL_TIMEOUT,
-  DEFAULT_OUTGOING_CALL_TIMEOUT,
+  IOS_VOIP_SDK_REPOSITORY,
+  IOS_VOIP_SDK_REVISION,
 } from "./constants";
 import type { ExpoCallKitTelecomPluginProps } from "./withExpoCallKitTelecom";
 
@@ -102,23 +106,91 @@ const withSiriIntents: ConfigPlugin = (config) => {
 };
 
 /**
- * Configures call timeout values in Info.plist.
+ * Configures call timeout values in Info.plist. The SDK's ring deadline covers both incoming
+ * rings and outgoing dialing, so iOS has no separate outgoing timeout.
  */
 const withTimeouts: ConfigPlugin<{
   incomingCallTimeout?: number;
-  outgoingCallTimeout?: number;
   fulfillAnswerCallTimeout?: number;
-}> = (
-  config,
-  { incomingCallTimeout, outgoingCallTimeout, fulfillAnswerCallTimeout },
-) => {
+}> = (config, { incomingCallTimeout, fulfillAnswerCallTimeout }) => {
   return withInfoPlist(config, (config) => {
     config.modResults.ExpoCallKitTelecomIncomingCallTimeout =
       incomingCallTimeout ?? DEFAULT_INCOMING_CALL_TIMEOUT;
-    config.modResults.ExpoCallKitTelecomOutgoingCallTimeout =
-      outgoingCallTimeout ?? DEFAULT_OUTGOING_CALL_TIMEOUT;
     config.modResults.ExpoCallKitTelecomFulfillAnswerCallTimeout =
       fulfillAnswerCallTimeout ?? DEFAULT_FULFILL_ANSWER_CALL_TIMEOUT;
+    return config;
+  });
+};
+
+const CALLING_FRAMEWORKS: readonly string[] = ["liveCommunicationKit", "callKit"];
+const MEDIA_ADAPTERS: readonly string[] = ["webrtc", "livekit", "none"];
+const SDK_SOURCE_MARKER = "# expo-callkit-telecom: ios-voip-sdk source";
+
+/**
+ * Adds the ios-voip-sdk pod's source to the Podfile, after `use_expo_modules!`. The module's
+ * podspec chooses the SDK's subspecs from the Podfile properties. Running it again replaces the
+ * line it added.
+ */
+export function addSDKSource(podfile: string): string {
+  const lines = podfile
+    .split("\n")
+    .filter((line) => !line.includes(SDK_SOURCE_MARKER));
+  const anchor = lines.findIndex((line) => /^\s*use_expo_modules!/.test(line));
+  if (anchor < 0) {
+    throw new Error(
+      `${ERROR_MSG_PREFIX}Unable to find use_expo_modules! in the Podfile.`,
+    );
+  }
+  const indent = /^\s*/.exec(lines[anchor] ?? "")?.[0] ?? "";
+  lines.splice(
+    anchor + 1,
+    0,
+    `${indent}pod 'IosVoipSDK/Core', :git => '${IOS_VOIP_SDK_REPOSITORY}', ` +
+      `:commit => '${IOS_VOIP_SDK_REVISION}' ${SDK_SOURCE_MARKER}`,
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Selects the calling framework, the media integration and the Debug simulator runtime for the
+ * module's podspec, and adds the SDK's source to the Podfile. Regenerate the iOS project after
+ * changing them.
+ */
+const withCallCore: ConfigPlugin<{
+  callingFramework?: string;
+  mediaAdapter?: string;
+  simulator?: boolean;
+  unhandledAction?: string;
+}> = (config, { callingFramework, mediaAdapter, simulator, unhandledAction }) => {
+  const framework = callingFramework ?? DEFAULT_CALLING_FRAMEWORK;
+  if (!CALLING_FRAMEWORKS.includes(framework)) {
+    throw new Error(
+      `${ERROR_MSG_PREFIX}"callingFramework" must be one of ` +
+        `${CALLING_FRAMEWORKS.join(", ")}.`,
+    );
+  }
+  const media = mediaAdapter ?? "webrtc";
+  if (!MEDIA_ADAPTERS.includes(media)) {
+    throw new Error(
+      `${ERROR_MSG_PREFIX}"mediaAdapter" must be one of ${MEDIA_ADAPTERS.join(", ")}.`,
+    );
+  }
+  config = withPodfileProperties(config, (config) => {
+    config.modResults["expo-callkit-telecom.callingFramework"] = framework;
+    config.modResults["expo-callkit-telecom.mediaAdapter"] = media;
+    config.modResults["expo-callkit-telecom.simulator"] = String(
+      simulator ?? false,
+    );
+    return config;
+  });
+  config = withPodfile(config, (config) => {
+    config.modResults.contents = addSDKSource(config.modResults.contents);
+    return config;
+  });
+  return withInfoPlist(config, (config) => {
+    config.modResults.ExpoCallKitTelecomMediaAdapter = media;
+    config.modResults.ExpoCallKitTelecomUnhandledAction =
+      unhandledAction ?? "fail";
     return config;
   });
 };
@@ -247,38 +319,6 @@ const withDefaultRingtone: ConfigPlugin<{
 };
 
 /**
- * Configures the default dialtone for outgoing calls in Info.plist.
- */
-const withDefaultDialtone: ConfigPlugin<{
-  sounds?: string[];
-  defaultDialtone?: string;
-}> = (config, { sounds, defaultDialtone }) => {
-  if (!defaultDialtone) {
-    return config;
-  }
-
-  const soundFilenames = sounds?.map((s) => basename(s)) ?? [];
-
-  if (soundFilenames.length === 0) {
-    throw new Error(
-      `${ERROR_MSG_PREFIX}"defaultDialtone" was specified but no ` +
-        `sounds were provided.`,
-    );
-  }
-  if (!soundFilenames.includes(defaultDialtone)) {
-    throw new Error(
-      `${ERROR_MSG_PREFIX}"defaultDialtone" must be one of the provided ` +
-        `sounds (${soundFilenames.join(", ")}).`,
-    );
-  }
-
-  return withInfoPlist(config, (config) => {
-    config.modResults.ExpoCallKitTelecomDefaultDialtone = defaultDialtone;
-    return config;
-  });
-};
-
-/**
  * Bundles a CallKit icon template into the iOS app and records its filename in
  * Info.plist, so the native side can load it into
  * `CXProviderConfiguration.iconTemplateImageData`.
@@ -340,22 +380,29 @@ export const withExpoCallKitTelecomIos: ConfigPlugin<ExpoCallKitTelecomPluginPro
     cameraPermission,
     microphonePermission,
     incomingCallTimeout,
-    outgoingCallTimeout,
     fulfillAnswerCallTimeout,
     includesCallsInRecents,
     sounds,
     defaultRingtoneIos,
-    defaultDialtone,
     iconTemplateIos,
+    callingFramework,
+    mediaAdapter,
+    simulator,
+    unhandledAction,
   },
 ) => {
+  config = withCallCore(config, {
+    callingFramework,
+    mediaAdapter,
+    simulator,
+    unhandledAction,
+  });
   config = withPermissions(config, { cameraPermission, microphonePermission });
   config = withPushNotificationEntitlement(config);
   config = withBackgroundModes(config);
   config = withSiriIntents(config);
   config = withTimeouts(config, {
     incomingCallTimeout,
-    outgoingCallTimeout,
     fulfillAnswerCallTimeout,
   });
   config = withRecents(config, { includesCallsInRecents });
@@ -364,7 +411,6 @@ export const withExpoCallKitTelecomIos: ConfigPlugin<ExpoCallKitTelecomPluginPro
     sounds,
     defaultRingtone: defaultRingtoneIos,
   });
-  config = withDefaultDialtone(config, { sounds, defaultDialtone });
   config = withIconTemplate(config, { sounds, iconTemplateIos });
 
   return config;
