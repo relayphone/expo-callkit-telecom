@@ -24,4 +24,4 @@ export const DEFAULT_CALLING_FRAMEWORK: CallingFramework = "liveCommunicationKit
 /** The ios-voip-sdk source that the iOS module builds against. */
 export const IOS_VOIP_SDK_REPOSITORY =
   "https://github.com/relayphone/ios-voip-sdk.git";
-export const IOS_VOIP_SDK_REVISION = "793b34f5e3ae5415a25abaf30b0f9fd2f9b5bbbe";
+export const IOS_VOIP_SDK_REVISION = "0ade3da9cbadd4841ef9cc6aa20ac33d575d01e5";
