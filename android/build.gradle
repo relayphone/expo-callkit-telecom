@@ -6,6 +6,15 @@ plugins {
 group = 'expo.modules.callkittelecom'
 version = '0.1.0'
 
+// The config plugin writes the mediaAdapter option to gradle.properties; regenerate the Android
+// project after changing it. "livekit" adds the native media engine: livekit-android, its WebRTC
+// build and JitPack repository, and OkHttp for the built-in HTTPS credentials fetcher.
+def mediaAdapter = findProperty('expo-callkit-telecom.mediaAdapter') ?: 'webrtc'
+if (!(mediaAdapter in ['webrtc', 'livekit', 'none'])) {
+  throw new GradleException("ExpoCallKitTelecom: expo-callkit-telecom.mediaAdapter must be webrtc, livekit or none.")
+}
+def nativeMediaEngine = mediaAdapter == 'livekit'
+
 android {
   namespace "expo.modules.callkittelecom"
   defaultConfig {
@@ -15,15 +24,22 @@ android {
   lintOptions {
     abortOnError false
   }
+  sourceSets {
+    main.java.srcDir(nativeMediaEngine ? 'src/livekit/java' : 'src/withoutLivekit/java')
+  }
 }
 
-repositories {
-  maven { url "https://jitpack.io"; content { includeGroup "com.github.davidliu" } }
+if (nativeMediaEngine) {
+  repositories {
+    maven { url "https://jitpack.io"; content { includeGroup "com.github.davidliu" } }
+  }
 }
 
 dependencies {
-  implementation "io.livekit:livekit-android:2.29.2"
-  implementation "com.squareup.okhttp3:okhttp:4.12.0"
+  if (nativeMediaEngine) {
+    implementation "io.livekit:livekit-android:2.29.2"
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+  }
   compileOnly "com.facebook.react:react-android"
   implementation "androidx.core:core-telecom:1.0.1"
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2"

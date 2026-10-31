@@ -166,6 +166,9 @@ remain for Android's heads-up minimum. See the [contract and measured limits](./
 Android's default policy is native answer plus pre-warm. Select the native media
 provider and credential source in typed plugin configuration, rebuild, and
 register any native fetcher/authentication provider during `Application.onCreate`.
+The built-in LiveKit and WebRTC sessions and the HTTPS credentials fetcher run on
+the LiveKit media engine, which only `mediaAdapter: "livekit"` adds to the build;
+without it, register your own session in `NativeMediaRegistry.factories`.
 There is no JS credential callback or feature flag. Reporting to Core happens
 first; then permitted invitations warm native media and the existing JS runtime.
 Remote subscription/decoding stays ready with output muted and physical capture

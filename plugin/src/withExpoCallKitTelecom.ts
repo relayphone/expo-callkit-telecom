@@ -15,6 +15,13 @@ export type ExpoCallKitTelecomPluginProps = {
   /**
    * On iOS, "webrtc" and "livekit" both coordinate WebRTC's `RTCAudioSession`, and "none" leaves
    * the audio session to the app.
+   *
+   * On Android, "livekit" adds the native media engine to the build: livekit-android, its WebRTC
+   * build and JitPack repository, and OkHttp. Android's built-in LiveKit and WebRTC sessions and its
+   * HTTPS credentials fetcher run on it, and the default `joinPolicy` uses LiveKit media. With
+   * "webrtc" or "none", the build adds none of them, and native media needs a session registered in
+   * `NativeMediaRegistry.factories` and credentials from a registered native fetcher. A native
+   * `joinPolicy` with LiveKit media needs "livekit".
    * @default "webrtc"
    */
   mediaAdapter?: MediaAdapter;

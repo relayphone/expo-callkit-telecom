@@ -2,7 +2,6 @@ package expo.modules.callkittelecom.conversations
 
 import java.net.URI
 import java.net.URLEncoder
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.*
@@ -12,15 +11,6 @@ import org.json.JSONObject
 import org.json.JSONArray
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-
-/** The application reads its native-held authentication; this must not wait for JavaScript. */
-data class NativeMediaAuthentication(val bearer: String, val deviceId: String)
-
-object NativeMediaAuthenticationProviders {
-    val providers = ConcurrentHashMap<String, suspend () -> NativeMediaAuthentication>()
-}
-
-class MediaCredentialsUnavailable(val status: Int) : Exception("Media credentials unavailable")
 
 /** Built-in HTTPS fetcher. No redirects, credentials in URLs, or credential logging. */
 internal class NativeHttpCredentials(private val client: OkHttpClient = defaultClient) {

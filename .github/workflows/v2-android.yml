@@ -101,3 +101,6 @@ jobs:
           CI: '1'
       - run: ./gradlew :expo-callkit-telecom:compileDebugKotlin --no-daemon --max-workers=2 --stacktrace
         working-directory: example/client/android
+      # The example leaves out the LiveKit media engine; compile the module with it as well.
+      - run: ./gradlew :expo-callkit-telecom:compileDebugKotlin -Pexpo-callkit-telecom.mediaAdapter=livekit --no-daemon --max-workers=2 --stacktrace
+        working-directory: example/client/android

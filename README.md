@@ -8,7 +8,7 @@ package version doesn't identify a published v2 release.
 
 | Platform | v2 status |
 | --- | --- |
-| Android | Implemented on this branch: Core-Telecom, native FCM intake, native answer/pre-warm, typed incoming outcomes and server-end signals. Emulator and release Expo journeys are checked in CI. |
+| Android | Implemented on this branch: Core-Telecom, native FCM intake, native answer/pre-warm, typed incoming outcomes and server-end signals. The built-in LiveKit and WebRTC media sessions are opt-in with `mediaAdapter: "livekit"`. Emulator and release Expo journeys are checked in CI. |
 | iOS | Implemented on this branch over [ios-voip-sdk](https://github.com/relayphone/ios-voip-sdk)'s `VoIPClient`: LiveCommunicationKit, PushKit intake from launch, native answer, call previews and WebRTC `RTCAudioSession` audio. iOS 26 or later; the example is built for the Simulator in CI. See [iOS](docs/migrating-v1-to-v2.md#ios). |
 
 Start with the [v1 → v2 migration guide](docs/migrating-v1-to-v2.md) and

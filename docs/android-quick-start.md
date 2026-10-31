@@ -54,6 +54,17 @@ setup and is not part of the emulator latency measurements.
 
 The Android default is native answering with pre-warm. Choose an explicit typed
 configuration for your host rather than relying on the demo's handler policy.
+
+The built-in media sessions run on the LiveKit media engine: livekit-android, its
+WebRTC build and OkHttp, from Maven Central and JitPack. Only
+`mediaAdapter: "livekit"` adds it to the app's build. That covers the built-in
+LiveKit session, the built-in raw WebRTC session, which reuses LiveKit's WebRTC
+runtime, and the built-in HTTPS credentials fetcher. With `"webrtc"`, the default, or `"none"`, the
+build has no media dependency: native media then needs your own session in
+`NativeMediaRegistry.factories` and credentials from a named native fetcher.
+Prebuild fails for a native `joinPolicy` with `media: "livekit"` but without
+`mediaAdapter: "livekit"`.
+
 For built-in LiveKit with pushed credentials and a native HTTPS fallback:
 
 ```ts
@@ -72,8 +83,8 @@ const joinPolicy = {
 } satisfies JoinPolicy;
 
 // Place this tuple in app.config.ts's expo.plugins array, then rebuild:
-const callingPlugin: [string, { joinPolicy: JoinPolicy }] = [
-  "expo-callkit-telecom", { joinPolicy },
+const callingPlugin: [string, { mediaAdapter: "livekit"; joinPolicy: JoinPolicy }] = [
+  "expo-callkit-telecom", { mediaAdapter: "livekit", joinPolicy },
 ];
 ```
 
@@ -87,7 +98,8 @@ redirects and bounds network work. The native fetcher alternative is
 `credentials: { type: "nativeFetcher", name: "your-native-fetcher" }`, registered
 in `NativeMediaRegistry.fetchers` at launch. No bearer belongs in plugin config.
 
-For raw WebRTC, select `media: "webrtc"` with the HTTP or named native fetcher;
+For raw WebRTC, keep `mediaAdapter: "livekit"` and select `media: "webrtc"` with
+the HTTP or named native fetcher;
 implement the [SDP/state endpoint contract](./contracts/android-webrtc.md).
 The shared `incomingCall.media` push object is LiveKit-only; WebRTC credentials
 come from its native fetcher. Read the complete

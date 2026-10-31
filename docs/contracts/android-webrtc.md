@@ -2,7 +2,9 @@
 
 The built-in `media: "webrtc"` session supports audio with a call-scoped HTTPS
 SDP exchange. It reuses the exact pinned LiveKit2.29.2 WebRTC runtime and its
-initialization/resource owner; it does not join a LiveKit room. This avoids a
+initialization/resource owner; it does not join a LiveKit room. So it is part of
+the LiveKit media engine, which the plugin's `mediaAdapter: "livekit"` adds to
+the build; set it along with `media: "webrtc"`. This avoids a
 second WebRTC binary and reinitialization while another factory is alive.
 The pinned SDK component boundary is compile-qualified in CI on every change.
 

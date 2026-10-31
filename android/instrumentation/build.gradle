@@ -17,7 +17,9 @@ android {
     testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
   }
   sourceSets {
-    main.java.srcDirs = ['../src/main/java/expo/modules/callkittelecom/conversations', 'src/main/java']
+    // The module's sources with the native media engine, as mediaAdapter: "livekit" builds them.
+    main.java.srcDirs = ['../src/main/java/expo/modules/callkittelecom/conversations',
+      '../src/livekit/java/expo/modules/callkittelecom/conversations', 'src/main/java']
     androidTest.assets.srcDirs = ['../src/androidTest/assets', 'src/androidTest/assets']
   }
 }

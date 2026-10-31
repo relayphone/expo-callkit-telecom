@@ -3,6 +3,7 @@ import {
   type ConfigPlugin,
   withAndroidManifest,
   withDangerousMod,
+  withGradleProperties,
 } from "expo/config-plugins";
 import { copyFileSync, existsSync, mkdirSync } from "fs";
 import { basename, resolve } from "path";
@@ -319,6 +320,42 @@ const withEventReceiver: ConfigPlugin<{ androidEventReceiver?: string }> = (
   });
 };
 
+/** The gradle.properties entry that tells the module's build which media adapter the app uses. */
+export const MEDIA_ADAPTER_GRADLE_PROPERTY = "expo-callkit-telecom.mediaAdapter";
+
+/**
+ * Selects the native media engine for the module's build. `mediaAdapter: "livekit"` adds it:
+ * livekit-android, its WebRTC build and OkHttp, which the built-in LiveKit and WebRTC sessions and
+ * the HTTPS credentials fetcher run on. Without it, the module's build adds none of them. Running it
+ * again replaces the entry it added. Regenerate the Android project after changing it.
+ */
+const withNativeMediaEngine: ConfigPlugin<ExpoCallKitTelecomPluginProps> = (
+  config,
+  { mediaAdapter, joinPolicy }
+) => {
+  const media = mediaAdapter ?? "webrtc";
+  const livekitPolicy =
+    joinPolicy?.type === "native" && joinPolicy.media === "livekit";
+  if (livekitPolicy && media !== "livekit") {
+    throw new Error(
+      `${ERROR_MSG_PREFIX}"joinPolicy" uses LiveKit media, which needs ` +
+        `mediaAdapter: "livekit" to add the LiveKit media engine.`
+    );
+  }
+  return withGradleProperties(config, (config) => {
+    config.modResults = config.modResults.filter(
+      (item) =>
+        !(item.type === "property" && item.key === MEDIA_ADAPTER_GRADLE_PROPERTY)
+    );
+    config.modResults.push({
+      type: "property",
+      key: MEDIA_ADAPTER_GRADLE_PROPERTY,
+      value: media,
+    });
+    return config;
+  });
+};
+
 const withConversationPolicy: ConfigPlugin<ExpoCallKitTelecomPluginProps> = (
   config,
   props
@@ -352,6 +389,7 @@ const withConversationPolicy: ConfigPlugin<ExpoCallKitTelecomPluginProps> = (
 export const withExpoCallKitTelecomAndroid: ConfigPlugin<
   ExpoCallKitTelecomPluginProps
 > = (config, props) => {
+  config = withNativeMediaEngine(config, props);
   config = withConversationPolicy(config, props);
   config = withTimeouts(config, props);
   config = withSounds(config, props);
