@@ -1,10 +1,8 @@
 # Migrate from v1 to v2
 
-This guide covers the fork's Android conversations API on branch `v2`. It is a
+This guide covers the fork's conversations API on branch `v2`. It is a
 breaking change from upstream expo-callkit-telecom v1, with no compatibility shim.
-**iOS v2 is pending M3.5** in [draft PR #33](https://github.com/relayphone/expo-callkit-telecom/pull/33);
-the legacy iOS module still present in this tree does not implement the v2 port.
-Keep an existing iOS integration on v1 until the new SDK composition is qualified.
+iOS runs the same API over ios-voip-sdk; see [iOS](#ios) for what differs there.
 
 The inherited package name/version and `bun add expo-callkit-telecom` instructions
 do not identify this fork's v2 rollout. Use a reviewed fork `v2` checkout pinned
@@ -53,8 +51,7 @@ describe the full model.
 
 The left column comes from the
 [v1 source](https://github.com/relayphone/expo-callkit-telecom/blob/bc335010313712617ffe690ac10936309b0a6e26/src/Calls.ts).
-The right column is the current Android v2 runtime, except the explicitly pending
-iOS dial-intent replacement.
+The right column is the current v2 runtime on both platforms.
 
 | v1 API | v2 migration |
 | --- | --- |
@@ -75,7 +72,7 @@ iOS dial-intent replacement.
 | `setRTCAudioSessionConfiguration`, `prepareAudioSessionForCall`, `restoreAudioSession` | Remove JS audio-session ownership. Native media adapters coordinate activation and teardown with Core-Telecom. |
 | `getCaptureSession` | No equivalent v2 export. The host manages permission/UI needs; conversation state is not a camera-permission API. |
 | `registerVoIPPush`, `getVoIPPushToken`, `useVoIPPushToken`, `addVoIPPushTokenUpdatedListener` | Native registration starts at launch; use `usePushToken()` or the `pushTokenUpdated` hook event. `{ token, type: "APNS_VOIP" / "FCM" }` becomes `{ value, type: "apns-voip" / "fcm" }`, or `null`. |
-| `addCallIntentReceivedListener` | Shared replacement: `useConversationEvent("dialRequest", ...)`. **iOS v2 pending M3.5**: [#33](https://github.com/relayphone/expo-callkit-telecom/pull/33); this is not a shipped v2 Recents/Siri integration. |
+| `addCallIntentReceivedListener` | Shared replacement: `useConversationEvent("dialRequest", ...)`. On iOS, a call intent from Recents, Siri or Contacts that arrives before a listener waits for the first `conversationEvent` listener. |
 
 Hooks belong in components; the v1 imperative `add*Listener` helpers are not
 compatibility aliases. Register the one `setConversationHandler` at module scope,
@@ -182,18 +179,35 @@ not evidence of native Room audio. See [Android quick-start](./android-quick-sta
 and [native media lifecycle](./contracts/android-native-media.md) for the separate
 real-media fixtures and cleanup requirements.
 
-## iOS v2 — pending M3.5
+## iOS
 
-**Pending M3.5:** [draft #33](https://github.com/relayphone/expo-callkit-telecom/pull/33)
-qualifies a native adapter/contract spike against the SDK's private branch. It is
-not merged or shipped full Expo runtime composition. Typed outcomes, routes,
-server-end bridge/event exposure, foreground report prewarm and named native
-configuration still have documented integration gaps. Native Swift simulator
-controls do not establish Hermes, APNs cold launch, Room promotion or audio timing.
-The proposed SDK boundary targets iOS17.4+, but it is not an available replacement
-for the legacy iOS16 v1 module. Do not register both providers.
+iOS 26 or later. The module runs ios-voip-sdk's `VoIPClient` from launch, through
+an app delegate subscriber, before JavaScript loads, so a VoIP push that launches
+the app is reported and the user can answer before JavaScript runs.
 
-The independent iPhone LCK Focus experiment observed app allowance working while
-its person/repeat rows remained filtered. That is SDK research, not a shipped
-v2 Focus feature or a global Focus-state getter. Keep iOS rollout, push/media
-configuration and parity claims pending the [M3.5 bridge gate](https://github.com/relayphone/expo-callkit-telecom/pull/33).
+- **Calling framework.** The plugin's `callingFramework` option selects
+  `"liveCommunicationKit"` (the default) or `"callKit"`. Apps distributed in China
+  mainland can't use CallKit. Regenerate the iOS project after changing it.
+- **SDK source.** Prebuild adds ios-voip-sdk's pod to the Podfile at a pinned
+  revision; don't add the SDK's own Expo module to the app as well.
+- **Native answer.** The SDK answers, ends, holds, mutes and plays tones itself, then
+  tells the app. `joinPolicy` and media credentials are Android-only. Only `start`,
+  and `join` from a call preview, wait for the handler: resolving them confirms that
+  the app placed the call, and rejecting them ends it. `end`, `hold`, `mute` and
+  `tones` reach the handler after they happened, and their results are ignored. An
+  answer doesn't reach the handler; observe `status === "connecting"`.
+- **Call previews.** A call that the system filtered (Do Not Disturb, a Focus or the
+  block list), or that was answered elsewhere, becomes `status === "previewing"`
+  with a `previewReason`, instead of ringing or ending. `joinConversation` joins it
+  and `endConversation` stops following it. `reportIncomingConversation` returns
+  `"previewed"` for such a call.
+- **Identity.** A conversation's ID is the SDK's call ID: the `serverCallId` of an
+  incoming call, and a new UUID for an outgoing one. Phone numbers must be E.164.
+- **Media.** `mediaAdapter: "webrtc"` or `"livekit"` coordinates WebRTC's
+  `RTCAudioSession` in manual audio mode, so the app must link a WebRTC build, such
+  as `@livekit/react-native-webrtc`. `"none"` leaves the audio session to the app.
+- **Simulator.** `simulator: true` presents calls in the iOS Simulator in Debug
+  builds, with ios-voip-sdk's simulator runtime. Release builds and devices are
+  unaffected.
+- **Not on iOS.** `outgoingCallTimeout` (`incomingCallTimeout` also bounds dialing),
+  `defaultDialtone`, and `video` in an `updated` report.

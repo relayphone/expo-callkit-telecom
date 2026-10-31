@@ -1,33 +1,39 @@
 import type { ExpoConfig } from "expo/config";
+import type { ModConfig } from "expo/config-plugins";
 
 import type { ExpoCallKitTelecomPluginProps } from "../withExpoCallKitTelecom";
-import { withExpoCallKitTelecomIos } from "../withExpoCallKitTelecomIos";
+import {
+  addSDKSource,
+  withExpoCallKitTelecomIos,
+} from "../withExpoCallKitTelecomIos";
 
 /**
- * Applies the iOS plugin to a bare config and executes the registered
- * Info.plist mod chain against an empty plist, returning the resulting
- * plist entries. This exercises every `withInfoPlist` mod the plugin
- * composes, without running a full prebuild.
+ * Applies the iOS plugin to a bare config and executes one registered mod
+ * chain against empty results, returning the resulting entries. This
+ * exercises every mod of that kind the plugin composes, without running a
+ * full prebuild.
  */
-async function evaluateInfoPlist(
+async function evaluateMod(
   props: ExpoCallKitTelecomPluginProps,
+  modName: "infoPlist" | "podfileProperties",
 ): Promise<Record<string, unknown>> {
-  let config: ExpoConfig & { mods?: any } = {
-    name: "test-app",
-    slug: "test-app",
-  };
-  config = withExpoCallKitTelecomIos(config, props) as typeof config;
+  const config: ExpoConfig & { mods?: ModConfig } = withExpoCallKitTelecomIos(
+    { name: "test-app", slug: "test-app" },
+    props,
+  );
 
-  const infoPlistMod = config.mods?.ios?.infoPlist;
-  expect(typeof infoPlistMod).toBe("function");
+  const mod = config.mods?.ios?.[modName] as unknown as
+    | ((config: unknown) => Promise<{ modResults: Record<string, unknown> }>)
+    | undefined;
+  if (!mod) throw new Error(`The plugin registered no ${modName} mod.`);
 
-  const result = await infoPlistMod({
+  const result = await mod({
     ...config,
     modResults: {},
     modRequest: {
       projectRoot: "/tmp/test-app",
       platformProjectRoot: "/tmp/test-app/ios",
-      modName: "infoPlist",
+      modName,
       platform: "ios",
       introspect: true,
     },
@@ -35,6 +41,9 @@ async function evaluateInfoPlist(
   });
   return result.modResults;
 }
+
+const evaluateInfoPlist = (props: ExpoCallKitTelecomPluginProps) =>
+  evaluateMod(props, "infoPlist");
 
 describe("withExpoCallKitTelecomIos Info.plist configuration", () => {
   it("defaults ExpoCallKitTelecomIncludesCallsInRecents to true when the prop is omitted", async () => {
@@ -55,7 +64,73 @@ describe("withExpoCallKitTelecomIos Info.plist configuration", () => {
   it("keeps writing the timeout defaults alongside the new key (chain intact)", async () => {
     const plist = await evaluateInfoPlist({});
     expect(plist.ExpoCallKitTelecomIncomingCallTimeout).toBe(45);
-    expect(plist.ExpoCallKitTelecomOutgoingCallTimeout).toBe(60);
     expect(plist.ExpoCallKitTelecomFulfillAnswerCallTimeout).toBe(30);
+  });
+
+  it("writes the media adapter and unhandled action for the native module", async () => {
+    expect(await evaluateInfoPlist({})).toMatchObject({
+      ExpoCallKitTelecomMediaAdapter: "webrtc",
+      ExpoCallKitTelecomUnhandledAction: "fail",
+    });
+    expect(
+      await evaluateInfoPlist({ mediaAdapter: "none", unhandledAction: "accept" }),
+    ).toMatchObject({
+      ExpoCallKitTelecomMediaAdapter: "none",
+      ExpoCallKitTelecomUnhandledAction: "accept",
+    });
+  });
+});
+
+describe("withExpoCallKitTelecomIos call core selection", () => {
+  it("defaults to LiveCommunicationKit without the simulator runtime", async () => {
+    expect(await evaluateMod({}, "podfileProperties")).toEqual({
+      "expo-callkit-telecom.callingFramework": "liveCommunicationKit",
+      "expo-callkit-telecom.mediaAdapter": "webrtc",
+      "expo-callkit-telecom.simulator": "false",
+    });
+  });
+
+  it("selects CallKit and the simulator runtime", async () => {
+    expect(
+      await evaluateMod(
+        { callingFramework: "callKit", simulator: true, mediaAdapter: "livekit" },
+        "podfileProperties",
+      ),
+    ).toEqual({
+      "expo-callkit-telecom.callingFramework": "callKit",
+      "expo-callkit-telecom.mediaAdapter": "livekit",
+      "expo-callkit-telecom.simulator": "true",
+    });
+  });
+
+  it("rejects an unknown calling framework", () => {
+    expect(() =>
+      withExpoCallKitTelecomIos(
+        { name: "test-app", slug: "test-app" },
+        { callingFramework: "telephony" as "callKit" },
+      ),
+    ).toThrow('"callingFramework" must be one of liveCommunicationKit, callKit.');
+  });
+
+  it("adds the SDK source after use_expo_modules! once", () => {
+    const podfile = [
+      "target 'App' do",
+      "  use_expo_modules!",
+      "  config = use_native_modules!(config_command)",
+      "end",
+    ].join("\n");
+    const once = addSDKSource(podfile);
+    expect(addSDKSource(once)).toBe(once);
+    const lines = once.split("\n");
+    expect(lines[2]).toMatch(
+      /^  pod 'IosVoipSDK\/Core', :git => 'https:\/\/github\.com\/relayphone\/ios-voip-sdk\.git', :commit => '[0-9a-f]{40}' # expo-callkit-telecom: ios-voip-sdk source$/,
+    );
+    expect(lines).toHaveLength(5);
+  });
+
+  it("requires use_expo_modules! in the Podfile", () => {
+    expect(() => addSDKSource("target 'App' do\nend")).toThrow(
+      "Unable to find use_expo_modules! in the Podfile.",
+    );
   });
 });

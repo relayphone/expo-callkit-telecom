@@ -7,7 +7,11 @@ export type JSONValue =
   | readonly JSONValue[]
   | { readonly [key: string]: JSONValue };
 
-/** Native UUID, distinct from a transport's serverCallId. @category State */
+/**
+ * Opaque native identity of a conversation. Android derives a UUID from the serverCallId; iOS
+ * uses the SDK's call ID, which is the serverCallId of an incoming call. Compare it only with
+ * other ConversationId values. @category State
+ */
 export type ConversationId = string & {
   readonly __conversationId: unique symbol;
 };
@@ -98,6 +102,16 @@ export interface CallEndedPayload {
   reason: Exclude<EndedReason, "local">;
 }
 
+/**
+ * Why an incoming conversation is a call preview on this device instead of ringing: the system
+ * filtered it, it was answered elsewhere, or the app's presentation policy previews it.
+ * @category State
+ */
+export type PreviewReason =
+  | { readonly type: "filtered"; readonly cause: IncomingFilterReason }
+  | { readonly type: "answeredElsewhere" }
+  | { readonly type: "policy" };
+
 /** Operations the system supports for this conversation. @category State */
 export interface ConversationCapabilities {
   readonly hold: boolean;
@@ -149,6 +163,15 @@ export interface ConversationBase {
 export type Conversation = ConversationBase &
   (
     | { readonly status: "ringing"; readonly direction: "incoming" }
+    | {
+        /**
+         * iOS: the call is live elsewhere and this device follows it without ringing or opening
+         * audio. joinConversation joins it; endConversation stops following it.
+         */
+        readonly status: "previewing";
+        readonly direction: "incoming";
+        readonly previewReason: PreviewReason;
+      }
     | { readonly status: "dialing"; readonly direction: "outgoing" }
     | { readonly status: "connecting" }
     | { readonly status: "connected"; readonly connectedAt: string }
@@ -252,6 +275,14 @@ export type IncomingConversationOutcome =
       readonly reason: IncomingFilterReason;
       readonly nativeReason?: string;
     }
+  | {
+      /** iOS: the conversation is a call preview and does not ring. */
+      readonly status: "previewed";
+      readonly id: ConversationId;
+      readonly reason: PreviewReason;
+    }
+  /** iOS: the presentation policy does not show the call on this device. */
+  | { readonly status: "notShown" }
   | { readonly status: "atCapacity" }
   | { readonly status: "failed"; readonly error: ConversationFailure };
 
@@ -285,6 +316,13 @@ export interface AudioRoutes {
 
 /** Native audio integration, selected at build time. @category Configuration */
 export type MediaAdapter = "webrtc" | "livekit" | "none";
+
+/**
+ * iOS system framework that presents calls, selected at build time. LiveCommunicationKit is the
+ * default; CallKit is for apps that need its measured behaviour and can't ship in China mainland.
+ * @category Configuration
+ */
+export type CallingFramework = "liveCommunicationKit" | "callKit";
 
 /**
  * Reference to an app-registered native fetcher, available without JavaScript.
@@ -346,6 +384,10 @@ export interface ConversationConfiguration {
   readonly unhandledAction?: "fail" | "accept";
   /** Positive interval in milliseconds; native performs at most one recovery attempt. */
   readonly audioActivationTimeoutMs?: number;
+  /** iOS: defaults to liveCommunicationKit. */
+  readonly callingFramework?: CallingFramework;
+  /** iOS: presents calls in the Simulator in Debug builds. Defaults to false. */
+  readonly simulator?: boolean;
 }
 
 /** Push registers at launch; null state means unavailable or invalidated. @category Push */
@@ -368,7 +410,10 @@ export interface ConversationEventMap {
   readonly audioActivationFailed: { readonly conversationId: ConversationId };
   readonly pushTokenUpdated: PushToken | null;
   readonly dialRequest: { readonly handle: string; readonly video: boolean };
-  /** Correlated server ownership signal, emitted after the terminal conversation snapshot. */
+  /**
+   * Correlated server ownership signal, emitted after the snapshot in which the conversation
+   * ended or, on iOS, became a call preview.
+   */
   readonly answeredElsewhere: {
     conversationId: ConversationId;
     serverCallId: string;

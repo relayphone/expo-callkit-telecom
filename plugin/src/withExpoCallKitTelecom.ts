@@ -4,13 +4,39 @@ import pkg from "../../package.json";
 import { withExpoCallKitTelecomAndroid } from "./withExpoCallKitTelecomAndroid";
 import { withExpoCallKitTelecomIos } from "./withExpoCallKitTelecomIos";
 
-import type { JoinPolicy, MediaAdapter } from "../../build/conversations/types";
+import type {
+  CallingFramework,
+  JoinPolicy,
+  MediaAdapter,
+} from "../../build/conversations/types";
 
 export type ExpoCallKitTelecomPluginProps = {
-  /** Native answer and media/JS pre-warm are the default. */
+  /**
+   * Native answer and media/JS pre-warm are the default.
+   * @platform android
+   */
   joinPolicy?: JoinPolicy;
+  /**
+   * On iOS, "webrtc" and "livekit" both coordinate WebRTC's `RTCAudioSession`, and "none" leaves
+   * the audio session to the app.
+   * @default "webrtc"
+   */
   mediaAdapter?: MediaAdapter;
   unhandledAction?: "fail" | "accept";
+  /**
+   * The system framework that presents calls: LiveCommunicationKit, or CallKit for apps that
+   * need its measured behaviour. Apps distributed in China mainland can't use CallKit.
+   * @default "liveCommunicationKit"
+   * @platform ios
+   */
+  callingFramework?: CallingFramework;
+  /**
+   * Presents calls in the iOS Simulator in Debug builds, with ios-voip-sdk's simulator runtime.
+   * Release builds and devices are unaffected.
+   * @default false
+   * @platform ios
+   */
+  simulator?: boolean;
   /**
    * Custom message for microphone permission prompt. Set to false to skip.
    * @platform ios
@@ -22,7 +48,8 @@ export type ExpoCallKitTelecomPluginProps = {
    */
   cameraPermission?: string | false;
   /**
-   * Timeout in seconds for incoming calls before they are marked as unanswered.
+   * Timeout in seconds for incoming calls before they are marked as unanswered. On iOS it also
+   * bounds how long an outgoing call dials.
    * @default 45
    * @platform ios
    * @platform android
@@ -31,7 +58,6 @@ export type ExpoCallKitTelecomPluginProps = {
   /**
    * Timeout in seconds for outgoing calls to connect before they are marked as unanswered.
    * @default 60
-   * @platform ios
    * @platform android
    */
   outgoingCallTimeout?: number;
@@ -76,7 +102,6 @@ export type ExpoCallKitTelecomPluginProps = {
   /**
    * The default dialtone to play during outgoing calls while connecting.
    * Must be the filename (with extension) of one of the provided sounds.
-   * @platform ios
    * @platform android
    */
   defaultDialtone?: string;
