@@ -185,9 +185,12 @@ iOS 26 or later. The module runs ios-voip-sdk's `VoIPClient` from launch, throug
 an app delegate subscriber, before JavaScript loads, so a VoIP push that launches
 the app is reported and the user can answer before JavaScript runs.
 
-- **Calling framework.** The plugin's `callingFramework` option selects
-  `"liveCommunicationKit"` (the default) or `"callKit"`. Apps distributed in China
-  mainland can't use CallKit. Regenerate the iOS project after changing it.
+- **Calling framework.** Calls are presented with LiveCommunicationKit, not CallKit,
+  and there is no option to choose. A Focus's allowed people and Repeated Calls don't
+  make a call ring; the call becomes a call preview instead. CallKit's Call Directory
+  extension doesn't apply, and CarPlay is unverified. Prebuild fails while the
+  plugin's configuration still sets the removed `callingFramework` option. See
+  ios-voip-sdk's [ADR 0002](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/adr/0002-one-calling-framework-per-build.md).
 - **SDK source.** Prebuild adds ios-voip-sdk's pod to the Podfile at a pinned
   revision; don't add the SDK's own Expo module to the app as well.
 - **Native answer.** The SDK answers, ends, holds, mutes and plays tones itself, then

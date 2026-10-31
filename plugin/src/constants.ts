@@ -1,5 +1,3 @@
-import type { CallingFramework } from "../../build/conversations/types";
-
 // Default timeout values in seconds
 export const DEFAULT_INCOMING_CALL_TIMEOUT = 45;
 export const DEFAULT_OUTGOING_CALL_TIMEOUT = 60;
@@ -15,13 +13,7 @@ export const DEFAULT_INCLUDES_CALLS_IN_RECENTS = true;
 export const ANDROID_CALL_EVENT_ACTION =
   "expo.modules.callkittelecom.ACTION_CALL_EVENT";
 
-/**
- * The iOS calling framework when the app doesn't choose one. Change this one value to change
- * the default.
- */
-export const DEFAULT_CALLING_FRAMEWORK: CallingFramework = "liveCommunicationKit";
-
 /** The ios-voip-sdk source that the iOS module builds against. */
 export const IOS_VOIP_SDK_REPOSITORY =
   "https://github.com/relayphone/ios-voip-sdk.git";
-export const IOS_VOIP_SDK_REVISION = "ee36cba8f4860b907e9ac532c02fba965a6d2259";
+export const IOS_VOIP_SDK_REVISION = "37bb907bd864eed6065790574ba7a352233dcbf1";
