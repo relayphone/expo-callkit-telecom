@@ -99,7 +99,7 @@ export type EndedReason =
  * Why a conversation failed on iOS, named after ios-voip-sdk's `CallFailure`:
  * - `refused`: the calling framework refused to report or start the call.
  * - `atCapacity`: the device already had as many calls as the app allows.
- * - `notPlaced`: the start or join handler didn't place the call before the placement deadline.
+ * - `notPlaced`: no handler placed the call: none was set, it rejected, or it missed its deadline.
  * - `media`: the call's media wasn't prepared before its deadline.
  * - `audioActivationTimedOut`: the system didn't activate audio before its deadline.
  * - `audioSession`: the audio session couldn't be configured for the call.
@@ -490,6 +490,10 @@ export interface ConversationsApi {
   /**
    * Resolves once the start handler placed the conversation, so the start handler must not wait
    * for it. Joining a call preview waits for the join handler the same way.
+   *
+   * Rejects, and the conversation ends as `failed`, when the call isn't placed: with
+   * `handler_failed` when the start handler rejects, and with `deadline_exceeded` when it misses
+   * its deadline. On iOS the conversation's `ended.failure` is `notPlaced`.
    */
   startConversation(options: StartConversationOptions): Promise<ConversationId>;
   joinConversation(id: ConversationId): Promise<void>;
