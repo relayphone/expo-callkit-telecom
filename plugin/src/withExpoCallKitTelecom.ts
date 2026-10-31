@@ -1,6 +1,7 @@
 import { type ConfigPlugin, createRunOncePlugin } from "expo/config-plugins";
 
 import pkg from "../../package.json";
+import type { CallPreviewActivitiesOption } from "./withCallPreviewActivities";
 import { withExpoCallKitTelecomAndroid } from "./withExpoCallKitTelecomAndroid";
 import { withExpoCallKitTelecomIos } from "./withExpoCallKitTelecomIos";
 
@@ -44,6 +45,19 @@ export type ExpoCallKitTelecomPluginProps = {
    * @platform ios
    */
   callNotifications?: boolean;
+  /**
+   * Shows each call preview as a Live Activity on the Lock Screen and in the Dynamic Island on
+   * iOS, with ios-voip-sdk's `CallPreviewActivities`: a call that a Focus filtered, or that was
+   * answered elsewhere, which the user can join. The app's servers start most call previews with
+   * ActivityKit pushes; `useCallPreviewActivities()` gives them the tokens. The plugin sets
+   * `NSSupportsLiveActivities` and generates the `CallPreviewWidget` widget extension, with
+   * ios-voip-sdk's default views, and the Join intent that the app and the extension share.
+   * Pass `{ widgetExtension: false }` to show call previews from your own widget extension.
+   * Needs `ios.bundleIdentifier`, from which the extension's derives.
+   * @default false
+   * @platform ios
+   */
+  callPreviewActivities?: CallPreviewActivitiesOption;
   /**
    * Custom message for microphone permission prompt. Set to false to skip.
    * @platform ios

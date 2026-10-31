@@ -206,3 +206,10 @@ extension CallStatus {
     }
   }
 }
+
+extension Data {
+  /// The bytes as lowercase hexadecimal, as servers receive APNs tokens.
+  var hex: String {
+    map { String(format: "%02x", $0) }.joined()
+  }
+}

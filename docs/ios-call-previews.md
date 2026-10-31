@@ -1,5 +1,5 @@
 ---
-description: Reach iOS users whose Focus filters your calls — call notifications from the caller, with expo-callkit-telecom v2 and ios-voip-sdk.
+description: Reach iOS users whose Focus filters your calls — call notifications from the caller and call previews as Live Activities, with expo-callkit-telecom v2 and ios-voip-sdk.
 ---
 
 # iOS: Focus and call previews
@@ -13,6 +13,7 @@ opt-in pieces that reach the user anyway, and the config plugin turns them on:
 | Plugin option | What the user gets | ios-voip-sdk |
 | --- | --- | --- |
 | `callNotifications` | A communication notification from the caller, which a Focus lets through for the people it allows. It never rings. | `CallNotifier` |
+| `callPreviewActivities` | The call preview as a Live Activity on the Lock Screen and in the Dynamic Island, with a Join button. | `CallPreviewActivities` |
 
 Each option is off by default and changes the native build, so rebuild the app after changing it.
 
@@ -96,3 +97,146 @@ without the option.
 
 The notifications' text is English ("Incoming call", "Missed call", and their video forms), and
 the module uses the defaults of ios-voip-sdk's `CallNotifier.Options`.
+
+## Call previews as Live Activities
+
+```jsonc
+{
+  "expo": {
+    "ios": { "bundleIdentifier": "com.example.calls" },
+    "plugins": [["expo-callkit-telecom", { "callPreviewActivities": true }]]
+  }
+}
+```
+
+A call preview shows a conversation that is live elsewhere, such as one that a Focus filtered or
+that was answered on another device, as a Live Activity, from which the user can join it. It never
+rings. The Live Activity's type is ios-voip-sdk's `CallPreviewAttributes`, whose JSON is a
+[contract with your servers](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/call-preview-activity.md)
+([ADR 0010](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/adr/0010-call-preview-activity-is-sdk-type.md)).
+
+Prebuild:
+
+- sets `NSSupportsLiveActivities` in the app's Info.plist, and builds the module with
+  ios-voip-sdk's `LiveActivity` subspec;
+- generates the `CallPreviewWidget` widget extension in `ios/CallPreviewWidget`, embedded in the
+  app, with the bundle identifier `<ios.bundleIdentifier>.CallPreviewWidget`. It shows call
+  previews with ios-voip-sdk's default Lock Screen and Dynamic Island views, `CallPreviewView`;
+- generates `JoinCallPreview.swift`, the Join button's intent, which both the app and the extension
+  compile: the system opens the app and performs it there;
+- adds the extension's target to the Podfile, with the `LiveActivity` subspec from the app's SDK
+  source;
+- declares the extension in `extra.eas.build.experimental.ios.appExtensions`, so that EAS Build
+  creates its provisioning profile. For local builds, sign the extension with the app's team.
+
+Prebuild replaces the generated files each time, so don't edit them. Run `expo prebuild --clean`
+after turning the option off, so that the extension's target goes too. For frequent updates, add
+`NSSupportsLiveActivitiesFrequentUpdates` to `ios.infoPlist`.
+
+### Starting, updating and ending previews
+
+While the app is in the foreground, the module starts a call preview's Live Activity itself when a
+conversation becomes a call preview. iOS lets an app start a Live Activity only in the foreground,
+so in the background, where most filtered calls arrive, your servers start it with an ActivityKit
+push to the device's push-to-start token: `apns-push-type: liveactivity`, the topic
+`<bundle identifier>.push-type.liveactivity`, and `"attributes-type": "CallPreviewAttributes"`.
+They update and end it with the Live Activity's own push token. The module ends a preview at once
+when this device joins the conversation, and shows its final state for two minutes when the
+conversation ends; end the previews on the user's other devices from your servers.
+
+Send your servers the tokens and whether the user allows Live Activities, each time they change:
+
+```tsx
+const previews = useCallPreviewActivities(); // null on Android and without the option
+
+useEffect(() => {
+  if (!previews) return;
+  void server.updateCallPreviews({
+    activitiesEnabled: previews.authorization.activitiesEnabled,
+    frequentPushesEnabled: previews.authorization.frequentPushesEnabled,
+    pushToStartToken: previews.pushToStartToken, // hex, or null until iOS issues one
+    pushTokens: previews.pushTokens, // [{ conversationId, token }], one per live preview
+  });
+}, [previews]);
+```
+
+The system can launch the app in the background to deliver a server-started preview's push token,
+and the module follows the previews from launch, so the tokens are in the snapshot when JavaScript
+reads it. `getCallPreviewActivities()` reads the same value outside React. A preview's token leaves
+`pushTokens` when the preview ends; stop sending its pushes then. Don't start previews on a device
+whose user turned Live Activities off.
+
+The `callPreview` conversation event follows each preview:
+
+```ts
+useConversationEvent("callPreview", (event) => {
+  if (event.type === "startFailed" && event.error === "notInForeground") {
+    void server.startCallPreview(event.conversationId); // Your servers push-to-start it.
+  }
+});
+```
+
+### Joining
+
+The preview's Join button opens the app, after the user unlocks the device, and joins the
+conversation: the join handler places it, as for `joinConversation`. A preview that your servers
+started before the app ran has a conversation that the device doesn't know yet, so joining
+reports it first, from the Live Activity's attributes, as a call preview.
+
+### Your own views
+
+To show call previews with your own design, turn the generated extension off and add your own
+widget extension, for example with a config plugin of your own:
+
+```jsonc
+["expo-callkit-telecom", { "callPreviewActivities": { "widgetExtension": false } }]
+```
+
+Your extension and the app both compile the Join intent, exactly as generated:
+
+```swift
+import AppIntents
+import IosVoipSDK
+
+struct JoinCallPreview: JoinCallPreviewIntent {
+  static let title: LocalizedStringResource = "Join Call"
+  static let supportedModes: IntentModes = .foreground(.immediate)
+  static let isDiscoverable = false
+
+  @Parameter(title: "Call ID")
+  var callID: String
+}
+```
+
+The extension shows `CallPreviewAttributes` and passes the intent's type to its Join buttons. Start
+from ios-voip-sdk's views, or read `context.attributes` and `context.state` in your own:
+
+```swift
+import IosVoipSDK
+import SwiftUI
+import WidgetKit
+
+@main
+struct CallPreviewWidgetBundle: WidgetBundle {
+  var body: some Widget { CallPreviewWidget() }
+}
+
+struct CallPreviewWidget: Widget {
+  var body: some WidgetConfiguration {
+    ActivityConfiguration(for: CallPreviewAttributes.self) { context in
+      CallPreviewView(context, join: JoinCallPreview.self)
+    } dynamicIsland: { context in
+      CallPreviewView.dynamicIsland(context, join: JoinCallPreview.self)
+    }
+  }
+}
+```
+
+Give the extension's Podfile target ios-voip-sdk's `LiveActivity` subspec from the same source as
+the app's, which prebuild writes to the Podfile next to `use_expo_modules!`:
+
+```ruby
+target 'YourWidgetExtension' do
+  pod 'IosVoipSDK/LiveActivity', :git => 'https://github.com/relayphone/ios-voip-sdk.git', :commit => '<the app's revision>'
+end
+```

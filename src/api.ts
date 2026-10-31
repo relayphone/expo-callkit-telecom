@@ -8,6 +8,7 @@ import {
 } from "./conversations/runtime";
 import type {
   AudioRoutes,
+  CallPreviewActivities,
   Conversation,
   ConversationEventMap,
   ConversationHandler,
@@ -22,6 +23,7 @@ class Runtime {
     current: null,
   });
   readonly token = new RevisionStore<PushToken | null>(null);
+  readonly previews = new RevisionStore<CallPreviewActivities | null>(null);
   readonly handler = new HandlerDispatcher(bridge);
   constructor() {
     bridge.addListener("conversationsChanged", (event) =>
@@ -50,6 +52,19 @@ class Runtime {
       .getPushToken()
       .then((event) => this.token.accept(event.revision, event.token))
       .catch((error: unknown) => this.token.fail(error));
+    // Android has no call preview Live Activities.
+    if (bridge.getCallPreviewActivities) {
+      bridge.addListener("callPreviewActivitiesChanged", (event) =>
+        this.previews.accept(event.revision, event.activities)
+      );
+      this.readPreviews().catch((error: unknown) => this.previews.fail(error));
+    }
+  }
+  async readPreviews(): Promise<CallPreviewActivities | null> {
+    if (!bridge.getCallPreviewActivities) return null;
+    const event = await bridge.getCallPreviewActivities();
+    this.previews.accept(event.revision, event.activities);
+    return this.previews.read();
   }
   private update(
     revision: number,
@@ -95,6 +110,24 @@ export function useAudioRoutes(): AudioRoutes {
 /** Current native push registration, or null. @category Hooks */
 export function usePushToken(): PushToken | null {
   return useSyncExternalStore(runtime.token.subscribe, runtime.token.read);
+}
+/**
+ * iOS, with the `callPreviewActivities` plugin option: the tokens and authorization that the app's
+ * servers need to start, update and end call previews' Live Activities. Null on Android and
+ * without the option. @category Call previews
+ */
+export const getCallPreviewActivities =
+  (): Promise<CallPreviewActivities | null> => runtime.readPreviews();
+/**
+ * Subscribe to what the app's servers need for call previews' Live Activities; send each change
+ * to them. Null on Android and without the `callPreviewActivities` plugin option.
+ * @category Hooks
+ */
+export function useCallPreviewActivities(): CallPreviewActivities | null {
+  return useSyncExternalStore(
+    runtime.previews.subscribe,
+    runtime.previews.read
+  );
 }
 /** Register at module scope before React mounts; null detaches and cancels old work. @category Handler */
 export function setConversationHandler(

@@ -14,7 +14,7 @@ public final class ExpoCallKitTelecomModule: Module, @unchecked Sendable {
 
     Events(
       "conversationsChanged", "audioRoutesChanged", "pushTokenUpdated", "handlerAction",
-      "actionCancelled", "conversationEvent")
+      "actionCancelled", "conversationEvent", "callPreviewActivitiesChanged")
 
     OnCreate { [weak self] in
       guard let self else { return }
@@ -57,6 +57,10 @@ public final class ExpoCallKitTelecomModule: Module, @unchecked Sendable {
 
     AsyncFunction("getPushToken") { () async -> [String: Any] in
       await CallService.shared.pushToken.foundationObject
+    }
+
+    AsyncFunction("getCallPreviewActivities") { () async -> [String: Any] in
+      await CallService.shared.callPreviewActivities.foundationObject
     }
 
     AsyncFunction("startConversation") { (options: [String: Any]) async throws -> String in
