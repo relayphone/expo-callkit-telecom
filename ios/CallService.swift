@@ -75,11 +75,7 @@ final class CallService {
     #if EXPO_CALLKIT_TELECOM_SIMULATOR && DEBUG
       VoIPSimulator.activate()
     #endif
-    #if EXPO_CALLKIT_TELECOM_CALLKIT
-      let framework = CallKitAdapter()
-    #else
-      let framework = LiveCommunicationKitAdapter()
-    #endif
+    let framework = LiveCommunicationKitAdapter()
     #if EXPO_CALLKIT_TELECOM_WEBRTC
       let media = RTCAudioSessionMedia()
     #else

@@ -9,13 +9,14 @@ import {
 
 /**
  * Applies the iOS plugin to a bare config and executes one registered mod
- * chain against empty results, returning the resulting entries. This
- * exercises every mod of that kind the plugin composes, without running a
- * full prebuild.
+ * chain against the given results (empty by default), returning the resulting
+ * entries. This exercises every mod of that kind the plugin composes, without
+ * running a full prebuild.
  */
 async function evaluateMod(
   props: ExpoCallKitTelecomPluginProps,
   modName: "infoPlist" | "podfileProperties",
+  modResults: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
   const config: ExpoConfig & { mods?: ModConfig } = withExpoCallKitTelecomIos(
     { name: "test-app", slug: "test-app" },
@@ -29,7 +30,7 @@ async function evaluateMod(
 
   const result = await mod({
     ...config,
-    modResults: {},
+    modResults,
     modRequest: {
       projectRoot: "/tmp/test-app",
       platformProjectRoot: "/tmp/test-app/ios",
@@ -82,34 +83,42 @@ describe("withExpoCallKitTelecomIos Info.plist configuration", () => {
 });
 
 describe("withExpoCallKitTelecomIos call core selection", () => {
-  it("defaults to LiveCommunicationKit without the simulator runtime", async () => {
+  it("defaults to WebRTC media without the simulator runtime", async () => {
     expect(await evaluateMod({}, "podfileProperties")).toEqual({
-      "expo-callkit-telecom.callingFramework": "liveCommunicationKit",
       "expo-callkit-telecom.mediaAdapter": "webrtc",
       "expo-callkit-telecom.simulator": "false",
     });
   });
 
-  it("selects CallKit and the simulator runtime", async () => {
+  it("selects the media adapter and the simulator runtime", async () => {
     expect(
       await evaluateMod(
-        { callingFramework: "callKit", simulator: true, mediaAdapter: "livekit" },
+        { simulator: true, mediaAdapter: "livekit" },
         "podfileProperties",
       ),
     ).toEqual({
-      "expo-callkit-telecom.callingFramework": "callKit",
       "expo-callkit-telecom.mediaAdapter": "livekit",
       "expo-callkit-telecom.simulator": "true",
     });
   });
 
-  it("rejects an unknown calling framework", () => {
-    expect(() =>
-      withExpoCallKitTelecomIos(
-        { name: "test-app", slug: "test-app" },
-        { callingFramework: "telephony" as "callKit" },
-      ),
-    ).toThrow('"callingFramework" must be one of liveCommunicationKit, callKit.');
+  it("drops the calling framework property that earlier versions wrote", async () => {
+    expect(
+      await evaluateMod({}, "podfileProperties", {
+        "expo-callkit-telecom.callingFramework": "callKit",
+      }),
+    ).not.toHaveProperty("expo-callkit-telecom.callingFramework");
+  });
+
+  it("rejects the removed calling framework option", () => {
+    for (const callingFramework of ["callKit", "liveCommunicationKit"]) {
+      expect(() =>
+        withExpoCallKitTelecomIos(
+          { name: "test-app", slug: "test-app" },
+          { callingFramework } as ExpoCallKitTelecomPluginProps,
+        ),
+      ).toThrow('The "callingFramework" option was removed');
+    }
   });
 
   it("adds the SDK source after use_expo_modules! once", () => {

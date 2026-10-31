@@ -5,10 +5,6 @@ package = JSON.parse(File.read(File.join(__dir__, '..', 'package.json')))
 # The config plugin writes these properties; regenerate the iOS project after changing them.
 properties_path = File.join(Pod::Config.instance.installation_root, 'Podfile.properties.json')
 properties = File.exist?(properties_path) ? JSON.parse(File.read(properties_path)) : {}
-calling_framework = properties.fetch('expo-callkit-telecom.callingFramework', 'liveCommunicationKit')
-adapter = { 'liveCommunicationKit' => 'LiveCommunicationKit', 'callKit' => 'CallKit' }.fetch(calling_framework) do
-  raise 'ExpoCallKitTelecom: expo-callkit-telecom.callingFramework must be liveCommunicationKit or callKit.'
-end
 media_adapter = properties.fetch('expo-callkit-telecom.mediaAdapter', 'webrtc')
 unless %w[webrtc livekit none].include?(media_adapter)
   raise 'ExpoCallKitTelecom: expo-callkit-telecom.mediaAdapter must be webrtc, livekit or none.'
@@ -16,7 +12,6 @@ end
 simulator = properties.fetch('expo-callkit-telecom.simulator', 'false') == 'true'
 
 conditions = []
-conditions << 'EXPO_CALLKIT_TELECOM_CALLKIT' if adapter == 'CallKit'
 conditions << 'EXPO_CALLKIT_TELECOM_WEBRTC' if media_adapter != 'none'
 conditions << 'EXPO_CALLKIT_TELECOM_SIMULATOR' if simulator
 
@@ -38,7 +33,7 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore'
   # The app's Podfile names the SDK's source; the config plugin adds it.
   s.dependency 'IosVoipSDK/Core'
-  s.dependency "IosVoipSDK/#{adapter}"
+  s.dependency 'IosVoipSDK/LiveCommunicationKit'
   s.dependency 'IosVoipSDK/PushKit'
   s.dependency 'IosVoipSDK/Simulator' if simulator
   # No WebRTC pod dependency: Swift compiles against the declarations in WebRTCHeaders/, and the

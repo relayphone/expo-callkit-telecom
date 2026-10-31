@@ -11,7 +11,6 @@ import { copyFileSync, existsSync } from "fs";
 import { basename, resolve } from "path";
 
 import {
-  DEFAULT_CALLING_FRAMEWORK,
   DEFAULT_FULFILL_ANSWER_CALL_TIMEOUT,
   DEFAULT_INCLUDES_CALLS_IN_RECENTS,
   DEFAULT_INCOMING_CALL_TIMEOUT,
@@ -122,7 +121,6 @@ const withTimeouts: ConfigPlugin<{
   });
 };
 
-const CALLING_FRAMEWORKS: readonly string[] = ["liveCommunicationKit", "callKit"];
 const MEDIA_ADAPTERS: readonly string[] = ["webrtc", "livekit", "none"];
 const SDK_SOURCE_MARKER = "# expo-callkit-telecom: ios-voip-sdk source";
 
@@ -152,23 +150,14 @@ export function addSDKSource(podfile: string): string {
 }
 
 /**
- * Selects the calling framework, the media integration and the Debug simulator runtime for the
- * module's podspec, and adds the SDK's source to the Podfile. Regenerate the iOS project after
- * changing them.
+ * Selects the media integration and the Debug simulator runtime for the module's podspec, and adds
+ * the SDK's source to the Podfile. Regenerate the iOS project after changing them.
  */
 const withCallCore: ConfigPlugin<{
-  callingFramework?: string;
   mediaAdapter?: string;
   simulator?: boolean;
   unhandledAction?: string;
-}> = (config, { callingFramework, mediaAdapter, simulator, unhandledAction }) => {
-  const framework = callingFramework ?? DEFAULT_CALLING_FRAMEWORK;
-  if (!CALLING_FRAMEWORKS.includes(framework)) {
-    throw new Error(
-      `${ERROR_MSG_PREFIX}"callingFramework" must be one of ` +
-        `${CALLING_FRAMEWORKS.join(", ")}.`,
-    );
-  }
+}> = (config, { mediaAdapter, simulator, unhandledAction }) => {
   const media = mediaAdapter ?? "webrtc";
   if (!MEDIA_ADAPTERS.includes(media)) {
     throw new Error(
@@ -176,7 +165,8 @@ const withCallCore: ConfigPlugin<{
     );
   }
   config = withPodfileProperties(config, (config) => {
-    config.modResults["expo-callkit-telecom.callingFramework"] = framework;
+    // Earlier versions chose the calling framework here; the podspec no longer reads it.
+    delete config.modResults["expo-callkit-telecom.callingFramework"];
     config.modResults["expo-callkit-telecom.mediaAdapter"] = media;
     config.modResults["expo-callkit-telecom.simulator"] = String(
       simulator ?? false,
@@ -374,9 +364,25 @@ const withIconTemplate: ConfigPlugin<{
   return config;
 };
 
+/**
+ * Fails for the removed `callingFramework` option. Calls are always presented with
+ * LiveCommunicationKit, so an app that asked for CallKit must not build without noticing.
+ */
+function rejectRemovedOptions(props: ExpoCallKitTelecomPluginProps): void {
+  if ((props as { callingFramework?: unknown }).callingFramework !== undefined) {
+    throw new Error(
+      `${ERROR_MSG_PREFIX}The "callingFramework" option was removed: iOS calls are always ` +
+        `presented with LiveCommunicationKit. Remove the option from the plugin's configuration.`,
+    );
+  }
+}
+
 export const withExpoCallKitTelecomIos: ConfigPlugin<ExpoCallKitTelecomPluginProps> = (
   config,
-  {
+  props,
+) => {
+  rejectRemovedOptions(props);
+  const {
     cameraPermission,
     microphonePermission,
     incomingCallTimeout,
@@ -385,14 +391,11 @@ export const withExpoCallKitTelecomIos: ConfigPlugin<ExpoCallKitTelecomPluginPro
     sounds,
     defaultRingtoneIos,
     iconTemplateIos,
-    callingFramework,
     mediaAdapter,
     simulator,
     unhandledAction,
-  },
-) => {
+  } = props;
   config = withCallCore(config, {
-    callingFramework,
     mediaAdapter,
     simulator,
     unhandledAction,

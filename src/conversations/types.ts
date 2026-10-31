@@ -369,13 +369,6 @@ export interface AudioRoutes {
 export type MediaAdapter = "webrtc" | "livekit" | "none";
 
 /**
- * iOS system framework that presents calls, selected at build time. LiveCommunicationKit is the
- * default; CallKit is for apps that need its measured behaviour and can't ship in China mainland.
- * @category Configuration
- */
-export type CallingFramework = "liveCommunicationKit" | "callKit";
-
-/**
  * Reference to an app-registered native fetcher, available without JavaScript.
  * It POSTs media-credentials with eventId/deviceId and native-held device authentication.
  * Fetchers return NativeMediaCredentials; 404/410 abandons this call's pre-warm.
@@ -435,8 +428,6 @@ export interface ConversationConfiguration {
   readonly unhandledAction?: "fail" | "accept";
   /** Positive interval in milliseconds; native performs at most one recovery attempt. */
   readonly audioActivationTimeoutMs?: number;
-  /** iOS: defaults to liveCommunicationKit. */
-  readonly callingFramework?: CallingFramework;
   /** iOS: presents calls in the Simulator in Debug builds. Defaults to false. */
   readonly simulator?: boolean;
 }
