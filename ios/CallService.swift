@@ -204,6 +204,10 @@ final class CallService {
   // MARK: Reports
 
   /// Applies a transport fact about a call that JavaScript knows.
+  ///
+  /// A `connecting` or `connected` report for a call that isn't placed yet, which only the app's
+  /// start or join handler can send, is held by the SDK and applied once the call is placed. It
+  /// returns without waiting for that, because the placement waits for the handler.
   func reportConversation(_ id: String, _ report: JSONValue) async throws(CommandError) {
     let callID = CallID(rawValue: id)
     _ = try call(callID)
@@ -471,8 +475,12 @@ final class CallService {
   }
 
   /// Requests an action, and returns once the SDK carried it out, so that the conversations
-  /// show it: a start or join once the app is asked to place the call, and any other action once
-  /// the SDK performed it, or once the call ended or became a call preview.
+  /// show it: once the SDK performed it, or once the call ended or became a call preview.
+  ///
+  /// The SDK performs a start or join after the app's handler placed the call, as Android's start
+  /// waits for the start handler, so a `connecting` or `connected` report sent after the command
+  /// applies at once instead of being held. The handler runs while the command waits, so it must
+  /// not wait for the command.
   private func request(_ action: Action) async throws(CommandError) {
     let client = try running()
     requested.append(action)
@@ -585,15 +593,16 @@ private final class ActionWaiter {
     self.action = action
   }
 
-  /// Whether the event carries out the request.
+  /// Whether the event carries out the request. The SDK performs a start once the app placed the
+  /// call and its media is prepared; the start it performs is matched by its call.
   func isCarriedOut(by event: CallEvent) -> Bool {
     switch event {
+    case .performed(.start(let started), _):
+      if case .start(let outgoing) = action { outgoing.id == started.id } else { false }
     case .performed(let performed, _): performed == action
-    case .startRequested(let call):
-      if case .start(let outgoing) = action { outgoing.id == call.id } else { false }
-    case .joinRequested(let call): action == .join(call.id)
     case .ended(let call), .previewStarted(let call): call.id == action.callID
-    case .presented, .audioActivated, .audioDeactivated, .audioInterrupted, .mediaServicesReset:
+    case .presented, .startRequested, .joinRequested, .audioActivated, .audioDeactivated,
+      .audioInterrupted, .mediaServicesReset:
       false
     }
   }
