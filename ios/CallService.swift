@@ -44,8 +44,8 @@ final class CallService {
   private var endedCalls: [(call: Call, at: Date)] = []
   /// Ended calls that the client may not have dropped yet.
   private var tombstones: Set<CallID> = []
-  /// Calls that a snapshot has shown, so that their end is shown too.
-  private var shown: Set<CallID> = []
+  /// The conversation that a snapshot last showed for each call, so that its end is shown too.
+  private var shown: [CallID: JSONValue] = [:]
   /// The participants JavaScript gave for outgoing calls and member updates.
   private var participants: [CallID: [JSONValue]] = [:]
   /// Actions the app requested that the SDK hasn't performed yet, to tell the handler their
@@ -367,7 +367,7 @@ final class CallService {
       break
     }
     tombstones.insert(call.id)
-    if shown.remove(call.id) != nil {
+    if shown.removeValue(forKey: call.id) != nil {
       endedCalls.append((call, Date.now))
       publish()
       endedCalls.removeAll { $0.call.id == call.id }
@@ -398,9 +398,18 @@ final class CallService {
     let live = client.calls
     tombstones.formIntersection(live.map(\.id))
     var list: [JSONValue] = []
+    var listed: Set<CallID> = []
     for call in live where !tombstones.contains(call.id) {
-      list.append(conversation(call))
-      shown.insert(call.id)
+      let shownCall = conversation(call)
+      list.append(shownCall)
+      listed.insert(call.id)
+      shown[call.id] = shownCall
+    }
+    // The client drops an ended call from its calls before its `ended` event arrives. Until the
+    // event shows how the call ended, it stays as it was last shown, instead of leaving and
+    // coming back as ended.
+    for id in shown.keys.sorted(by: { $0.rawValue < $1.rawValue }) where !listed.contains(id) {
+      if let shownCall = shown[id] { list.append(shownCall) }
     }
     for ended in endedCalls { list.append(conversation(ended.call, endedAt: ended.at)) }
     let conversations = JSONValue.array(list)
