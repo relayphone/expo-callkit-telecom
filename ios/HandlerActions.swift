@@ -7,7 +7,8 @@ import IosVoipSDK
 /// for JavaScript, which may not be running after a cold launch. Only starting a call, or joining
 /// one from its call preview, waits for the app to place it. So a `start` or `join` is the only
 /// action that a handler settles: resolving it confirms that the app placed the call, and
-/// rejecting it, or missing its deadline, fails a start or returns a join to its call preview.
+/// rejecting it, or missing its deadline, fails a start or returns a join to its call preview,
+/// and the app's command, if any, rejects.
 /// `end`, `hold`, `mute` and `tones` reach the handler after the SDK performed them, and their
 /// settlement is ignored. An answer doesn't reach the handler; the conversation's status shows it.
 @MainActor
@@ -60,7 +61,7 @@ final class HandlerActions {
   private var generation = 0
   private let send: @MainActor (String, JSONValue) -> Void
   private let conversation: @MainActor (CallID) -> JSONValue?
-  private let complete: @MainActor (CallID, Outcome) -> Void
+  private let complete: @MainActor (CallID, Kind, Outcome) -> Void
   private let expired: @MainActor () -> Void
 
   /// Creates the delivery.
@@ -68,12 +69,13 @@ final class HandlerActions {
   /// - Parameters:
   ///   - send: Sends an event to JavaScript.
   ///   - conversation: The current conversation of a call.
-  ///   - complete: Places a gated call, or tells the SDK that the app didn't place it.
+  ///   - complete: Places a gated call, or tells the SDK that the app didn't place it, with the
+  ///     gated action's kind: `start` or `join`.
   ///   - expired: Called when a gated action's deadline passed, so its call no longer shows it.
   init(
     send: @escaping @MainActor (String, JSONValue) -> Void,
     conversation: @escaping @MainActor (CallID) -> JSONValue?,
-    complete: @escaping @MainActor (CallID, Outcome) -> Void,
+    complete: @escaping @MainActor (CallID, Kind, Outcome) -> Void,
     expired: @escaping @MainActor () -> Void
   ) {
     self.send = send
@@ -134,7 +136,7 @@ final class HandlerActions {
     else { return }
     let action = gated.remove(at: index)
     action.expiry?.cancel()
-    complete(action.call, success ? .placed : .failed)
+    complete(action.call, action.kind, success ? .placed : .failed)
   }
 
   /// Tells the handler about an action that the SDK performed.
@@ -188,7 +190,8 @@ final class HandlerActions {
     guard let index = gated.firstIndex(where: { $0.actionID == actionID }) else { return }
     let action = gated.remove(at: index)
     if let delivered = action.delivered { cancelled(action, generation: delivered, "deadline") }
-    complete(action.call, action.delivered == nil && acceptsUnhandled ? .placed : .expired)
+    complete(
+      action.call, action.kind, action.delivered == nil && acceptsUnhandled ? .placed : .expired)
     expired()
   }
 

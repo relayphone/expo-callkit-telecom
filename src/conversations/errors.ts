@@ -1,3 +1,4 @@
+import type { NativeTransport } from "./transport";
 import type { ConversationErrorCode, ConversationFailure } from "./types";
 
 const codes = new Set<ConversationErrorCode>([
@@ -45,4 +46,42 @@ export function commandError(value: unknown): unknown {
   } catch {
     return value;
   }
+}
+
+/** Native functions whose rejections carry a `ConversationFailure`. */
+const commands: ReadonlySet<PropertyKey> = new Set<keyof NativeTransport>([
+  "getConversations",
+  "getAudioRoutes",
+  "getPushToken",
+  "startConversation",
+  "joinConversation",
+  "endConversation",
+  "setHeld",
+  "setMuted",
+  "playTones",
+  "mergeConversations",
+  "reportConversation",
+  "reportIncomingConversation",
+  "receiveCallEnded",
+  "selectAudioRoute",
+]);
+
+/** Wraps the native module so that its commands reject with typed `ConversationFailure` errors. */
+export function withCommandErrors<Native extends object>(
+  native: Native
+): Native {
+  return new Proxy(native, {
+    get(target, key) {
+      const member: unknown = Reflect.get(target, key, target);
+      if (typeof member !== "function") return member;
+      if (!commands.has(key)) return member.bind(target);
+      return async (...arguments_: unknown[]) => {
+        try {
+          return await Reflect.apply(member, target, arguments_);
+        } catch (error: unknown) {
+          throw commandError(error);
+        }
+      };
+    },
+  });
 }

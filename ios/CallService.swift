@@ -33,7 +33,7 @@ final class CallService {
     conversation: { [unowned self] id in
       client?.calls.first { $0.id == id }.map { conversation($0) }
     },
-    complete: { [unowned self] id, outcome in complete(id, outcome) },
+    complete: { [unowned self] id, kind, outcome in complete(id, kind, outcome) },
     expired: { [unowned self] in publish() })
   private lazy var routes = AudioRoutes { [unowned self] in emit("audioRoutesChanged", $0) }
 
@@ -519,7 +519,9 @@ final class CallService {
 
   /// Places a call that the handler started or joined. When the handler didn't place it, a start
   /// fails and a join returns to its call preview.
-  private func complete(_ id: CallID, _ outcome: HandlerActions.Outcome) {
+  private func complete(
+    _ id: CallID, _ kind: HandlerActions.Kind, _ outcome: HandlerActions.Outcome
+  ) {
     guard let client else { return }
     switch outcome {
     case .placed:
@@ -528,21 +530,22 @@ final class CallService {
         publish()
       }
     case .failed:
-      notPlaced(id, CommandError(code: .handlerFailed, message: "The start handler failed"))
+      notPlaced(
+        id, CommandError(code: .handlerFailed, message: "The \(kind.rawValue) handler failed"))
     case .expired:
-      notPlaced(id, CommandError(code: .deadlineExceeded, message: "The start handler timed out"))
+      notPlaced(
+        id,
+        CommandError(code: .deadlineExceeded, message: "The \(kind.rawValue) handler timed out"))
     }
   }
 
   /// Tells the SDK that the app didn't place a call that it was asked to start or join, as on
-  /// Android. An outgoing call ends as `failed` with the `notPlaced` failure, and
-  /// `startConversation` rejects with the given failure. A call being joined returns to its call
-  /// preview.
+  /// Android. An outgoing call ends as `failed` with the `notPlaced` failure, and a call being
+  /// joined returns to its call preview. Either way, the app's `startConversation` or
+  /// `joinConversation` for the call rejects with the given failure.
   private func notPlaced(_ id: CallID, _ failure: CommandError) {
     guard let client else { return }
-    for waiter in waiters {
-      if case .start(let outgoing) = waiter.action, outgoing.id == id { waiter.failure = failure }
-    }
+    for waiter in waiters where waiter.places(id) { waiter.failure = failure }
     Task {
       await client.confirmNotPlaced(id)
       publish()
@@ -639,6 +642,15 @@ private final class ActionWaiter {
 
   init(_ action: Action) {
     self.action = action
+  }
+
+  /// Whether the request starts or joins the call, and so waits for the app to place it.
+  func places(_ id: CallID) -> Bool {
+    switch action {
+    case .start(let outgoing): outgoing.id == id
+    case .join(let joined): joined == id
+    default: false
+    }
   }
 
   /// Whether the event carries out the request. The SDK performs a start once the app placed the
