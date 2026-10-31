@@ -37,7 +37,7 @@ struct Settings: Sendable {
   }
 
   /// The TypeScript API's `ConversationCapabilities`, the same for every call.
-  var capabilities: JSON {
+  var capabilities: JSONValue {
     .object([
       "hold": .bool(configuration.capabilities.contains(.holding)),
       "merge": .bool(configuration.capabilities.contains(.merging)),

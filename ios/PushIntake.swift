@@ -11,7 +11,7 @@ import Synchronization
 final class PushIntake: Sendable {
   private struct Record {
     /// The incoming call's payload, without its media credentials.
-    var payload: JSON
+    var payload: JSONValue
     /// Whether a VoIP push brought the call, and the module hasn't told JavaScript how it
     /// appeared yet.
     var awaitsOutcome: Bool
@@ -36,7 +36,7 @@ final class PushIntake: Sendable {
     case .incoming(let call, _):
       let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
       if let body = object?["incomingCall"] ?? object?["incoming_call"],
-        let payload = JSON(body), case .object = payload
+        let payload = JSONValue(body), case .object = payload
       {
         record(payload, for: call.id, viaPush: true)
       }
@@ -49,7 +49,7 @@ final class PushIntake: Sendable {
   }
 
   /// Remembers an incoming call's payload.
-  func record(_ payload: JSON, for id: CallID, viaPush: Bool) {
+  func record(_ payload: JSONValue, for id: CallID, viaPush: Bool) {
     state.withLock { state in
       if state.records[id] == nil { state.order.append(id) }
       state.records[id] = Record(payload: payload.removing("media"), awaitsOutcome: viaPush)
@@ -67,13 +67,13 @@ final class PushIntake: Sendable {
   }
 
   /// The incoming call's payload.
-  func payload(for id: CallID) -> JSON? {
+  func payload(for id: CallID) -> JSONValue? {
     state.withLock { $0.records[id]?.payload }
   }
 
   /// The payload of a call that a VoIP push brought, the first time the module tells JavaScript
   /// how it appeared.
-  func takePushOutcome(for id: CallID) -> JSON? {
+  func takePushOutcome(for id: CallID) -> JSONValue? {
     state.withLock { state in
       guard state.records[id]?.awaitsOutcome == true else { return nil }
       state.records[id]?.awaitsOutcome = false

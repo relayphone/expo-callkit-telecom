@@ -18,7 +18,7 @@ final class CallService {
   /// The latest `ConversationsSnapshot`, which JavaScript reads synchronously from its own
   /// thread.
   nonisolated static let snapshot = Mutex(
-    JSON.object(["revision": .number(0), "conversations": .array([])]))
+    JSONValue.object(["revision": .number(0), "conversations": .array([])]))
 
   private static let log = Logger(subsystem: "ExpoCallKitTelecom", category: "calls")
 
@@ -26,7 +26,7 @@ final class CallService {
   private let intake = PushIntake()
   private var client: VoIPClient?
   private var startError: CommandError?
-  private var send: (@MainActor (String, JSON) -> Void)?
+  private var send: (@MainActor (String, JSONValue) -> Void)?
   private var emitterOwner: ObjectIdentifier?
   private lazy var handlers = HandlerActions(
     send: { [unowned self] in emit($0, $1) },
@@ -39,7 +39,7 @@ final class CallService {
 
   // Conversations
   private var revision = 0
-  private var conversations = JSON.array([])
+  private var conversations = JSONValue.array([])
   /// Calls that ended, shown once with their end reason before they leave the snapshot.
   private var endedCalls: [(call: Call, at: Date)] = []
   /// Ended calls that the client may not have dropped yet.
@@ -47,7 +47,7 @@ final class CallService {
   /// Calls that a snapshot has shown, so that their end is shown too.
   private var shown: Set<CallID> = []
   /// The participants JavaScript gave for outgoing calls and member updates.
-  private var participants: [CallID: [JSON]] = [:]
+  private var participants: [CallID: [JSONValue]] = [:]
   /// Actions the app requested that the SDK hasn't performed yet, to tell the handler their
   /// origin.
   private var requested: [Action] = []
@@ -56,11 +56,11 @@ final class CallService {
 
   // Push token
   private var tokenRevision = 0
-  private var token: JSON = .null
+  private var token: JSONValue = .null
 
   // Dial requests
   private var observesConversationEvents = false
-  private var dialRequest: JSON?
+  private var dialRequest: JSONValue?
 
   private init() {}
 
@@ -110,7 +110,7 @@ final class CallService {
   }
 
   /// The module for a new JavaScript runtime starts sending events.
-  func attach(owner: ObjectIdentifier, send: @escaping @MainActor (String, JSON) -> Void) {
+  func attach(owner: ObjectIdentifier, send: @escaping @MainActor (String, JSONValue) -> Void) {
     start()
     emitterOwner = owner
     self.send = send
@@ -129,27 +129,25 @@ final class CallService {
 
   // MARK: State
 
-  func snapshotNow() -> JSON {
+  func snapshotNow() -> JSONValue {
     publish()
     return Self.snapshot.withLock { $0 }
   }
 
-  var audioRoutes: JSON { routes.snapshot }
+  var audioRoutes: JSONValue { routes.snapshot }
 
-  var pushToken: JSON {
+  var pushToken: JSONValue {
     .object(["revision": .number(Double(tokenRevision)), "token": token])
   }
 
   // MARK: Commands
 
-  func startConversation(_ options: JSON) async throws(CommandError) -> String {
+  func startConversation(_ options: JSONValue) async throws(CommandError) -> String {
     guard let to = options["to"] else { throw .invalidArguments }
     let party = try Party(participant: to)
     let id = CallID(rawValue: UUID().uuidString.lowercased())
-    var metadata: [String: String] = [:]
-    if case .object(let values)? = options["metadata"] {
-      metadata = values.compactMapValues(\.string)
-    }
+    let metadata: [String: JSONValue] =
+      if case .object(let values)? = options["metadata"] { values } else { [:] }
     participants[id] = [to]
     let call = OutgoingCall(
       id: id, parties: [party], hasVideo: options["video"]?.bool ?? false, metadata: metadata)
@@ -206,7 +204,7 @@ final class CallService {
   // MARK: Reports
 
   /// Applies a transport fact about a call that JavaScript knows.
-  func reportConversation(_ id: String, _ report: JSON) async throws(CommandError) {
+  func reportConversation(_ id: String, _ report: JSONValue) async throws(CommandError) {
     let callID = CallID(rawValue: id)
     _ = try call(callID)
     switch report["type"]?.string {
@@ -238,10 +236,10 @@ final class CallService {
   }
 
   /// Presents an incoming call that JavaScript learned about, and returns how it appears.
-  func reportIncomingConversation(_ payload: JSON) async throws(CommandError) -> JSON {
+  func reportIncomingConversation(_ payload: JSONValue) async throws(CommandError) -> JSONValue {
     let client = try running()
     guard
-      let data = try? JSON.object(["incomingCall": payload]).data(),
+      let data = try? JSONValue.object(["incomingCall": payload]).data(),
       case .incoming(let incoming, _) = VoIPPush(defaultFormat: data)
     else {
       return .object(["status": .string("failed"), "error": CommandError.invalidArguments.json])
@@ -255,11 +253,11 @@ final class CallService {
 
   /// Applies a server's end signal for an incoming call, and returns whether this device knows
   /// the call. A signal for a call that hasn't arrived yet is kept until it does.
-  func receiveCallEnded(_ payload: JSON) async throws(CommandError) -> Bool {
+  func receiveCallEnded(_ payload: JSONValue) async throws(CommandError) -> Bool {
     let client = try running()
     guard
       let body = try? payload.data(), let text = String(data: body, encoding: .utf8),
-      let data = try? JSON.object([
+      let data = try? JSONValue.object([
         "messageType": .string("callEnded"), "callEnded": .string(text),
       ]).data(),
       case .serverEvent(let event, let id, let eventID) = VoIPPush(defaultFormat: data)
@@ -294,7 +292,7 @@ final class CallService {
   /// The user asked to call a handle from Recents, Siri or Contacts. Without a listener, the
   /// latest request waits for one.
   func dialRequested(handle: String, video: Bool) {
-    let payload = JSON.object(["handle": .string(handle), "video": .bool(video)])
+    let payload = JSONValue.object(["handle": .string(handle), "video": .bool(video)])
     guard observesConversationEvents, send != nil else {
       dialRequest = payload
       return
@@ -328,7 +326,7 @@ final class CallService {
     case .performed(let action, let call):
       let origin = takeRequest { $0 == action }
       publish()
-      let inform = { (kind: HandlerActions.Kind, arguments: [String: JSON]) in
+      let inform = { (kind: HandlerActions.Kind, arguments: [String: JSONValue]) in
         self.handlers.inform(
           kind, arguments: arguments, conversation: self.conversation(call), origin: origin)
       }
@@ -374,7 +372,7 @@ final class CallService {
       publish()
       endedCalls.removeAll { $0.call.id == call.id }
     }
-    let conversation = JSON.object(["conversationId": .string(call.id.rawValue)])
+    let conversation = JSONValue.object(["conversationId": .string(call.id.rawValue)])
     switch reason {
     case .answeredElsewhere:
       emitAnsweredElsewhere(call.id)
@@ -399,17 +397,17 @@ final class CallService {
     guard let client else { return }
     let live = client.calls
     tombstones.formIntersection(live.map(\.id))
-    var list: [JSON] = []
+    var list: [JSONValue] = []
     for call in live where !tombstones.contains(call.id) {
       list.append(conversation(call))
       shown.insert(call.id)
     }
     for ended in endedCalls { list.append(conversation(ended.call, endedAt: ended.at)) }
-    let conversations = JSON.array(list)
+    let conversations = JSONValue.array(list)
     guard conversations != self.conversations else { return }
     self.conversations = conversations
     revision += 1
-    let snapshot = JSON.object([
+    let snapshot = JSONValue.object([
       "revision": .number(Double(revision)), "conversations": conversations,
     ])
     Self.snapshot.withLock { $0 = snapshot }
@@ -417,7 +415,7 @@ final class CallService {
   }
 
   /// The call as the TypeScript API's `Conversation`.
-  private func conversation(_ call: Call, endedAt: Date = .now) -> JSON {
+  private func conversation(_ call: Call, endedAt: Date = .now) -> JSONValue {
     let payload = intake.payload(for: call.id)
     var fields = call.status.fields(isOnHold: call.isOnHold, endedAt: endedAt)
     fields["id"] = .string(call.id.rawValue)
@@ -434,7 +432,7 @@ final class CallService {
 
   /// The participants JavaScript gave, or else the call's parties. An incoming caller's host
   /// contact ID identifies it, as on Android.
-  private func members(of call: Call, payload: JSON?) -> [JSON] {
+  private func members(of call: Call, payload: JSONValue?) -> [JSONValue] {
     if let members = participants[call.id] { return members }
     var members = call.parties.map(\.participant)
     if let contact = payload?["caller"]?["hostContactID"],
@@ -520,7 +518,7 @@ final class CallService {
 
   private func tokenChanged(_ data: Data?) {
     let value = data.map { bytes in bytes.map { String(format: "%02x", $0) }.joined() }
-    let token: JSON =
+    let token: JSONValue =
       value.map { .object(["type": .string("apns-voip"), "value": .string($0)]) } ?? .null
     guard token != self.token else { return }
     self.token = token
@@ -528,7 +526,7 @@ final class CallService {
     emit("pushTokenUpdated", pushToken)
   }
 
-  private func emitIncomingOutcome(payload: JSON, outcome: JSON) {
+  private func emitIncomingOutcome(payload: JSONValue, outcome: JSONValue) {
     emit(
       "conversationEvent",
       .object([
@@ -541,7 +539,7 @@ final class CallService {
   }
 
   /// Tells JavaScript how a call that a VoIP push brought appeared, once.
-  private func emitPushOutcome(for id: CallID, _ outcome: JSON) {
+  private func emitPushOutcome(for id: CallID, _ outcome: JSONValue) {
     guard let payload = intake.takePushOutcome(for: id) else { return }
     emitIncomingOutcome(payload: payload, outcome: outcome)
   }
@@ -559,7 +557,7 @@ final class CallService {
       ]))
   }
 
-  private func emit(_ name: String, _ body: JSON) {
+  private func emit(_ name: String, _ body: JSONValue) {
     send?(name, body)
   }
 }

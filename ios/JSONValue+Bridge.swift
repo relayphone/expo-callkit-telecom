@@ -1,14 +1,9 @@
 import Foundation
+import IosVoipSDK
 
-/// A JSON value, which crosses the bridge to JavaScript and moves between actors.
-enum JSON: Sendable, Equatable {
-  case null
-  case bool(Bool)
-  case number(Double)
-  case string(String)
-  case array([JSON])
-  case object([String: JSON])
-
+/// Conversions between the SDK's `JSONValue` and the Foundation values that cross the bridge to
+/// JavaScript.
+extension JSONValue {
   /// Converts a value that Expo decoded from JavaScript or `JSONSerialization` produced, or returns
   /// `nil` for a value that JSON can't hold.
   init?(_ value: Any?) {
@@ -23,16 +18,16 @@ enum JSON: Sendable, Equatable {
         CFGetTypeID(number) == CFBooleanGetTypeID()
         ? .bool(number.boolValue) : .number(number.doubleValue)
     case let array as [Any]:
-      var values: [JSON] = []
+      var values: [JSONValue] = []
       for element in array {
-        guard let value = JSON(element) else { return nil }
+        guard let value = JSONValue(element) else { return nil }
         values.append(value)
       }
       self = .array(values)
     case let object as [String: Any]:
-      var values: [String: JSON] = [:]
+      var values: [String: JSONValue] = [:]
       for (key, element) in object {
-        guard let value = JSON(element) else { return nil }
+        guard let value = JSONValue(element) else { return nil }
         values[key] = value
       }
       self = .object(values)
@@ -60,7 +55,7 @@ enum JSON: Sendable, Equatable {
   }
 
   /// The member with the given key, when the value is an object that has one.
-  subscript(key: String) -> JSON? {
+  subscript(key: String) -> JSONValue? {
     guard case .object(let values) = self else { return nil }
     return values[key]
   }
@@ -73,12 +68,12 @@ enum JSON: Sendable, Equatable {
     if case .bool(let value) = self { value } else { nil }
   }
 
-  var array: [JSON]? {
+  var array: [JSONValue]? {
     if case .array(let values) = self { values } else { nil }
   }
 
   /// The value without the given member, when it is an object.
-  func removing(_ key: String) -> JSON {
+  func removing(_ key: String) -> JSONValue {
     guard case .object(var values) = self else { return self }
     values[key] = nil
     return .object(values)
@@ -90,7 +85,7 @@ enum JSON: Sendable, Equatable {
   }
 
   /// An ISO 8601 date, as the TypeScript API writes dates.
-  static func date(_ date: Date) -> JSON {
+  static func date(_ date: Date) -> JSONValue {
     .string(date.formatted(.iso8601))
   }
 }
