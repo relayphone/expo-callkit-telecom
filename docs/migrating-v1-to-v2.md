@@ -161,6 +161,22 @@ On Android API34+ the transactional platform uses supported REMOTE(3) plus the
 reason string, preserving the SDK's `answeredElsewhere` semantics; visible UI can
 remain for Android's heads-up minimum. See the [contract and measured limits](./contracts/android-answered-elsewhere.md).
 
+## Remove v1-only plugin options
+
+Prebuild fails while the plugin's configuration still sets an option that v2
+removed, so an app that relies on one doesn't build without noticing. Remove it:
+
+| Removed option | What v1 did | Use instead |
+| --- | --- | --- |
+| `callingFramework` (iOS) | Chose CallKit or LiveCommunicationKit. | Nothing: iOS always uses LiveCommunicationKit. See [iOS](#ios). |
+| `defaultDialtone` (Android) | Looped one of `sounds` while an outgoing call connected. | Play a ringback tone from the app while the conversation's `status` is `dialing`, or let your media carry the callee's ringback. Drop the sound from `sounds` if nothing else uses it. |
+| `androidEventReceiver` (Android) | Registered a `BroadcastReceiver` for call events that couldn't reach JavaScript, such as a decline while the app was killed. | The conversation handler's `end`, which receives a decline with `origin: "system"`; native FCM intake starts JavaScript when it reports a call. See [Platform notes](./platform-notes.md#declined-calls-without-javascript). Delete the receiver class. |
+
+v1's Android full-screen incoming-call screen is gone too. An incoming call uses
+the system's UI: Core-Telecom's call with a call-style notification, whose
+full-screen intent opens the app's launch activity on a locked device. Show your
+own call UI there. See [Platform notes](./platform-notes.md#incoming-call-ui).
+
 ## Move answer-time media work before Answer
 
 Android's default policy is native answer plus pre-warm. Select the native media
@@ -221,5 +237,5 @@ the app is reported and the user can answer before JavaScript runs.
 - **Simulator.** `simulator: true` presents calls in the iOS Simulator in Debug
   builds, with ios-voip-sdk's simulator runtime. Release builds and devices are
   unaffected.
-- **Not on iOS.** `outgoingCallTimeout` (`incomingCallTimeout` also bounds dialing),
-  `defaultDialtone`, and `video` in an `updated` report.
+- **Not on iOS.** `outgoingCallTimeout` (`incomingCallTimeout` also bounds dialing)
+  and `video` in an `updated` report.
