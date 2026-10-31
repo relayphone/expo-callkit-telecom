@@ -9,6 +9,8 @@ struct CommandError: Error {
     case unsupported
     case conversation
     case duplicateSDKLinkage = "duplicate_sdk_linkage"
+    case deadlineExceeded = "deadline_exceeded"
+    case handlerFailed = "handler_failed"
   }
 
   let code: Code

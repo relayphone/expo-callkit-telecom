@@ -33,7 +33,7 @@ final class CallService {
     conversation: { [unowned self] id in
       client?.calls.first { $0.id == id }.map { conversation($0) }
     },
-    complete: { [unowned self] id, placed in complete(id, placed: placed) },
+    complete: { [unowned self] id, outcome in complete(id, outcome) },
     expired: { [unowned self] in publish() })
   private lazy var routes = AudioRoutes { [unowned self] in emit("audioRoutesChanged", $0) }
 
@@ -53,6 +53,9 @@ final class CallService {
   private var requested: [Action] = []
   /// Requests that wait for the SDK to carry them out.
   private var waiters: [ActionWaiter] = []
+  /// Outgoing calls that ended because the app's handler didn't place them. The SDK ends them as
+  /// a server failure; their conversations show that they weren't placed.
+  private var unplaced: Set<CallID> = []
 
   // Push token
   private var tokenRevision = 0
@@ -391,6 +394,7 @@ final class CallService {
       break
     }
     participants[call.id] = nil
+    unplaced.remove(call.id)
     intake.forget(call.id)
   }
 
@@ -430,7 +434,11 @@ final class CallService {
   /// The call as the TypeScript API's `Conversation`.
   private func conversation(_ call: Call, endedAt: Date = .now) -> JSONValue {
     let payload = intake.payload(for: call.id)
-    var fields = call.status.fields(isOnHold: call.isOnHold, endedAt: endedAt)
+    var status = call.status
+    if unplaced.contains(call.id), case .ended(.failed(.server)) = status {
+      status = .ended(.failed(.notPlaced))
+    }
+    var fields = status.fields(isOnHold: call.isOnHold, endedAt: endedAt)
     fields["id"] = .string(call.id.rawValue)
     fields["direction"] = .string(call.isIncoming ? "incoming" : "outgoing")
     fields["members"] = .array(members(of: call, payload: payload))
@@ -493,11 +501,13 @@ final class CallService {
       if let index = requested.firstIndex(of: action) { requested.remove(at: index) }
       waiters.removeAll { $0 === waiter }
       publish()
-      throw CommandError(error)
+      // The calling framework may refuse a start that the module already failed.
+      throw waiter.failure ?? CommandError(error)
     }
     await waiter.wait()
     waiters.removeAll { $0 === waiter }
     publish()
+    if let failure = waiter.failure { throw failure }
   }
 
   private func receive(_ event: ServerEvent, for id: CallID) async {
@@ -513,17 +523,34 @@ final class CallService {
       placement: settings.configuration.deadlines.placement)
   }
 
-  /// Places a call that the handler started or joined, or ends it when the handler failed.
-  private func complete(_ id: CallID, placed: Bool) {
+  /// Places a call that the handler started or joined. When the handler didn't place it, a start
+  /// fails and a join returns to its call preview.
+  private func complete(_ id: CallID, _ outcome: HandlerActions.Outcome) {
     guard let client else { return }
-    Task {
-      if placed {
+    switch outcome {
+    case .placed:
+      Task {
         await client.confirmPlaced(id)
         publish()
-      } else {
-        try? await request(.end(id))
       }
+    case .failed where client.calls.first(where: { $0.id == id })?.isIncoming == false:
+      notPlaced(id, CommandError(code: .handlerFailed, message: "The start handler failed"))
+    case .expired where client.calls.first(where: { $0.id == id })?.isIncoming == false:
+      notPlaced(id, CommandError(code: .deadlineExceeded, message: "The start handler timed out"))
+    case .failed, .expired:
+      Task { try? await request(.end(id)) }
     }
+  }
+
+  /// Ends an outgoing call that the app's handler didn't place, as on Android: the conversation
+  /// ends as `failed` with the `notPlaced` failure, and `startConversation` rejects with the
+  /// failure.
+  private func notPlaced(_ id: CallID, _ failure: CommandError) {
+    unplaced.insert(id)
+    for waiter in waiters {
+      if case .start(let outgoing) = waiter.action, outgoing.id == id { waiter.failure = failure }
+    }
+    Task { await receive(.failed, for: id) }
   }
 
   /// Removes the first requested action that matches, and returns whether the app requested it.
@@ -586,6 +613,8 @@ private final class ActionWaiter {
   private static let limit = Duration.seconds(10)
 
   let action: Action
+  /// Why the command fails although the SDK carried out its request.
+  var failure: CommandError?
   private var isFinished = false
   private var continuation: CheckedContinuation<Void, Never>?
 
