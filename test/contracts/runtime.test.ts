@@ -162,7 +162,7 @@ describe("handler generation and cancellation", () => {
   });
 });
 
-import { commandError } from '../../src/conversations/errors';
+import { commandError, withCommandErrors } from '../../src/conversations/errors';
 
 test('native command errors preserve typed code and platform details', () => {
   const error = commandError(new Error('Native call rejected: expo-conversation:{"code":"conversation","message":"Control failed","nativeDomain":"androidx.core.telecom","nativeCode":4}'));
@@ -171,4 +171,37 @@ test('native command errors preserve typed code and platform details', () => {
   expect(commandError(unrelated)).toBe(unrelated);
   const malformed = new Error('expo-conversation:{"code":"made_up","message":"bad"}');
   expect(commandError(malformed)).toBe(malformed);
+});
+
+describe("a join that its handler doesn't place", () => {
+  test("a rejected join handler settles the join as failed", async () => {
+    const h = harness();
+    h.dispatcher.set({
+      ...signaling,
+      join() {
+        throw new Error("The room refused the join");
+      },
+    });
+    h.dispatcher.dispatch(action());
+    await flush();
+    expect(h.settlements).toEqual([["action", 1, false]]);
+  });
+  test("joinConversation rejects with the typed handler_failed failure", async () => {
+    const native = {
+      async joinConversation(): Promise<void> {
+        throw new Error(
+          'expo-conversation:{"code":"handler_failed","message":"The join handler failed"}'
+        );
+      },
+    };
+    const api = withCommandErrors(native);
+    const rejection = api.joinConversation().then(
+      () => undefined,
+      (error: unknown) => error
+    );
+    expect(await rejection).toMatchObject({
+      code: "handler_failed",
+      message: "The join handler failed",
+    });
+  });
 });

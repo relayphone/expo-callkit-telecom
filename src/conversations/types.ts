@@ -498,6 +498,16 @@ export interface ConversationsApi {
    * `ended.failure.kind` is `notPlaced`.
    */
   startConversation(options: StartConversationOptions): Promise<ConversationId>;
+  /**
+   * Answers a ringing conversation, or, on iOS, joins a call preview. Joining waits for the join
+   * handler, as a start waits for the start handler, and resolves once the handler placed the
+   * conversation; on iOS, answering doesn't wait for a handler.
+   *
+   * Rejects when the join handler doesn't place the conversation: with `handler_failed` when it
+   * rejects, and with `deadline_exceeded` when it misses its deadline. On iOS the conversation
+   * returns to `previewing`. On Android, where the join handler runs only under the handler join
+   * policy, the conversation ends as `failed` with `failure.kind` `notPlaced`.
+   */
   joinConversation(id: ConversationId): Promise<void>;
   endConversation(id: ConversationId): Promise<void>;
   setMuted(id: ConversationId, muted: boolean): Promise<void>;

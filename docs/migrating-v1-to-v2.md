@@ -218,9 +218,10 @@ the app is reported and the user can answer before JavaScript runs.
   and `join` from a call preview, wait for the handler: resolving them confirms that
   the app placed the call. Rejecting them, or missing their deadline, fails a start,
   whose conversation ends with `failure.kind` `notPlaced`, and returns a join to its
-  call preview. `end`, `hold`, `mute` and `tones` reach the handler after they
-  happened, and their results are ignored. An answer doesn't reach the handler;
-  observe `status === "connecting"`.
+  call preview. As on Android, the app's `startConversation` or `joinConversation`
+  then rejects with `handler_failed` or `deadline_exceeded`. `end`, `hold`, `mute`
+  and `tones` reach the handler after they happened, and their results are ignored.
+  An answer doesn't reach the handler; observe `status === "connecting"`.
 - **Call previews.** A call that the system filtered (Do Not Disturb, a Focus or the
   block list), or that was answered elsewhere, becomes `status === "previewing"`
   with a `previewReason`, instead of ringing or ending. `joinConversation` joins it
