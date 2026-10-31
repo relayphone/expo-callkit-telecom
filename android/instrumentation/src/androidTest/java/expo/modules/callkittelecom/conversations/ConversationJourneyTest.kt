@@ -209,9 +209,13 @@ class ConversationJourneyTest {
         withContext(Dispatchers.Main) {
             val engine = ConversationEngine.get(InstrumentationRegistry.getInstrumentation().targetContext)
             engine.policy = JSONObject(mapOf("type" to "handler"))
+            val ended = mutableListOf<Map<*, *>>()
             engine.emit = { name, body ->
                 if (name == "handlerAction") engine.actions.settle(body["actionID"] as String,
                     body["generation"] as Int, true, engine.actions.epoch)
+                if (name == "conversationsChanged") {
+                    for (state in body["conversations"] as List<*>) if ((state as Map<*, *>)["status"] == "ended") ended += state
+                }
             }
             engine.actions.attach(true, 1, engine.actions.epoch)
             val previous = engine.answerTimeoutMillis
@@ -225,6 +229,9 @@ class ConversationJourneyTest {
                 withTimeout(4000) {
                     while ((engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id }) delay(10)
                 }
+                val end = ended.first { it["id"] == id }["ended"] as Map<*, *>
+                assertEquals("failed", end["reason"])
+                assertEquals(mapOf("kind" to "connectTimedOut"), end["failure"])
             } finally { engine.answerTimeoutMillis = previous }
         }
     }

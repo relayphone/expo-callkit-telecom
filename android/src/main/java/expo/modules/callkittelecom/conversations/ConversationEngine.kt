@@ -102,6 +102,8 @@ class ConversationEngine(val context: Context) {
         var ending = false
         var terminal = false
         var terminalIntent: NativeEndedIntake.Intent? = null
+        /** Why the call failed, when that is known before it ends. */
+        var failure: EndedFailure? = null
     }
     private val calls = linkedMapOf<String, Call>()
     private val recent = mutableMapOf<String, Pair<Long, Map<String, Any?>>>()
@@ -294,7 +296,7 @@ class ConversationEngine(val context: Context) {
         require(!(to["id"] as? String).isNullOrBlank()) { "invalid_arguments" }
         val id = UUID.randomUUID().toString()
         add(id, to, options["video"] == true, null)
-        try { action(id, "start", "app") } catch (e: Exception) { finish(id, "failed"); throw e }
+        try { action(id, "start", "app") } catch (e: Exception) { finish(id, "failed", EndedFailure.ofHandler(e)); throw e }
         return id
     }
     private suspend fun add(id: String, member: Map<String, Any?>, video: Boolean, payload: Map<String, Any?>?, address: Uri? = null,
@@ -325,7 +327,13 @@ class ConversationEngine(val context: Context) {
                 telecom.addCall(attributes,
                     onAnswer = { withTimeout(4500) {
                         check(call.permitted.await()) { "Incoming call filtered" }
-                        if (call.state["status"] == "ringing") { signal(call, NativeMediaStage.ANSWER_REQUESTED); call.timeout?.cancel(); action(id, "join", "system"); requireLive(call); call.active = true; joined(id) }
+                        if (call.state["status"] == "ringing") {
+                            signal(call, NativeMediaStage.ANSWER_REQUESTED); call.timeout?.cancel()
+                            // A failed answer ends the Core call; record why before it does.
+                            try { action(id, "join", "system") }
+                            catch (error: Exception) { call.failure = call.failure ?: EndedFailure.ofHandler(error); throw error }
+                            requireLive(call); call.active = true; joined(id)
+                        }
                     } },
                     onDisconnect = { withTimeout(4500) { cleanupDecline(id); action(id, "end", "system"); terminal(id, "local") } },
                     onSetActive = { withTimeout(4500) { check(call.permitted.await()); hold(id, false, "system") } },
@@ -370,7 +378,7 @@ class ConversationEngine(val context: Context) {
         val call = call(id)
         if (policy.optString("type", "native") == "native") {
             call.media = NativeMediaController(context, payload, policy, jobs, failed = {
-                terminateLater(id, "failed")
+                terminateLater(id, "failed", EndedFailure.MEDIA)
             }, connected = {
                 if (calls[id] === call) {
                     call.timeout?.cancel()
@@ -400,7 +408,7 @@ class ConversationEngine(val context: Context) {
         signal(current, NativeMediaStage.ANSWER_REQUESTED)
         current.timeout?.cancel()
         try { action(id, "join", "app") }
-        catch (error: Exception) { if (calls.containsKey(id)) finish(id, "failed"); throw error }
+        catch (error: Exception) { if (calls.containsKey(id)) finish(id, "failed", EndedFailure.ofHandler(error)); throw error }
         checked(control(id).answer(if (current.state["isVideo"] == true) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL))
         requireLive(current)
         current.active = true
@@ -414,7 +422,7 @@ class ConversationEngine(val context: Context) {
         current.timeout?.cancel()
         current.timeout = jobs.launch {
             delay(answerTimeoutMillis)
-            if (calls[id] === current && current.state["connectedAt"] == null) terminateLater(id, "failed")
+            if (calls[id] === current && current.state["connectedAt"] == null) terminateLater(id, "failed", EndedFailure.CONNECT_TIMED_OUT)
         }
         ConversationService.show(context, id, current.state)
         current.media?.answered { awaitAudio(id, current) }
@@ -496,20 +504,22 @@ class ConversationEngine(val context: Context) {
                 current.state["connectedAt"] = current.state["connectedAt"] ?: Instant.now().toString()
             }
             "updated" -> { report["members"]?.let { current.state["members"] = it }; report["video"]?.let { current.state["isVideo"] = it } }
-            "ended" -> { finish(id, report["reason"] as? String ?: error("invalid_arguments")); return }
+            "ended" -> { finish(id, report["reason"] as? String ?: error("invalid_arguments"), EndedFailure.SERVER); return }
             else -> error("invalid_arguments")
         }
         publish()
     }
-    private fun terminateLater(id: String, reason: String) = jobs.launch {
-        try { if (calls.containsKey(id)) finish(id, reason) }
+    private fun terminateLater(id: String, reason: String, failure: EndedFailure? = null) = jobs.launch {
+        try { if (calls.containsKey(id)) finish(id, reason, failure) }
         catch (_: Exception) { terminal(id, "failed") }
     }
-    private suspend fun finish(id: String, reason: String) {
+    /** Ends the call. A `failed` end carries [failure], unless a server end signal ended the call first. */
+    private suspend fun finish(id: String, reason: String, failure: EndedFailure? = null) {
         require(reason in setOf("local", "remoteEnded", "failed", "unanswered", "answeredElsewhere", "declinedElsewhere")) { "invalid_arguments" }
         val current = call(id)
         if (current.ending || current.terminal) return
         current.ending = true
+        if (reason == "failed") current.failure = current.failure ?: failure
         try {
             val controls = current.ready.await()
             if (calls[id] !== current || current.terminal) return
@@ -517,6 +527,8 @@ class ConversationEngine(val context: Context) {
             val intent = current.incoming?.intent
             current.terminalIntent = intent
             val endedReason = intent?.payload?.reason ?: reason
+            // A server end signal ends the call for its own reason.
+            if (intent != null) current.failure = EndedFailure.SERVER.takeIf { endedReason == "failed" }
             val cause = intent?.payload?.disconnectCause() ?: DisconnectCause(when (reason) {
                 "local", "failed" -> DisconnectCause.LOCAL
                 "unanswered" -> DisconnectCause.MISSED
@@ -536,7 +548,7 @@ class ConversationEngine(val context: Context) {
         current.timeout?.cancel()
         current.collectors?.cancel()
         current.state["status"] = "ended"
-        current.state["ended"] = mapOf("at" to Instant.now().toString(), "reason" to reason)
+        current.state["ended"] = conversationEnd(Instant.now().toString(), reason, current.failure)
         current.visible = true
         pendingTerminals[id] = current
         current.media?.close(if (reason == "local" && current.state["connectedAt"] == null) "declined" else "ended")
