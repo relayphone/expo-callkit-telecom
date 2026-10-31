@@ -1,5 +1,6 @@
 import AVFAudio
 import Foundation
+import IosVoipSDK
 
 /// The audio routes that the TypeScript API shows, from the audio session.
 ///
@@ -13,16 +14,16 @@ final class AudioRoutes {
   private static let inputPrefix = "input:"
 
   private(set) var revision = 0
-  private(set) var routes: [JSON] = []
-  private(set) var current: JSON = .null
-  private let changed: @MainActor (JSON) -> Void
+  private(set) var routes: [JSONValue] = []
+  private(set) var current: JSONValue = .null
+  private let changed: @MainActor (JSONValue) -> Void
   private var observer: (any NSObjectProtocol)?
 
   /// Starts following the audio session's routes.
   ///
   /// - Parameter changed: Receives the new ``snapshot`` when the routes or the current route
   ///   changed.
-  init(changed: @escaping @MainActor (JSON) -> Void) {
+  init(changed: @escaping @MainActor (JSONValue) -> Void) {
     self.changed = changed
     observer = NotificationCenter.default.addObserver(
       forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
@@ -33,7 +34,7 @@ final class AudioRoutes {
   }
 
   /// The routes as the TypeScript API's `AudioRoutesSnapshot`.
-  var snapshot: JSON {
+  var snapshot: JSONValue {
     .object(["revision": .number(Double(revision)), "routes": .array(routes), "current": current])
   }
 
@@ -71,7 +72,7 @@ final class AudioRoutes {
     }
   }
 
-  private static func route(id: String, name: String, type: String) -> JSON {
+  private static func route(id: String, name: String, type: String) -> JSONValue {
     .object(["id": .string(id), "name": .string(name), "type": .string(type)])
   }
 

@@ -1,5 +1,6 @@
 public import ExpoModulesCore
 import Foundation
+import IosVoipSDK
 import Synchronization
 
 /// The `ExpoCallKitTelecom` native module: the TypeScript API's `NativeTransport` on iOS.
@@ -141,8 +142,8 @@ private func bridged<Result: Sendable>(_ command: () async throws -> Result) asy
 }
 
 /// Converts arguments from JavaScript, or throws the TypeScript API's invalid arguments error.
-private func json(_ value: [String: Any]) throws -> JSON {
-  guard let json = JSON(value) else { throw CommandError.invalidArguments.exception }
+private func json(_ value: [String: Any]) throws -> JSONValue {
+  guard let json = JSONValue(value) else { throw CommandError.invalidArguments.exception }
   return json
 }
 

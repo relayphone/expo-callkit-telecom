@@ -39,7 +39,7 @@ struct CommandError: Error {
   }
 
   /// The failure as the TypeScript API's `ConversationFailure`.
-  var json: JSON {
+  var json: JSONValue {
     .object(["code": .string(code.rawValue), "message": .string(message)])
   }
 }
@@ -50,7 +50,7 @@ extension Party {
   ///
   /// A phone number may contain spaces, parentheses, hyphens and periods, which are removed; it
   /// must then be in E.164 format.
-  init(participant: JSON) throws(CommandError) {
+  init(participant: JSONValue) throws(CommandError) {
     let handle: Handle
     do {
       if var number = participant["phoneNumber"]?.string {
@@ -71,8 +71,8 @@ extension Party {
   }
 
   /// The party as a TypeScript `Participant`, identified by its presented handle.
-  var participant: JSON {
-    var fields: [String: JSON] = ["id": .string(presentedHandle.value)]
+  var participant: JSONValue {
+    var fields: [String: JSONValue] = ["id": .string(presentedHandle.value)]
     if let displayName { fields["displayName"] = .string(displayName) }
     switch presentedHandle.kind {
     case .phoneNumber: fields["phoneNumber"] = .string(presentedHandle.value)
@@ -85,7 +85,7 @@ extension Party {
 
 extension FilterCause {
   /// The TypeScript API's `IncomingFilterReason`.
-  var json: JSON {
+  var json: JSONValue {
     switch self {
     case .doNotDisturb: .string("doNotDisturb")
     case .blockList: .string("blockList")
@@ -96,7 +96,7 @@ extension FilterCause {
 
 extension PreviewReason {
   /// The TypeScript API's `PreviewReason`.
-  var json: JSON {
+  var json: JSONValue {
     switch self {
     case .filtered(let cause): .object(["type": .string("filtered"), "cause": cause.json])
     case .answeredElsewhere: .object(["type": .string("answeredElsewhere")])
@@ -110,7 +110,7 @@ extension EndReason {
   ///
   /// A call ends as filtered only when the presentation policy doesn't preview filtered calls,
   /// which this module never configures, so the TypeScript API has no reason for it.
-  var json: JSON {
+  var json: JSONValue {
     switch self {
     case .endedHere: .string("local")
     case .endedRemotely: .string("remoteEnded")
@@ -124,7 +124,7 @@ extension EndReason {
 
 extension PresentationOutcome {
   /// The TypeScript API's `IncomingConversationOutcome` for a call with the given ID.
-  func json(id: CallID) -> JSON {
+  func json(id: CallID) -> JSONValue {
     switch self {
     case .presented:
       .object(["status": .string("reported"), "id": .string(id.rawValue)])
@@ -150,7 +150,7 @@ extension CallStatus {
   ///
   /// A call on hold is `held`. The TypeScript API has no reconnecting status, and its reports
   /// can't make a call reconnect, so a reconnecting call is `connecting`.
-  func fields(isOnHold: Bool, endedAt: Date) -> [String: JSON] {
+  func fields(isOnHold: Bool, endedAt: Date) -> [String: JSONValue] {
     switch self {
     case .ringing:
       ["status": .string("ringing")]

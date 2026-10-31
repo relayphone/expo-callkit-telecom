@@ -34,7 +34,7 @@ final class HandlerActions {
     let origin: Origin
     let deadline: Date
     /// The conversation when the SDK asked for the action, until the call's current one is known.
-    let conversation: JSON
+    let conversation: JSONValue
     /// The handler generation the action was delivered to.
     var delivered: Int?
     var expiry: Task<Void, Never>?
@@ -46,8 +46,8 @@ final class HandlerActions {
   private var gated: [Gated] = []
   private var generation = 0
   private var isAttached = false
-  private let send: @MainActor (String, JSON) -> Void
-  private let conversation: @MainActor (CallID) -> JSON?
+  private let send: @MainActor (String, JSONValue) -> Void
+  private let conversation: @MainActor (CallID) -> JSONValue?
   private let complete: @MainActor (CallID, Bool) -> Void
   private let expired: @MainActor () -> Void
 
@@ -59,8 +59,8 @@ final class HandlerActions {
   ///   - complete: Places a gated call, or ends it.
   ///   - expired: Called when a gated action's deadline passed, so its call no longer shows it.
   init(
-    send: @escaping @MainActor (String, JSON) -> Void,
-    conversation: @escaping @MainActor (CallID) -> JSON?,
+    send: @escaping @MainActor (String, JSONValue) -> Void,
+    conversation: @escaping @MainActor (CallID) -> JSONValue?,
     complete: @escaping @MainActor (CallID, Bool) -> Void,
     expired: @escaping @MainActor () -> Void
   ) {
@@ -96,7 +96,7 @@ final class HandlerActions {
   ///   - origin: Whether the app or a system surface asked for it.
   ///   - placement: The SDK's placement deadline.
   func gate(
-    _ kind: Kind, call: CallID, conversation: JSON, origin: Origin, placement: Duration
+    _ kind: Kind, call: CallID, conversation: JSONValue, origin: Origin, placement: Duration
   ) {
     cancel(call, reason: "handlerReplaced")
     let seconds = Double(placement.components.seconds)
@@ -126,7 +126,9 @@ final class HandlerActions {
   }
 
   /// Tells the handler about an action that the SDK performed.
-  func inform(_ kind: Kind, arguments: [String: JSON], conversation: JSON, origin: Origin) {
+  func inform(
+    _ kind: Kind, arguments: [String: JSONValue], conversation: JSONValue, origin: Origin
+  ) {
     guard isAttached else { return }
     let deadline = Date.now.addingTimeInterval(Self.informationalDeadline)
     send(
@@ -147,7 +149,7 @@ final class HandlerActions {
   }
 
   /// The call's action that waits for the handler, as the TypeScript API's `PendingAction`.
-  func pending(for call: CallID) -> JSON? {
+  func pending(for call: CallID) -> JSONValue? {
     gated.first { $0.call == call }.map { action in
       .object([
         "id": .string(action.actionID), "kind": .string(action.kind.rawValue),
@@ -201,9 +203,9 @@ final class HandlerActions {
   }
 
   private func body(
-    actionID: String, kind: Kind, origin: Origin, deadline: Date, conversation: JSON,
-    arguments: [String: JSON]
-  ) -> JSON {
+    actionID: String, kind: Kind, origin: Origin, deadline: Date, conversation: JSONValue,
+    arguments: [String: JSONValue]
+  ) -> JSONValue {
     var fields = arguments
     fields["actionID"] = .string(actionID)
     fields["generation"] = .number(Double(generation))
