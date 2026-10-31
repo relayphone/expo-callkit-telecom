@@ -34,6 +34,17 @@ export type ExpoCallKitTelecomPluginProps = {
    */
   simulator?: boolean;
   /**
+   * Posts a call notification, a communication notification from the caller, for each call that
+   * Do Not Disturb or a Focus filtered on iOS, with ios-voip-sdk's `CallNotifier`. A Focus lets it
+   * through for the people it allows, and it never rings. The plugin adds the Communication
+   * Notifications capability. The app asks for the user's permission for notifications, and
+   * expo-notifications must stay the notification center's delegate, which it is by default: the
+   * module receives the responses to call notifications through it.
+   * @default false
+   * @platform ios
+   */
+  callNotifications?: boolean;
+  /**
    * Custom message for microphone permission prompt. Set to false to skip.
    * @platform ios
    */

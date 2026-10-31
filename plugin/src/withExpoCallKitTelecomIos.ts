@@ -157,7 +157,8 @@ const withCallCore: ConfigPlugin<{
   mediaAdapter?: string;
   simulator?: boolean;
   unhandledAction?: string;
-}> = (config, { mediaAdapter, simulator, unhandledAction }) => {
+  callNotifications?: boolean;
+}> = (config, { mediaAdapter, simulator, unhandledAction, callNotifications }) => {
   const media = mediaAdapter ?? "webrtc";
   if (!MEDIA_ADAPTERS.includes(media)) {
     throw new Error(
@@ -171,6 +172,9 @@ const withCallCore: ConfigPlugin<{
     config.modResults["expo-callkit-telecom.simulator"] = String(
       simulator ?? false,
     );
+    config.modResults["expo-callkit-telecom.callNotifications"] = String(
+      callNotifications ?? false,
+    );
     return config;
   });
   config = withPodfile(config, (config) => {
@@ -181,6 +185,22 @@ const withCallCore: ConfigPlugin<{
     config.modResults.ExpoCallKitTelecomMediaAdapter = media;
     config.modResults.ExpoCallKitTelecomUnhandledAction =
       unhandledAction ?? "fail";
+    return config;
+  });
+};
+
+/**
+ * Gives the app the Communication Notifications capability for call notifications. The call
+ * notifications' `INStartCallIntent` is in `NSUserActivityTypes` already; see `withSiriIntents`.
+ */
+const withCallNotifications: ConfigPlugin<{ callNotifications?: boolean }> = (
+  config,
+  { callNotifications },
+) => {
+  if (!callNotifications) return config;
+  return withEntitlementsPlist(config, (config) => {
+    config.modResults["com.apple.developer.usernotifications.communication"] =
+      true;
     return config;
   });
 };
@@ -390,12 +410,15 @@ export const withExpoCallKitTelecomIos: ConfigPlugin<ExpoCallKitTelecomPluginPro
     mediaAdapter,
     simulator,
     unhandledAction,
+    callNotifications,
   } = props;
   config = withCallCore(config, {
     mediaAdapter,
     simulator,
     unhandledAction,
+    callNotifications,
   });
+  config = withCallNotifications(config, { callNotifications });
   config = withPermissions(config, { cameraPermission, microphonePermission });
   config = withPushNotificationEntitlement(config);
   config = withBackgroundModes(config);

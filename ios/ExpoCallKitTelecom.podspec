@@ -10,10 +10,12 @@ unless %w[webrtc livekit none].include?(media_adapter)
   raise 'ExpoCallKitTelecom: expo-callkit-telecom.mediaAdapter must be webrtc, livekit or none.'
 end
 simulator = properties.fetch('expo-callkit-telecom.simulator', 'false') == 'true'
+call_notifications = properties.fetch('expo-callkit-telecom.callNotifications', 'false') == 'true'
 
 conditions = []
 conditions << 'EXPO_CALLKIT_TELECOM_WEBRTC' if media_adapter != 'none'
 conditions << 'EXPO_CALLKIT_TELECOM_SIMULATOR' if simulator
+conditions << 'EXPO_CALLKIT_TELECOM_NOTIFICATIONS' if call_notifications
 
 Pod::Spec.new do |s|
   s.name           = 'ExpoCallKitTelecom'
@@ -36,6 +38,12 @@ Pod::Spec.new do |s|
   s.dependency 'IosVoipSDK/LiveCommunicationKit'
   s.dependency 'IosVoipSDK/PushKit'
   s.dependency 'IosVoipSDK/Simulator' if simulator
+  # Call notifications; the responses to them arrive through expo-notifications, which is the
+  # notification center's delegate.
+  if call_notifications
+    s.dependency 'IosVoipSDK/Notifications'
+    s.dependency 'ExpoNotifications'
+  end
   # No WebRTC pod dependency: Swift compiles against the declarations in WebRTCHeaders/, and the
   # classes resolve when the app links whichever WebRTC build it ships. See WebRTCHeaders/README.md.
 

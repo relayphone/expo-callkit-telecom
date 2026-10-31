@@ -15,7 +15,7 @@ import {
  */
 async function evaluateMod(
   props: ExpoCallKitTelecomPluginProps,
-  modName: "infoPlist" | "podfileProperties",
+  modName: "infoPlist" | "podfileProperties" | "entitlements",
   modResults: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
   const config: ExpoConfig & { mods?: ModConfig } = withExpoCallKitTelecomIos(
@@ -87,6 +87,7 @@ describe("withExpoCallKitTelecomIos call core selection", () => {
     expect(await evaluateMod({}, "podfileProperties")).toEqual({
       "expo-callkit-telecom.mediaAdapter": "webrtc",
       "expo-callkit-telecom.simulator": "false",
+      "expo-callkit-telecom.callNotifications": "false",
     });
   });
 
@@ -99,6 +100,7 @@ describe("withExpoCallKitTelecomIos call core selection", () => {
     ).toEqual({
       "expo-callkit-telecom.mediaAdapter": "livekit",
       "expo-callkit-telecom.simulator": "true",
+      "expo-callkit-telecom.callNotifications": "false",
     });
   });
 
@@ -140,6 +142,28 @@ describe("withExpoCallKitTelecomIos call core selection", () => {
   it("requires use_expo_modules! in the Podfile", () => {
     expect(() => addSDKSource("target 'App' do\nend")).toThrow(
       "Unable to find use_expo_modules! in the Podfile.",
+    );
+  });
+});
+
+describe("withExpoCallKitTelecomIos call notifications", () => {
+  it("adds the Notifications subspec and the Communication Notifications capability", async () => {
+    expect(
+      await evaluateMod({ callNotifications: true }, "podfileProperties"),
+    ).toMatchObject({ "expo-callkit-telecom.callNotifications": "true" });
+    expect(
+      await evaluateMod({ callNotifications: true }, "entitlements"),
+    ).toMatchObject({
+      "com.apple.developer.usernotifications.communication": true,
+    });
+    expect((await evaluateInfoPlist({ callNotifications: true })).NSUserActivityTypes).toContain(
+      "INStartCallIntent",
+    );
+  });
+
+  it("adds neither without the option", async () => {
+    expect(await evaluateMod({}, "entitlements")).not.toHaveProperty(
+      "com.apple.developer.usernotifications.communication",
     );
   });
 });

@@ -15,6 +15,8 @@ import type {
   NativeMediaCredentials,
   Caller,
   CallEndedPayload,
+  CallNotificationEvent,
+  CallNotificationRoute,
   ConversationEventMap,
   ConversationEnd,
   EndedFailure,
@@ -286,5 +288,33 @@ native.addListener("conversationEvent", (event) => {
     void nativeID;
     void eventID;
     void serverID;
+  }
+});
+
+declare const notificationEvent: CallNotificationEvent;
+if (notificationEvent.type === "failed") {
+  const error: "notAuthorized" | "intentRejected" | "postFailed" =
+    notificationEvent.error;
+  const caller: string = notificationEvent.caller.id;
+  void error;
+  void caller;
+} else if (notificationEvent.type === "withdrawn") {
+  // @ts-expect-error A withdrawn notification carries only its conversation.
+  void notificationEvent.caller;
+}
+declare const route: CallNotificationRoute;
+if (route.type === "callBack") {
+  // A call back starts a new conversation with the caller.
+  void api.startConversation({ to: route.caller, video: route.video });
+  // @ts-expect-error A call back has no conversation to join.
+  void route.conversationId;
+} else {
+  const joining: ConversationId = route.conversationId;
+  void joining;
+}
+native.addListener("conversationEvent", (event) => {
+  if (event.type === "callNotificationRoute") {
+    const routed: CallNotificationRoute = event.payload;
+    void routed;
   }
 });

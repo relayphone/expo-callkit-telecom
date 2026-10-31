@@ -1,7 +1,7 @@
 import {
   endConversation, joinConversation, reportConversation, reportIncomingConversation,
   selectAudioRoute, setConversationHandler, setHeld, setMuted, startConversation,
-  useAudioRoutes, useConversations, usePushToken,
+  useAudioRoutes, useConversationEvent, useConversations, usePushToken,
 } from "expo-callkit-telecom";
 import { useEffect, useRef, useState } from "react";
 import { Button, Linking, PermissionsAndroid, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -24,6 +24,8 @@ export default function App() {
   const [message, setMessage] = useState("Ready");
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
+  useConversationEvent("callNotificationRoute", (route) => setMessage(route.type === "callBack"
+    ? `Call back ${route.caller.displayName ?? route.caller.id}` : "Joining from a call notification"));
   async function perform(work: () => Promise<unknown>) {
     if (running.current) return;
     running.current = true; setBusy(true);

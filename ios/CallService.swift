@@ -1,4 +1,5 @@
 import Foundation
+import Intents
 import IosVoipSDK
 import Observation
 import Synchronization
@@ -36,6 +37,11 @@ final class CallService {
     complete: { [unowned self] id, kind, outcome in complete(id, kind, outcome) },
     expired: { [unowned self] in publish() })
   private lazy var routes = AudioRoutes { [unowned self] in emit("audioRoutesChanged", $0) }
+  #if EXPO_CALLKIT_TELECOM_NOTIFICATIONS
+    private lazy var notifications = CallNotifications(
+      emit: { [unowned self] in emitConversationEvent($0, $1) },
+      deliver: { [unowned self] in deliver($0, $1) })
+  #endif
 
   // Conversations
   private var revision = 0
@@ -58,9 +64,11 @@ final class CallService {
   private var tokenRevision = 0
   private var token: JSONValue = .null
 
-  // Dial requests
+  // Conversation events
   private var observesConversationEvents = false
-  private var dialRequest: JSONValue?
+  /// Conversation events that the user's actions caused before JavaScript listened, the latest
+  /// of each type, which the first listener receives.
+  private var waiting: [(type: String, payload: JSONValue)] = []
 
   private init() {}
 
@@ -82,11 +90,15 @@ final class CallService {
     let push = PushKitSource { intake.decode($0) }
     // The subscription starts before the client attaches the push source, so it receives the
     // events of the VoIP push that launched the app.
-    let events = EventSubscription { [weak self] in self?.handle($0) }
+    var observers: [any CallObserver] = [EventSubscription { [weak self] in self?.handle($0) }]
+    #if EXPO_CALLKIT_TELECOM_NOTIFICATIONS
+      notifications.start()
+      observers.append(notifications.notifier)
+    #endif
     let client: VoIPClient
     do {
       client = try VoIPClient.start(
-        framework: framework, media: media, push: push, observers: [events],
+        framework: framework, media: media, push: push, observers: observers,
         configuration: settings.configuration)
     } catch {
       Self.log.error("Another VoIPClient runs in this process, so calls are unavailable")
@@ -281,23 +293,44 @@ final class CallService {
     publish()
   }
 
-  /// JavaScript started or stopped listening for conversation events, which carry dial requests.
+  /// JavaScript started or stopped listening for conversation events. The first listener
+  /// receives the events that waited for one.
   func observeConversationEvents(_ observes: Bool) {
     observesConversationEvents = observes
-    guard observes, let dialRequest else { return }
-    self.dialRequest = nil
-    emit("conversationEvent", .object(["type": .string("dialRequest"), "payload": dialRequest]))
+    guard observes, send != nil else { return }
+    let waiting = self.waiting
+    self.waiting = []
+    for event in waiting { emitConversationEvent(event.type, event.payload) }
   }
 
-  /// The user asked to call a handle from Recents, Siri or Contacts. Without a listener, the
-  /// latest request waits for one.
-  func dialRequested(handle: String, video: Bool) {
-    let payload = JSONValue.object(["handle": .string(handle), "video": .bool(video)])
-    guard observesConversationEvents, send != nil else {
-      dialRequest = payload
-      return
-    }
-    emit("conversationEvent", .object(["type": .string("dialRequest"), "payload": payload]))
+  /// The user asked to call someone from Recents, Siri or Contacts.
+  ///
+  /// With call notifications, a request for a party whose call is live in a call preview joins
+  /// that call. Otherwise JavaScript receives a `dialRequest` conversation event.
+  ///
+  /// - Returns: Whether the activity holds such a request.
+  func continueCall(_ activity: NSUserActivity) -> Bool {
+    guard
+      let intent = activity.interaction?.intent as? INStartCallIntent,
+      let handle = intent.contacts?.first?.personHandle?.value
+    else { return false }
+    let video = intent.callCapability == .videoCall
+    #if EXPO_CALLKIT_TELECOM_NOTIFICATIONS
+      if let request = StartCallRequest(intent) {
+        Task {
+          guard let callBack = await notifications.route(request) else { return }
+          dialRequested(handle: callBack.party.presentedHandle.value, video: callBack.hasVideo)
+        }
+        return true
+      }
+    #endif
+    dialRequested(handle: handle, video: video)
+    return true
+  }
+
+  /// Without a listener, the latest dial request waits for one.
+  private func dialRequested(handle: String, video: Bool) {
+    deliver("dialRequest", .object(["handle": .string(handle), "video": .bool(video)]))
   }
 
   // MARK: SDK events
@@ -598,6 +631,21 @@ final class CallService {
           "eventId": .string(eventID.rawValue),
         ]),
       ]))
+  }
+
+  /// Sends a conversation event that the app must not miss, because the user's action caused
+  /// it. Without a listener, the latest event of its type waits for one.
+  private func deliver(_ type: String, _ payload: JSONValue) {
+    guard observesConversationEvents, send != nil else {
+      waiting.removeAll { $0.type == type }
+      waiting.append((type, payload))
+      return
+    }
+    emitConversationEvent(type, payload)
+  }
+
+  private func emitConversationEvent(_ type: String, _ payload: JSONValue) {
+    emit("conversationEvent", .object(["type": .string(type), "payload": payload]))
   }
 
   private func emit(_ name: String, _ body: JSONValue) {
