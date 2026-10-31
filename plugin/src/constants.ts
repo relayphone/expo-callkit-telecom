@@ -16,4 +16,4 @@ export const ANDROID_CALL_EVENT_ACTION =
 /** The ios-voip-sdk source that the iOS module builds against. */
 export const IOS_VOIP_SDK_REPOSITORY =
   "https://github.com/relayphone/ios-voip-sdk.git";
-export const IOS_VOIP_SDK_REVISION = "37bb907bd864eed6065790574ba7a352233dcbf1";
+export const IOS_VOIP_SDK_REVISION = "acf4d8bbcc5f1d3f2f39981e4e60704b559fa319";

@@ -68,7 +68,7 @@ final class HandlerActions {
   /// - Parameters:
   ///   - send: Sends an event to JavaScript.
   ///   - conversation: The current conversation of a call.
-  ///   - complete: Places a gated call, or ends it when the handler didn't place it.
+  ///   - complete: Places a gated call, or tells the SDK that the app didn't place it.
   ///   - expired: Called when a gated action's deadline passed, so its call no longer shows it.
   init(
     send: @escaping @MainActor (String, JSONValue) -> Void,

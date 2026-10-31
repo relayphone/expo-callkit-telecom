@@ -53,9 +53,6 @@ final class CallService {
   private var requested: [Action] = []
   /// Requests that wait for the SDK to carry them out.
   private var waiters: [ActionWaiter] = []
-  /// Outgoing calls that ended because the app's handler didn't place them. The SDK ends them as
-  /// a server failure; their conversations show that they weren't placed.
-  private var unplaced: Set<CallID> = []
 
   // Push token
   private var tokenRevision = 0
@@ -83,10 +80,14 @@ final class CallService {
     #endif
     let intake = intake
     let push = PushKitSource { intake.decode($0) }
+    // The subscription starts before the client attaches the push source, so it receives the
+    // events of the VoIP push that launched the app.
+    let events = EventSubscription { [weak self] in self?.handle($0) }
     let client: VoIPClient
     do {
       client = try VoIPClient.start(
-        framework: framework, media: media, push: push, configuration: settings.configuration)
+        framework: framework, media: media, push: push, observers: [events],
+        configuration: settings.configuration)
     } catch {
       Self.log.error("Another VoIPClient runs in this process, so calls are unavailable")
       startError = CommandError(
@@ -95,10 +96,6 @@ final class CallService {
     }
     self.client = client
     handlers.acceptsUnhandled = settings.acceptsUnhandledActions
-    let events = client.events()
-    Task { [weak self] in
-      for await event in events { self?.handle(event) }
-    }
     Task { [weak self] in
       for await _ in Observations({ client.calls }) { self?.publish() }
     }
@@ -396,7 +393,6 @@ final class CallService {
       break
     }
     participants[call.id] = nil
-    unplaced.remove(call.id)
     intake.forget(call.id)
   }
 
@@ -436,11 +432,7 @@ final class CallService {
   /// The call as the TypeScript API's `Conversation`.
   private func conversation(_ call: Call, endedAt: Date = .now) -> JSONValue {
     let payload = intake.payload(for: call.id)
-    var status = call.status
-    if unplaced.contains(call.id), case .ended(.failed(.server)) = status {
-      status = .ended(.failed(.notPlaced))
-    }
-    var fields = status.fields(isOnHold: call.isOnHold, endedAt: endedAt)
+    var fields = call.status.fields(isOnHold: call.isOnHold, endedAt: endedAt)
     fields["id"] = .string(call.id.rawValue)
     fields["direction"] = .string(call.isIncoming ? "incoming" : "outgoing")
     fields["members"] = .array(members(of: call, payload: payload))
@@ -535,24 +527,26 @@ final class CallService {
         await client.confirmPlaced(id)
         publish()
       }
-    case .failed where client.calls.first(where: { $0.id == id })?.isIncoming == false:
+    case .failed:
       notPlaced(id, CommandError(code: .handlerFailed, message: "The start handler failed"))
-    case .expired where client.calls.first(where: { $0.id == id })?.isIncoming == false:
+    case .expired:
       notPlaced(id, CommandError(code: .deadlineExceeded, message: "The start handler timed out"))
-    case .failed, .expired:
-      Task { try? await request(.end(id)) }
     }
   }
 
-  /// Ends an outgoing call that the app's handler didn't place, as on Android: the conversation
-  /// ends as `failed` with the `notPlaced` failure, and `startConversation` rejects with the
-  /// failure.
+  /// Tells the SDK that the app didn't place a call that it was asked to start or join, as on
+  /// Android. An outgoing call ends as `failed` with the `notPlaced` failure, and
+  /// `startConversation` rejects with the given failure. A call being joined returns to its call
+  /// preview.
   private func notPlaced(_ id: CallID, _ failure: CommandError) {
-    unplaced.insert(id)
+    guard let client else { return }
     for waiter in waiters {
       if case .start(let outgoing) = waiter.action, outgoing.id == id { waiter.failure = failure }
     }
-    Task { await receive(.failed, for: id) }
+    Task {
+      await client.confirmNotPlaced(id)
+      publish()
+    }
   }
 
   /// Removes the first requested action that matches, and returns whether the app requested it.
@@ -605,6 +599,29 @@ final class CallService {
 
   private func emit(_ name: String, _ body: JSONValue) {
     send?(name, body)
+  }
+}
+
+/// Follows the client's events from the moment it starts.
+///
+/// The client attaches its observers before the calling framework, the audio session and the push
+/// source, so a stream created in ``attach(to:)`` receives every event, including those of the VoIP
+/// push that launched the app. A stream created after `VoIPClient.start` returns can miss them.
+@MainActor
+private final class EventSubscription: CallObserver {
+  private let handle: @MainActor (CallEvent) -> Void
+  private var task: Task<Void, Never>?
+
+  init(_ handle: @escaping @MainActor (CallEvent) -> Void) {
+    self.handle = handle
+  }
+
+  func attach(to client: VoIPClient) {
+    // Subscribes here, before any push can arrive, and reads the stream in a task.
+    let events = client.events()
+    task = Task { [handle] in
+      for await event in events { handle(event) }
+    }
   }
 }
 
