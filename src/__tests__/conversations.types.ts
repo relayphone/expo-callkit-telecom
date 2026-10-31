@@ -16,6 +16,9 @@ import type {
   Caller,
   CallEndedPayload,
   ConversationEventMap,
+  ConversationEnd,
+  EndedFailure,
+  EndedFailureKind,
   EndedReason,
   IncomingFilterReason,
   PreviewReason,
@@ -68,6 +71,44 @@ if (conversation.status === "ringing") {
   const incoming: "incoming" = conversation.direction;
   void incoming;
 }
+if (conversation.ended?.reason === "failed") {
+  const failure: EndedFailure | undefined = conversation.ended.failure;
+  if (failure?.kind === "filtered") {
+    const cause: IncomingFilterReason = failure.cause;
+    void cause;
+  } else if (failure) {
+    const kind: EndedFailureKind = failure.kind;
+    void kind;
+  }
+} else if (conversation.ended) {
+  // @ts-expect-error Only a failed conversation carries a native failure.
+  void conversation.ended.failure;
+}
+// The end shape before failures were added still type-checks.
+declare const reasonOnly: { readonly at: string; readonly reason: EndedReason };
+const compatibleEnd: ConversationEnd = reasonOnly;
+const endedReason: EndedReason | undefined = conversation.ended?.reason;
+void compatibleEnd;
+void endedReason;
+const nativeFailure: ConversationEnd = {
+  at: "2026-10-31T00:00:00.000Z",
+  reason: "failed",
+  failure: { kind: "audioActivationTimedOut" },
+};
+void nativeFailure;
+// @ts-expect-error A filtered failure carries the filter's cause.
+const filteredWithoutCause: EndedFailure = { kind: "filtered" };
+void filteredWithoutCause;
+// @ts-expect-error Failure kinds are the SDK's known cases.
+const unknownFailure: EndedFailure = { kind: "somethingElse" };
+void unknownFailure;
+const remoteFailure: ConversationEnd = {
+  at: "2026-10-31T00:00:00.000Z",
+  reason: "remoteEnded",
+  // @ts-expect-error A conversation that didn't fail has no failure.
+  failure: { kind: "server" },
+};
+void remoteFailure;
 if (action.kind === "hold") {
   const held: boolean = action.held;
   void held;

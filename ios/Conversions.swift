@@ -120,6 +120,41 @@ extension EndReason {
     case .filtered, .failed: .string("failed")
     }
   }
+
+  /// The TypeScript API's `ConversationEnd` for a call that ended at the given time. A call that
+  /// failed also carries the SDK's cause, as an `EndedFailure`.
+  func ended(at date: Date) -> JSONValue {
+    var fields: [String: JSONValue] = ["at": .date(date), "reason": json]
+    switch self {
+    case .failed(let failure):
+      fields["failure"] = .object(["kind": .string(failure.kind)])
+    case .filtered(let cause):
+      fields["failure"] = .object(["kind": .string("filtered"), "cause": cause.json])
+    case .endedHere, .endedRemotely, .unanswered, .answeredElsewhere, .declinedElsewhere:
+      break
+    }
+    return .object(fields)
+  }
+}
+
+extension CallFailure {
+  /// The TypeScript API's `EndedFailureKind`, which names the SDK's case.
+  var kind: String {
+    switch self {
+    case .refused: "refused"
+    case .atCapacity: "atCapacity"
+    case .notPlaced: "notPlaced"
+    case .media: "media"
+    case .audioActivationTimedOut: "audioActivationTimedOut"
+    case .audioSession: "audioSession"
+    case .audioRecoveryTimedOut: "audioRecoveryTimedOut"
+    case .connectTimedOut: "connectTimedOut"
+    case .reconnectTimedOut: "reconnectTimedOut"
+    case .actionTimedOut: "actionTimedOut"
+    case .frameworkReset: "frameworkReset"
+    case .server: "server"
+    }
+  }
 }
 
 extension PresentationOutcome {
@@ -157,10 +192,7 @@ extension CallStatus {
     case .previewing(let reason):
       ["status": .string("previewing"), "previewReason": reason.json]
     case .ended(let reason):
-      [
-        "status": .string("ended"),
-        "ended": .object(["at": .date(endedAt), "reason": reason.json]),
-      ]
+      ["status": .string("ended"), "ended": reason.ended(at: endedAt)]
     case _ where isOnHold:
       ["status": .string("held")]
     case .dialing:
