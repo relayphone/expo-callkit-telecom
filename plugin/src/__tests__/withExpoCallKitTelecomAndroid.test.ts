@@ -96,3 +96,72 @@ describe("withExpoCallKitTelecomAndroid native media engine", () => {
     ).not.toThrow();
   });
 });
+
+describe("withExpoCallKitTelecomAndroid removed options", () => {
+  it("rejects the options that v2 no longer reads", () => {
+    for (const [option, value] of [
+      ["defaultDialtone", "dialtone.wav"],
+      ["androidEventReceiver", ".CallEndedReceiver"],
+    ] as const) {
+      expect(() =>
+        withExpoCallKitTelecomAndroid(
+          { name: "test-app", slug: "test-app" },
+          { [option]: value } as ExpoCallKitTelecomPluginProps,
+        ),
+      ).toThrow(`The "${option}" option was removed`);
+    }
+  });
+
+  it("drops the dialtone meta-data and call-event receiver that an earlier prebuild wrote", async () => {
+    const config: ExpoConfig & { mods?: ModConfig } =
+      withExpoCallKitTelecomAndroid({ name: "test-app", slug: "test-app" }, {});
+    const mod = config.mods?.android?.manifest as unknown as (
+      config: unknown,
+    ) => Promise<{ modResults: { manifest: { application: Record<string, unknown>[] } } }>;
+    const receiver = (name: string, action: string) => ({
+      $: { "android:name": name, "android:exported": "false" },
+      "intent-filter": [{ action: [{ $: { "android:name": action } }] }],
+    });
+    const result = await mod({
+      ...config,
+      modResults: {
+        manifest: {
+          $: { "xmlns:android": "http://schemas.android.com/apk/res/android" },
+          application: [
+            {
+              $: { "android:name": ".MainApplication" },
+              "meta-data": [
+                {
+                  $: {
+                    "android:name": "ExpoCallKitTelecomDefaultDialtone",
+                    "android:value": "dialtone",
+                  },
+                },
+              ],
+              receiver: [
+                receiver(".CallEndedReceiver", "expo.modules.callkittelecom.ACTION_CALL_EVENT"),
+                receiver(".OtherReceiver", "com.example.OTHER"),
+              ],
+            },
+          ],
+        },
+      },
+      modRequest: {
+        projectRoot: "/tmp/test-app",
+        platformProjectRoot: "/tmp/test-app/android",
+        modName: "manifest",
+        platform: "android",
+        introspect: true,
+      },
+      modRawConfig: { name: "test-app", slug: "test-app" },
+    });
+    const app = result.modResults.manifest.application[0] as {
+      "meta-data": { $: Record<string, string> }[];
+      receiver: { $: Record<string, string> }[];
+    };
+    expect(app["meta-data"].map((item) => item.$["android:name"])).not.toContain(
+      "ExpoCallKitTelecomDefaultDialtone",
+    );
+    expect(app.receiver.map((item) => item.$["android:name"])).toEqual([".OtherReceiver"]);
+  });
+});

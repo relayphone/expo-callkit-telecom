@@ -49,13 +49,9 @@ const config: ExpoConfig = {
     [
       require("../../app.plugin.js").default,
       {
-        sounds: [
-          "./assets/sounds/ringtone.wav",
-          "./assets/sounds/dialtone.wav",
-        ],
+        sounds: ["./assets/sounds/ringtone.wav"],
         defaultRingtoneIos: "ringtone.wav",
         defaultRingtoneAndroid: "ringtone.wav",
-        defaultDialtone: "dialtone.wav",
         iconTemplateIos: "./assets/callkit-icon.png",
         joinPolicy: { type: "handler" },
         // Debug builds present calls in the iOS Simulator.

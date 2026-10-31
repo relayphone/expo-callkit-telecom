@@ -26,37 +26,13 @@ description: Platform requirements for expo-callkit-telecom v2 — iOS 26+ (Live
 - Incoming calls come via [FCM](https://firebase.google.com/docs/cloud-messaging) data messages — the config plugin registers `ExpoCallKitTelecomMessagingService` automatically.
 - Muting a call (from `setMuted` or the system call UI) also mutes the device microphone via [`AudioManager.setMicrophoneMute`](https://developer.android.com/reference/android/media/AudioManager#setMicrophoneMute(boolean)). The mute is device-wide, so the module applies it only while call audio is active and clears it when the last call ends. This adds the [`MODIFY_AUDIO_SETTINGS`](https://developer.android.com/reference/android/Manifest.permission#MODIFY_AUDIO_SETTINGS) permission to your app's manifest; it's granted at install, with no runtime prompt.
 
-### Call ended while the app is killed
+### Incoming call UI
 
-On a killed app, Android shows the incoming-call UI fully natively — no React context ever starts unless the user answers. That means a **decline** (or any call end) in that state cannot be delivered as a JS event: `onCallEnded` is intentionally excluded from the cold-start replay queue, so the event is dropped and the app never learns about it. If your backend needs to know (so the caller stops ringing immediately instead of waiting for a server timeout), register a manifest `BroadcastReceiver` for the package-internal broadcast the module fires in exactly that case.
+The module has no call screen of its own. An incoming call is a Core-Telecom call with the system's call-style notification, which rings with the system ringtone, or `defaultRingtoneAndroid`, and offers answer and decline. On a locked device, its full-screen intent opens the app's launch activity, so show your own call UI there from the conversation snapshots.
 
-Register the receiver via the config plugin, which writes the manifest entry. You supply the receiver class (e.g. in a [local Expo module](https://docs.expo.dev/modules/get-started/) or your `android/` source):
+### Declined calls without JavaScript
 
-```js
-// app.config.js / app.json plugin props
-[
-  "expo-callkit-telecom",
-  { androidEventReceiver: ".CallEndedReceiver" },
-]
-```
-
-```kotlin
-class CallEndedReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        if (intent.getStringExtra("eventName") != "onCallEnded") return
-        val payload = intent.getStringExtra("payload")?.let { JSONObject(it) } ?: return
-        val session = payload.optJSONObject("session")
-        val incomingCall = session?.optJSONObject("incomingCallEvent")
-        val serverCallId = incomingCall?.optString("serverCallId")
-        val metadata = incomingCall?.optJSONObject("metadata")
-        // e.g. POST a decline to your backend (use goAsync() for the network call)
-    }
-}
-```
-
-The broadcast carries two extras: `eventName` (the call event that couldn't reach JS) and `payload`, a JSON string of the exact body JS would have received. Events that can't reach a live JS observer **and** aren't queued for cold-start replay (e.g. `onCallEnded`, `onCallReportedEnded`) are broadcast — filter on `eventName` for the ones you care about (the example above handles only `onCallEnded`). For these terminal events the payload embeds the full `session`, so your backend ids (`serverCallId`) and any push `metadata` (auth tokens, routing ids) are available without app-side state. The broadcast fires **only** when the event would otherwise be lost; an alive app with a mounted listener keeps receiving the normal JS event, and events that flush to JS on the next launch are never broadcast (so there's no double-delivery).
-
-A complete working setup ships in the example app: `example/client/` sets `androidEventReceiver` in `app.config.ts` and copies `plugins/CallEndedReceiver.kt` into the generated android project — see "Testing system → app paths" in the example README for how to exercise it.
+When native FCM intake reports an incoming call, it also starts the JavaScript runtime in the background, unless a native `joinPolicy` sets `prewarm: false`. So the conversation handler that the app registers at module scope receives a decline as `end`, with `origin: "system"`, even if the app wasn't running: notify your backend there. Like every handler action, it waits for the handler only until its deadline. Native code can follow incoming calls without JavaScript too, through `NativeIncomingOutcomes` and `NativeMediaSignals`.
 
 ### Ending a call from the server
 

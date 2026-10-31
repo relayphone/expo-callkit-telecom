@@ -97,12 +97,6 @@ export type ExpoCallKitTelecomPluginProps = {
    */
   defaultRingtoneAndroid?: string;
   /**
-   * The default dialtone to play during outgoing calls while connecting.
-   * Must be the filename (with extension) of one of the provided sounds.
-   * @platform android
-   */
-  defaultDialtone?: string;
-  /**
    * Path (relative to the project root) to a PNG of the app's icon for the system's call UI on
    * iOS. The plugin bundles it with the app, and the module passes its data to
    * LiveCommunicationKit's `ConversationManager.Configuration.iconTemplateImageData`, which
@@ -112,19 +106,6 @@ export type ExpoCallKitTelecomPluginProps = {
    * @platform ios
    */
   iconTemplateIos?: string;
-  /**
-   * Class name of a `BroadcastReceiver` to register for the module's call-event
-   * broadcast, fired when a call event can't reach a live JS observer (e.g. the
-   * user declines an incoming call while the app is killed). The plugin writes
-   * the manifest `<receiver>` + `<intent-filter>`. You supply the receiver class
-   * (e.g. via a local Expo module); the plugin does not generate it.
-   *
-   * Accepts a manifest-relative name (`.CallEventReceiver`) or a fully-qualified
-   * one (`com.acme.app.CallEventReceiver`). See "Call ended while the app is
-   * killed" in the docs.
-   * @platform android
-   */
-  androidEventReceiver?: string;
 };
 
 const withExpoCallKitTelecom: ConfigPlugin<

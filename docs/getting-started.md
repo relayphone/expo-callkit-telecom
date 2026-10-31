@@ -42,13 +42,9 @@ With custom sounds and options:
       [
         "expo-callkit-telecom",
         {
-          "sounds": [
-            "./assets/sounds/ringtone.wav",
-            "./assets/sounds/dialtone.wav"
-          ],
+          "sounds": ["./assets/sounds/ringtone.wav"],
           "defaultRingtoneIos": "ringtone.wav",
           "defaultRingtoneAndroid": "ringtone.wav",
-          "defaultDialtone": "dialtone.wav",
           "iconTemplateIos": "./assets/call-icon.png",
           "incomingCallTimeout": 45,
           "outgoingCallTimeout": 60,
@@ -67,7 +63,7 @@ Files in `sounds` are copied into the iOS bundle and Android raw resources at pr
 On iOS, three options set LiveCommunicationKit's [`ConversationManager.Configuration`](https://developer.apple.com/documentation/livecommunicationkit/conversationmanager/configuration-swift.struct):
 
 - `defaultRingtoneIos` sets [`ringtoneName`](https://developer.apple.com/documentation/livecommunicationkit/conversationmanager/configuration-swift.struct/ringtonename), the sound resource in the app bundle that rings for incoming calls. `"default"`, the default, uses the system ringtone.
-- `iconTemplateIos` sets [`iconTemplateImageData`](https://developer.apple.com/documentation/livecommunicationkit/conversationmanager/configuration-swift.struct/icontemplateimagedata), which Apple documents only as the PNG data for the app's icon image. The property is named for a template image, so provide a square PNG, about 40×40 points, whose alpha channel describes the glyph. Android's call UI uses the app's launcher icon, so this option is iOS-only.
+- `iconTemplateIos` sets [`iconTemplateImageData`](https://developer.apple.com/documentation/livecommunicationkit/conversationmanager/configuration-swift.struct/icontemplateimagedata), which Apple documents only as the PNG data for the app's icon image. The property is named for a template image, so provide a square PNG, about 40×40 points, whose alpha channel describes the glyph. This option is iOS-only.
 - `includesCallsInRecents` sets [`includesConversationInRecents`](https://developer.apple.com/documentation/livecommunicationkit/conversationmanager/configuration-swift.struct/includesconversationinrecents): whether the system's Recents list includes a call after it ends. It defaults to `true`.
 
 On iOS, `incomingCallTimeout` also bounds how long an outgoing call dials, and `fulfillAnswerCallTimeout` bounds how long a call stays connecting before it ends as failed. See [iOS](./migrating-v1-to-v2#ios) for `mediaAdapter` and the iOS-only `simulator` option, and the [Android quick-start](./android-quick-start) for `joinPolicy`.

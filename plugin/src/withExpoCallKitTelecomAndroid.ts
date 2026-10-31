@@ -9,7 +9,6 @@ import { copyFileSync, existsSync, mkdirSync } from "fs";
 import { basename, resolve } from "path";
 
 import {
-  ANDROID_CALL_EVENT_ACTION,
   DEFAULT_FULFILL_ANSWER_CALL_TIMEOUT,
   DEFAULT_INCOMING_CALL_TIMEOUT,
   DEFAULT_OUTGOING_CALL_TIMEOUT,
@@ -142,47 +141,6 @@ const withSounds: ConfigPlugin<{ sounds?: string[] }> = (
 };
 
 /**
- * Configures the default dialtone for outgoing calls in AndroidManifest metadata.
- */
-const withDefaultDialtone: ConfigPlugin<{
-  sounds?: string[];
-  defaultDialtone?: string;
-}> = (config, { sounds, defaultDialtone }) => {
-  if (!defaultDialtone) {
-    return config;
-  }
-
-  const soundFilenames = sounds?.map((s) => basename(s)) ?? [];
-
-  if (soundFilenames.length === 0) {
-    throw new Error(
-      `${ERROR_MSG_PREFIX}"defaultDialtone" was specified but no ` +
-        `sounds were provided.`
-    );
-  }
-  if (!soundFilenames.includes(defaultDialtone)) {
-    throw new Error(
-      `${ERROR_MSG_PREFIX}"defaultDialtone" must be one of the provided ` +
-        `sounds (${soundFilenames.join(", ")}).`
-    );
-  }
-
-  return withAndroidManifest(config, (config) => {
-    const app = AndroidConfig.Manifest.getMainApplicationOrThrow(
-      config.modResults
-    );
-
-    setMetaDataValue(
-      app,
-      "ExpoCallKitTelecomDefaultDialtone",
-      toAndroidRawResourceName(defaultDialtone)
-    );
-
-    return config;
-  });
-};
-
-/**
  * Configures the default ringtone for incoming calls in AndroidManifest metadata.
  *
  * Mirrors the iOS `withDefaultRingtone` plugin. The Kotlin side reads
@@ -279,43 +237,58 @@ const withFirebaseMessagingService: ConfigPlugin<
   });
 };
 
-/**
- * Registers a manifest BroadcastReceiver for the module's call-event broadcast.
- *
- * Fired when a call event can't reach a live JS observer (e.g. a killed-app
- * decline). The receiver entry uses {@link ANDROID_CALL_EVENT_ACTION}. The app
- * supplies the receiver class itself (the plugin does not generate it).
- */
-const withEventReceiver: ConfigPlugin<{ androidEventReceiver?: string }> = (
-  config,
-  { androidEventReceiver }
-) => {
-  if (!androidEventReceiver) {
-    return config;
-  }
+/** The broadcast action of v1's call-event receiver, which the removed `androidEventReceiver` registered. */
+const REMOVED_CALL_EVENT_ACTION = "expo.modules.callkittelecom.ACTION_CALL_EVENT";
 
+/** The manifest meta-data of v1's dialtone, which the removed `defaultDialtone` wrote. */
+const REMOVED_DIALTONE_METADATA = "ExpoCallKitTelecomDefaultDialtone";
+
+/**
+ * Fails for options that v1 read on Android and v2 doesn't. v2 plays no dialtone and sends no
+ * call-event broadcast, so an app that relies on either must not build without noticing.
+ */
+function rejectRemovedOptions(props: ExpoCallKitTelecomPluginProps): void {
+  const removed = props as { defaultDialtone?: unknown; androidEventReceiver?: unknown };
+  if (removed.defaultDialtone !== undefined) {
+    throw new Error(
+      `${ERROR_MSG_PREFIX}The "defaultDialtone" option was removed: the module no longer plays ` +
+        `a dialtone while an outgoing call connects. Remove the option from the plugin's ` +
+        `configuration, and play a ringback tone from the app while the conversation is dialing.`
+    );
+  }
+  if (removed.androidEventReceiver !== undefined) {
+    throw new Error(
+      `${ERROR_MSG_PREFIX}The "androidEventReceiver" option was removed: the module no longer ` +
+        `sends a call-event broadcast. Remove the option from the plugin's configuration, and ` +
+        `handle a declined call in the conversation handler's end method.`
+    );
+  }
+}
+
+/**
+ * Drops what the removed options wrote to the manifest, so that a prebuild over an earlier one
+ * doesn't keep them: the dialtone's meta-data and the call-event receiver.
+ */
+const withoutRemovedOptions: ConfigPlugin = (config) => {
   return withAndroidManifest(config, (config) => {
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(
       config.modResults
     );
-
-    // Remove any existing entry first (idempotent across repeated prebuilds).
-    app.receiver = (app.receiver ?? []).filter(
-      (receiver) => receiver.$["android:name"] !== androidEventReceiver
-    );
-
-    app.receiver.push({
-      $: {
-        "android:name": androidEventReceiver,
-        "android:exported": "false",
-      },
-      "intent-filter": [
-        {
-          action: [{ $: { "android:name": ANDROID_CALL_EVENT_ACTION } }],
-        },
-      ],
-    });
-
+    if (app["meta-data"]) {
+      app["meta-data"] = app["meta-data"].filter(
+        (item) => item.$["android:name"] !== REMOVED_DIALTONE_METADATA
+      );
+    }
+    if (app.receiver) {
+      app.receiver = app.receiver.filter(
+        (receiver) =>
+          !receiver["intent-filter"]?.some((filter) =>
+            filter.action?.some(
+              (action) => action.$["android:name"] === REMOVED_CALL_EVENT_ACTION
+            )
+          )
+      );
+    }
     return config;
   });
 };
@@ -389,6 +362,7 @@ const withConversationPolicy: ConfigPlugin<ExpoCallKitTelecomPluginProps> = (
 export const withExpoCallKitTelecomAndroid: ConfigPlugin<
   ExpoCallKitTelecomPluginProps
 > = (config, props) => {
+  rejectRemovedOptions(props);
   config = withNativeMediaEngine(config, props);
   config = withConversationPolicy(config, props);
   config = withTimeouts(config, props);
@@ -397,8 +371,7 @@ export const withExpoCallKitTelecomAndroid: ConfigPlugin<
     sounds: props.sounds,
     defaultRingtone: props.defaultRingtoneAndroid,
   });
-  config = withDefaultDialtone(config, props);
   config = withFirebaseMessagingService(config, props);
-  config = withEventReceiver(config, props);
+  config = withoutRemovedOptions(config);
   return config;
 };
