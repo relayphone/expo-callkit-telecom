@@ -343,7 +343,9 @@ final class CallService {
       routes.refresh()
       emit(
         "conversationEvent", .object(["type": .string("audioActivated"), "payload": .object([:])]))
-    case .audioDeactivated:
+    case .audioDeactivated, .audioInterrupted, .mediaServicesReset:
+      // The module passes no audio session to the SDK, so only the calling framework's
+      // deactivation arrives; an interruption or a reset would also stop the media.
       routes.refresh()
       emit(
         "conversationEvent",
@@ -584,7 +586,8 @@ private final class ActionWaiter {
       if case .start(let outgoing) = action { outgoing.id == call.id } else { false }
     case .joinRequested(let call): action == .join(call.id)
     case .ended(let call), .previewStarted(let call): call.id == action.callID
-    case .presented, .audioActivated, .audioDeactivated: false
+    case .presented, .audioActivated, .audioDeactivated, .audioInterrupted, .mediaServicesReset:
+      false
     }
   }
 
