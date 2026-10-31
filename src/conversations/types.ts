@@ -95,6 +95,57 @@ export type EndedReason =
   | "answeredElsewhere"
   | "declinedElsewhere";
 
+/**
+ * Why a conversation failed on iOS, named after ios-voip-sdk's `CallFailure`:
+ * - `refused`: the calling framework refused to report or start the call.
+ * - `atCapacity`: the device already had as many calls as the app allows.
+ * - `notPlaced`: the start or join handler didn't place the call before the placement deadline.
+ * - `media`: the call's media wasn't prepared before its deadline.
+ * - `audioActivationTimedOut`: the system didn't activate audio before its deadline.
+ * - `audioSession`: the audio session couldn't be configured for the call.
+ * - `audioRecoveryTimedOut`: audio didn't come back after an interruption or a media services reset.
+ * - `connectTimedOut`, `reconnectTimedOut`: the call didn't connect, or reconnect, before its deadline.
+ * - `actionTimedOut`: the calling framework stopped waiting for an action on the call.
+ * - `frameworkReset`: the calling framework reset, which ends every call.
+ * - `server`: the app or its server reported the failure.
+ * @category State
+ */
+export type EndedFailureKind =
+  | "refused"
+  | "atCapacity"
+  | "notPlaced"
+  | "media"
+  | "audioActivationTimedOut"
+  | "audioSession"
+  | "audioRecoveryTimedOut"
+  | "connectTimedOut"
+  | "reconnectTimedOut"
+  | "actionTimedOut"
+  | "frameworkReset"
+  | "server";
+
+/**
+ * The native cause of a failed conversation, or `filtered` with its cause when the system
+ * filtered an incoming call that ended instead of becoming a call preview.
+ * @category State
+ */
+export type EndedFailure =
+  | { readonly kind: EndedFailureKind }
+  | { readonly kind: "filtered"; readonly cause: IncomingFilterReason };
+
+/**
+ * When and why a conversation ended. iOS adds the native cause of a failure; Android doesn't
+ * report one.
+ * @category State
+ */
+export type ConversationEnd =
+  | { readonly at: string; readonly reason: Exclude<EndedReason, "failed"> }
+  | {
+      readonly at: string;
+      readonly reason: "failed";
+      readonly failure?: EndedFailure;
+    };
+
 /** A backend/host ownership signal; local hangs up through endConversation instead. @category Reports */
 export interface CallEndedPayload {
   eventId: string;
@@ -150,7 +201,7 @@ export interface ConversationBase {
   readonly isVideo: boolean;
   /** Set only after the transport reports connected, not when a handler resolves. */
   readonly connectedAt?: string;
-  readonly ended?: { readonly at: string; readonly reason: EndedReason };
+  readonly ended?: ConversationEnd;
   readonly payload?: IncomingCallPayload;
   readonly pending?: PendingAction;
 }
