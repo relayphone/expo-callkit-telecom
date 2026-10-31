@@ -25,9 +25,9 @@ const ERROR_MSG_PREFIX = "An error occurred while configuring iOS calls. ";
 const CAMERA_USAGE = "Allow $(PRODUCT_NAME) to access your camera";
 const MICROPHONE_USAGE = "Allow $(PRODUCT_NAME) to access your microphone";
 
-// Required background modes for CallKit and PushKit:
-// - voip: Receive VoIP push notifications to wake the app for incoming calls
-// - audio: Continue audio playback/recording during calls when app is backgrounded
+// Background modes for calls:
+// - voip: receive PushKit VoIP pushes, which launch or wake the app for incoming calls
+// - audio: keep call audio playing and recording while the app is in the background
 const BACKGROUND_MODES = ["voip", "audio"];
 
 // SiriKit intents for voice-activated calls
@@ -57,7 +57,7 @@ const withPermissions: ConfigPlugin<{
 };
 
 /**
- * Configures push notification entitlement for PushKit VoIP notifications.
+ * Configures the push notification entitlement for PushKit VoIP pushes.
  */
 const withPushNotificationEntitlement: ConfigPlugin = (config) => {
   return withEntitlementsPlist(config, (config) => {
@@ -186,7 +186,7 @@ const withCallCore: ConfigPlugin<{
 };
 
 /**
- * Configures whether calls appear in the phone's call history (Recents).
+ * Configures whether the system's Recents list includes a call after it ends.
  */
 const withRecents: ConfigPlugin<{ includesCallsInRecents?: boolean }> = (
   config,
@@ -309,13 +309,9 @@ const withDefaultRingtone: ConfigPlugin<{
 };
 
 /**
- * Bundles a CallKit icon template into the iOS app and records its filename in
- * Info.plist, so the native side can load it into
- * `CXProviderConfiguration.iconTemplateImageData`.
- *
- * CallKit renders this image as a *template*: only the alpha channel is used
- * (RGB is ignored) and the system tints it. Provide a ~40x40pt square PNG whose
- * alpha describes the glyph.
+ * Bundles the app's icon template into the iOS app and records its filename in Info.plist, so
+ * the module can pass its PNG data to LiveCommunicationKit's
+ * `ConversationManager.Configuration.iconTemplateImageData`.
  */
 const withIconTemplate: ConfigPlugin<{
   sounds?: string[];

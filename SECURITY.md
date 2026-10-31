@@ -20,4 +20,4 @@ In scope:
 Out of scope:
 
 - Vulnerabilities in third-party packages this module depends on — please report those to the upstream maintainer (and feel free to flag them here so they can be tracked).
-- Vulnerabilities in the system platforms (iOS CallKit / PushKit, Android Jetpack `androidx.core:core-telecom`, FCM) — report those to Apple / Google.
+- Vulnerabilities in the system platforms (iOS LiveCommunicationKit / PushKit, Android Jetpack `androidx.core:core-telecom`, FCM) — report those to Apple / Google.
