@@ -50,11 +50,7 @@ internal class NativeMediaController(private val context: Context, private val p
         if (session == null) {
             val adapter = policy.optString("media", "webrtc")
             session = NativeMediaRegistry.factories[adapter]?.invoke(context)
-                ?: when (adapter) {
-                    "livekit" -> LiveKitNativeSession(context, payload["serverCallId"] as? String ?: error("Invalid media invitation"))
-                    "webrtc" -> WebRTCNativeSession(context, payload["serverCallId"] as? String ?: error("Invalid media invitation"))
-                    else -> null
-                }
+                ?: BuiltInMedia.session(context, adapter, payload["serverCallId"] as? String ?: error("Invalid media invitation"))
         }
         session?.setFailureListener {
             operations.launch(Dispatchers.Main) { if (!closed) failed() }
@@ -70,7 +66,7 @@ internal class NativeMediaController(private val context: Context, private val p
         val resolved = if (nativeNegotiation || (policy.opt("credentials") !is JSONObject && fresh && compatiblePush)) payload else {
             val source = policy.optJSONObject("credentials") ?: policy.optJSONObject("fallback")
             val credentials = withTimeout(3000) {
-                if (source?.optString("type") == "http") NativeHttpCredentials().fetch(payload, source)
+                if (source?.optString("type") == "http") BuiltInMedia.fetchCredentials(payload, source)
                 else {
                     val fetcher = source?.optString("name")?.let { NativeMediaRegistry.fetchers[it] }
                         ?: error("Native credentials unavailable")

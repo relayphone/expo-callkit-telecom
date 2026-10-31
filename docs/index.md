@@ -37,7 +37,7 @@ features:
     details: '<a href="https://developer.apple.com/documentation/usernotifications/sending-voip-pushes">APNs VoIP</a> (<a href="https://developer.apple.com/documentation/pushkit">PushKit</a>) on iOS, <a href="https://firebase.google.com/docs/cloud-messaging">FCM</a> data messages on Android. Calls report to the system before JS is running, so the cold-start case works without app-side glue.'
   - icon: 🎧
     title: LiveKit-friendly audio
-    details: 'On iOS, puts <a href="https://webrtc.org/">WebRTC</a>''s <code>RTCAudioSession</code> in manual-audio mode, so <a href="https://livekit.io/">LiveKit</a> and plain WebRTC stacks work without app-side <a href="https://developer.apple.com/documentation/avfaudio/avaudiosession">AVAudioSession</a> coordination. Android can also join LiveKit or WebRTC media natively.'
+    details: 'On iOS, puts <a href="https://webrtc.org/">WebRTC</a>''s <code>RTCAudioSession</code> in manual-audio mode, so <a href="https://livekit.io/">LiveKit</a> and plain WebRTC stacks work without app-side <a href="https://developer.apple.com/documentation/avfaudio/avaudiosession">AVAudioSession</a> coordination. With <code>mediaAdapter: "livekit"</code>, Android can also join LiveKit or WebRTC media natively.'
   - icon: 🧩
     title: Typed, unified API
     details: 'Immutable conversation snapshots, one handler, commands and reports that work the same on both platforms.'
@@ -79,7 +79,7 @@ It's distributed as an Expo module with a config plugin, so the smoothest path i
 
 ### Does it work with LiveKit?
 
-Yes. With `mediaAdapter` `"webrtc"` (the default) or `"livekit"`, the module coordinates the iOS audio session: it puts WebRTC's `RTCAudioSession` into manual-audio mode and gives it WebRTC's call configuration before each call; when LiveCommunicationKit activates the session it enables WebRTC audio, and when it deactivates the session it disables WebRTC audio and restores the pre-call configuration. Because of that, your app should **not** call LiveKit's `AudioSession.startAudioSession()` / `stopAudioSession()` (or otherwise activate `AVAudioSession` itself) — let the module handle it, and connect LiveKit from your conversation handler. On Android, the native join policy can also join a LiveKit room natively; see the [Android quick-start](./android-quick-start.md).
+Yes. With `mediaAdapter` `"webrtc"` (the default) or `"livekit"`, the module coordinates the iOS audio session: it puts WebRTC's `RTCAudioSession` into manual-audio mode and gives it WebRTC's call configuration before each call; when LiveCommunicationKit activates the session it enables WebRTC audio, and when it deactivates the session it disables WebRTC audio and restores the pre-call configuration. Because of that, your app should **not** call LiveKit's `AudioSession.startAudioSession()` / `stopAudioSession()` (or otherwise activate `AVAudioSession` itself) — let the module handle it, and connect LiveKit from your conversation handler. On Android, with `mediaAdapter: "livekit"`, the native join policy can also join a LiveKit room natively; see the [Android quick-start](./android-quick-start.md).
 
 ### What are the minimum platform versions?
 

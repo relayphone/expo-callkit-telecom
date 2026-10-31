@@ -1,7 +1,8 @@
 # Android native media
 
 `joinPolicy: { type: "native", media: "livekit", credentials: "fromPush" }`
-uses the built-in LiveKit session. Reporting to Core-Telecom precedes pre-warm.
+uses the built-in LiveKit session, which the plugin's `mediaAdapter: "livekit"`
+adds to the build with the rest of the LiveKit media engine. Reporting to Core-Telecom precedes pre-warm.
 The room connects with automatic remote subscription and the camera disabled.
 A prepublished, muted microphone uses paced recordingless buffers. Remote audio
 tracks and decoding run during pre-warm with native speaker output muted.
@@ -27,7 +28,9 @@ Register `NativeMediaAuthenticationProviders.providers["device-auth"]` during
 `Application.onCreate`. The suspending native provider returns
 `NativeMediaAuthentication(bearer, deviceId)` from the app's existing native
 authentication store. It must not wait for JavaScript. No token belongs in the
-plugin configuration. App-registered named fetchers remain supported.
+plugin configuration. App-registered named fetchers remain supported. The HTTPS
+fetcher is part of the LiveKit media engine; without `mediaAdapter: "livekit"`,
+use a named fetcher.
 
 The client POSTs `/v1/calls/{percent-encoded-serverCallId}/media-credentials` with
 `{ eventId, deviceId }` and Bearer authentication. TLS validation is enabled,
