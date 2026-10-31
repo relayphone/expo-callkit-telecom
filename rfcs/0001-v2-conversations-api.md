@@ -1,6 +1,6 @@
 # RFC 0001: a conversations API for v2 (LiveCommunicationKit and Core-Telecom)
 
-- **Status:** accepted for `relayphone/expo-callkit-telecom` branch `v2`, per [lane #11](https://github.com/relayphone/expo-callkit-telecom/issues/11). This is a fork decision; no upstream proposal is authorized.
+- **Status:** accepted for `relayphone/expo-callkit-telecom` branch `v2`, per [issue #11](https://github.com/relayphone/expo-callkit-telecom/issues/11). This decision applies to this fork.
 - **Scope:** the TypeScript API, the native architecture, push, audio, migration and testing.
 - **Media:** the app supplies the native media adapter; the accepted October 26 join policy below makes native answer and muted pre-warm the default. It supersedes the draft's JS-gated Join descriptions.
 
@@ -278,7 +278,7 @@ One repository, one Swift source tree, two products that are versioned and teste
 
 ## Native answer and push-time pre-warm (accepted October 26)
 
-[Hamza's A+B+C decision](https://github.com/relayphone/ios-voip-sdk/issues/50#issuecomment-6417033029) supersedes the earlier draft's JS-gated Join default. `joinPolicy` now selects native answering by default; `{ type: "handler" }` explicitly retains JS-gated joining. Native policy names its media adapter (`livekit` or `webrtc`), takes `credentials: "fromPush"` or a registered native fetcher reference, and enables media/JS `prewarm` by default. A native fetcher reference is serializable configuration, never a JS closure or an embedded device secret.
+The [October 26 join-policy decision](https://github.com/relayphone/ios-voip-sdk/issues/50#issuecomment-6417033029) supersedes the earlier draft's JS-gated Join default. `joinPolicy` now selects native answering by default; `{ type: "handler" }` explicitly retains JS-gated joining. Native policy names its media adapter (`livekit` or `webrtc`), takes `credentials: "fromPush"` or a registered native fetcher reference, and enables media/JS `prewarm` by default. A native fetcher reference is serializable configuration, never a JS closure or an embedded device secret.
 
 The mandatory order on APNs VoIP and high-priority FCM data messages is:
 
@@ -287,11 +287,11 @@ The mandatory order on APNs VoIP and high-priority FCM data messages is:
 3. On Join, fulfil/answer natively without waiting for JS. Unmute only after native audio activation. A pre-join is not an answered call; JS observes the resulting conversation.
 4. On decline, filtering, expiry or termination, cancel fetches/pre-warm and disconnect. A failed pre-join retries once on answer. Missing credentials must not delay the platform report or fabricate connected media.
 
-The shared [Phone server proposal](https://github.com/ziahamza/phone-app/issues/905#issuecomment-6417056510) adds optional `incomingCall.media`: `{ provider: "livekit", url, room, identity, token, expiresAt }`. `expiresAt` is Unix seconds; `url` is secure WebSocket; `identity` is device-scoped; the JWT grants roomJoin for exactly that room/identity, canPublish and canSubscribe. The microphone remains muted before answer. Do not log credentials or tokens. Use a 120 s token TTL (90 s minimum) and keep media under about 1.5 KB for APNs' payload budget.
+A server push-payload proposal adds optional `incomingCall.media`: `{ provider: "livekit", url, room, identity, token, expiresAt }`. `expiresAt` is Unix seconds; `url` is secure WebSocket; `identity` is device-scoped; the JWT grants roomJoin for exactly that room/identity, canPublish and canSubscribe. The microphone remains muted before answer. Do not log credentials or tokens. Use a 120 s token TTL (90 s minimum) and keep media under about 1.5 KB for APNs' payload budget.
 
 Missing/expired media uses a native-authenticated `POST /v1/calls/{serverCallId}/media-credentials` with `{ eventId, deviceId }`; its response has the same media shape. Fetch starts after report entry, targets p95 under 300 ms, and 404/410 abandons pre-warm. If fetch/pre-join fails, joining is retried after answer. Only LiveKit's push credential wire shape is currently specified; the WebRTC adapter must supply its own native negotiation rather than reinterpret a LiveKit token.
 
-The server proposal also defines UUIDv5 from serverCallId under a fixed SDK namespace and `voip-sdk.call` lifecycle signals (`prejoined`, `answered`, `declined`, `filtered`, `ended`). The SDK lane must confirm the shared namespace and any wire deltas before cross-platform identity is finalized; never choose a different namespace per platform. The server promotes to answered only on the native answer signal, and expires unanswered pre-joins at ring timeout plus 10 s.
+The server proposal also defines UUIDv5 from serverCallId under a fixed SDK namespace and `voip-sdk.call` lifecycle signals (`prejoined`, `answered`, `declined`, `filtered`, `ended`). The iOS SDK must confirm the shared namespace and any wire deltas before cross-platform identity is finalized; never choose a different namespace per platform. The server promotes to answered only on the native answer signal, and expires unanswered pre-joins at ring timeout plus 10 s.
 
 These types describe the accepted target, not evidence of native media integration. Android and iOS must prove report-before-prewarm, muted-before-Join, unmute-after-activation, cancellation and answer latency with machine-checked journeys. The 300 ms answer-to-audio target is a target, not a measured result.
 
@@ -303,12 +303,12 @@ The source of truth for the iOS model is [ios-voip-sdk START-HERE](https://githu
 - Conversation IDs are branded UUID strings, and immutable conversations form a status-discriminated union. Status names, participants, capabilities, payload fields and end reasons match the SDK. `connectedAt` is present for connected state; held state can precede a transport connected report, and terminal state can precede end metadata. Native termination/hold takes precedence over transport progress.
 - Reads and change events carry a full `{ revision, conversations }` snapshot internally. Revisions are nonnegative safe integers, strictly increase on change within a native process lifetime, and attach before asynchronous hydration. Older/equal revisions cannot overwrite newer state. Public `getConversations()` still returns the readonly list. Hooks preserve unchanged conversation identity.
 - Native owns the effective application deadline. iOS currently reserves 1.5 seconds before `timeoutDate`; this is SDK policy, not a measured platform duration. Android uses its own Core-Telecom deadline and must settle before the platform timeout. Handler replacement, reset, cancellation or timeout aborts JS work; late settlements cannot resurrect it. Missing optional hold/mute/tones handlers accept. Under the explicit handler join policy a missing join handler fails. With no handler the action stays pending until policy applies (default fail).
-- `reportIncomingConversation` returns a discriminated outcome: `reported` with a branded id, `filtered` with `doNotDisturb`, `blockList` or `other` (retaining an unknown native reason), `atCapacity`, or `failed` with a typed error. A duplicate accepted invitation returns the same id. Other command rejections use typed codes and preserve native error details. The current iOS bridge returns only an id; M3.5 must supply the native reasons before full wiring. [Owner coordination](https://github.com/relayphone/ios-voip-sdk/issues/50#issuecomment-6416599843).
+- `reportIncomingConversation` returns a discriminated outcome: `reported` with a branded id, `filtered` with `doNotDisturb`, `blockList` or `other` (retaining an unknown native reason), `atCapacity`, or `failed` with a typed error. A duplicate accepted invitation returns the same id. Other command rejections use typed codes and preserve native error details. The current iOS bridge returns only an id; M3.5 must supply the native reasons before full wiring. See the [discussion](https://github.com/relayphone/ios-voip-sdk/issues/50#issuecomment-6416599843).
 - Audio routes retain the existing port names and opaque selection ids; published `current` follows the OS, not a requested route. Native media selection is `webrtc` (default), `livekit`, or `none`; the watchdog performs at most one state-aware recovery attempt.
 - M3.5's small native transport boundary keeps platform code out of the TypeScript runtime. No synchronous JS callback may block native actions. LCK state/commands stay on the SDK actor, push report entry is synchronous, and media work stays on AudioSessionQueue. The iOS boundary is compile-only until M3.5; this fork does not implement another iOS provider.
-- CI uses only path-filtered `ubuntu-latest` or `macos-26` runners. Android journeys run on pinned emulators with machine-checked results. No physical device is used by this lane.
+- CI uses only path-filtered `ubuntu-latest` or `macos-26` runners. Android journeys run on pinned emulators with machine-checked results. No physical device is used.
 
-Historical alternatives and questions below remain context for a possible future upstream discussion, not permission to contact upstream or implement a CallKit fallback.
+Historical alternatives and questions below remain context for a possible future upstream discussion; they do not describe a planned CallKit fallback.
 
 ## Requirements
 
