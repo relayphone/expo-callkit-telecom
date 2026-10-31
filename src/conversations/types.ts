@@ -96,18 +96,27 @@ export type EndedReason =
   | "declinedElsewhere";
 
 /**
- * Why a conversation failed on iOS, named after ios-voip-sdk's `CallFailure`:
- * - `refused`: the calling framework refused to report or start the call.
- * - `atCapacity`: the device already had as many calls as the app allows.
+ * Why a conversation failed, named after ios-voip-sdk's `CallFailure`. iOS can report every kind;
+ * Android reports `notPlaced`, `media`, `connectTimedOut` and `server`, and omits the failure
+ * when it doesn't know the cause.
+ * - `refused` (iOS): the calling framework refused to report or start the call.
+ * - `atCapacity` (iOS): the device already had as many calls as the app allows.
  * - `notPlaced`: no handler placed the call: none was set, it rejected, or it missed its deadline.
- * - `media`: the call's media wasn't prepared before its deadline.
- * - `audioActivationTimedOut`: the system didn't activate audio before its deadline.
- * - `audioSession`: the audio session couldn't be configured for the call.
- * - `audioRecoveryTimedOut`: audio didn't come back after an interruption or a media services reset.
- * - `connectTimedOut`, `reconnectTimedOut`: the call didn't connect, or reconnect, before its deadline.
- * - `actionTimedOut`: the calling framework stopped waiting for an action on the call.
- * - `frameworkReset`: the calling framework reset, which ends every call.
- * - `server`: the app or its server reported the failure.
+ *   On Android, also an incoming call that the `join` handler didn't join, under the handler join
+ *   policy.
+ * - `media`: on iOS, the call's media wasn't prepared before its deadline. On Android, the native
+ *   media session couldn't be prepared, started or kept running.
+ * - `audioActivationTimedOut` (iOS): the system didn't activate audio before its deadline.
+ * - `audioSession` (iOS): the audio session couldn't be configured for the call.
+ * - `audioRecoveryTimedOut` (iOS): audio didn't come back after an interruption or a media
+ *   services reset.
+ * - `connectTimedOut`: the call didn't connect before its deadline. On Android, an answered call
+ *   that wasn't reported connected within `fulfillAnswerCallTimeout`.
+ * - `reconnectTimedOut` (iOS): the call didn't reconnect before its deadline.
+ * - `actionTimedOut` (iOS): the calling framework stopped waiting for an action on the call.
+ * - `frameworkReset` (iOS): the calling framework reset, which ends every call.
+ * - `server`: the app or its server reported the failure, with `reportConversation` or with a
+ *   `failed` server end signal.
  * @category State
  */
 export type EndedFailureKind =
@@ -125,8 +134,8 @@ export type EndedFailureKind =
   | "server";
 
 /**
- * The native cause of a failed conversation, or `filtered` with its cause when the system
- * filtered an incoming call that ended instead of becoming a call preview.
+ * The native cause of a failed conversation, or, on iOS, `filtered` with its cause when the
+ * system filtered an incoming call that ended instead of becoming a call preview.
  * @category State
  */
 export type EndedFailure =
@@ -134,8 +143,8 @@ export type EndedFailure =
   | { readonly kind: "filtered"; readonly cause: IncomingFilterReason };
 
 /**
- * When and why a conversation ended. iOS adds the native cause of a failure; Android doesn't
- * report one.
+ * When and why a conversation ended. A failed conversation carries its native cause when the
+ * platform knows it; see {@link EndedFailureKind} for the kinds each platform reports.
  * @category State
  */
 export type ConversationEnd =
@@ -485,8 +494,8 @@ export interface ConversationsApi {
    * Rejects, and the conversation ends as `failed`, when the call isn't placed: with
    * `handler_failed` when the start handler rejects, and with `deadline_exceeded` when it misses
    * its deadline or no handler is set and `unhandledAction` isn't `"accept"`. Without a handler,
-   * iOS rejects at once; Android waits for one until the deadline. On iOS the conversation's
-   * `ended.failure` is `notPlaced`.
+   * iOS rejects at once; Android waits for one until the deadline. The conversation's
+   * `ended.failure.kind` is `notPlaced`.
    */
   startConversation(options: StartConversationOptions): Promise<ConversationId>;
   joinConversation(id: ConversationId): Promise<void>;
