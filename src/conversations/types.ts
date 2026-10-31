@@ -444,6 +444,13 @@ export interface ConversationConfiguration {
    * Defaults to false. See {@link CallNotificationEvent}.
    */
   readonly callNotifications?: boolean;
+  /**
+   * iOS: shows call previews as Live Activities, from a generated widget extension unless
+   * `widgetExtension` is false. Defaults to false. See {@link CallPreviewActivities}.
+   */
+  readonly callPreviewActivities?:
+    | boolean
+    | { readonly widgetExtension?: boolean };
 }
 
 /** iOS: what a call notification tells the user. @category Events */
@@ -510,6 +517,81 @@ export type CallNotificationRoute =
       readonly video: boolean;
     };
 
+/**
+ * iOS: whether the user allows the app's Live Activities, and their frequent updates. The system
+ * asks the user the first time one of the app's Live Activities appears; the module never asks.
+ * @category Call previews
+ */
+export interface LiveActivityAuthorization {
+  readonly activitiesEnabled: boolean;
+  readonly frequentPushesEnabled: boolean;
+}
+
+/**
+ * iOS: the push token of a call preview's Live Activity, with which the app's servers update and
+ * end it.
+ * @category Call previews
+ */
+export interface CallPreviewPushToken {
+  readonly conversationId: ConversationId;
+  /** The APNs token, hex-encoded. */
+  readonly token: string;
+}
+
+/**
+ * iOS, with the `callPreviewActivities` plugin option: what the app's servers need to start,
+ * update and end call previews' Live Activities with ActivityKit pushes. Send all of it to them,
+ * and don't start previews on a device whose user turned Live Activities off.
+ * @category Call previews
+ */
+export interface CallPreviewActivities {
+  readonly authorization: LiveActivityAuthorization;
+  /**
+   * The device's push-to-start token, hex-encoded, with which the servers start call previews,
+   * or null until the system issues one.
+   */
+  readonly pushToStartToken: string | null;
+  /**
+   * The push token of each call preview's Live Activity that has one. A preview's token leaves
+   * the list when the preview ends; stop sending its pushes then.
+   */
+  readonly pushTokens: readonly CallPreviewPushToken[];
+}
+
+/**
+ * iOS: why the module couldn't start a call preview's Live Activity.
+ * - `activitiesDisabled`: the user turned the app's Live Activities off.
+ * - `notInForeground`: the system lets an app start a Live Activity only in the foreground; the
+ *   app's servers can start the preview with the push-to-start token.
+ * - `tooLarge`: the attributes and the state exceed the system's 4 KB, usually because of the
+ *   conversation's metadata.
+ * - `refused`: the system refused for another reason, such as too many Live Activities.
+ * @category Call previews
+ */
+export type CallPreviewStartError =
+  | "activitiesDisabled"
+  | "notInForeground"
+  | "tooLarge"
+  | "refused";
+
+/**
+ * iOS, with the `callPreviewActivities` plugin option: what happened to a conversation's call
+ * preview Live Activity, whether the module or the app's servers started it.
+ * - `started`: a Live Activity shows the conversation's preview.
+ * - `startFailed`: the module couldn't start one when the conversation became a call preview.
+ * - `ended`: the preview's Live Activity ended: this device joined the conversation, the
+ *   conversation ended, or the user, the system or the servers ended it.
+ * @category Call previews
+ */
+export type CallPreviewEvent =
+  | { readonly type: "started"; readonly conversationId: ConversationId }
+  | {
+      readonly type: "startFailed";
+      readonly conversationId: ConversationId;
+      readonly error: CallPreviewStartError;
+    }
+  | { readonly type: "ended"; readonly conversationId: ConversationId };
+
 /** Push registers at launch; null state means unavailable or invalidated. @category Push */
 export interface PushToken {
   readonly type: "apns-voip" | "fcm";
@@ -542,6 +624,8 @@ export interface ConversationEventMap {
    * latest route waits for a listener, so a response that launched the app reaches it.
    */
   readonly callNotificationRoute: CallNotificationRoute;
+  /** iOS, with `callPreviewActivities`: what happened to a call preview's Live Activity. */
+  readonly callPreview: CallPreviewEvent;
   /**
    * Correlated server ownership signal, emitted after the snapshot in which the conversation
    * ended or, on iOS, became a call preview.

@@ -56,8 +56,10 @@ const config: ExpoConfig = {
         joinPolicy: { type: "handler" },
         // Debug builds present calls in the iOS Simulator.
         simulator: true,
-        // A call that a Focus filters becomes a call preview with a call notification.
+        // A call that a Focus filters becomes a call preview with a call notification, shown as a
+        // Live Activity from the generated widget extension.
         callNotifications: true,
+        callPreviewActivities: true,
       },
     ],
   ],

@@ -1,6 +1,7 @@
 import type {
   ActionOrigin,
   AudioRoutes,
+  CallPreviewActivities,
   Conversation,
   ConversationEventMap,
   ConversationsApi,
@@ -19,6 +20,15 @@ export interface PushTokenSnapshot {
 /** Route revision timeline is independent of conversation state. @category Transport */
 export interface AudioRoutesSnapshot extends AudioRoutes {
   readonly revision: number;
+}
+
+/**
+ * Call preview revision timeline; `activities` is null on iOS without the `callPreviewActivities`
+ * plugin option. @category Transport
+ */
+export interface CallPreviewActivitiesSnapshot {
+  readonly revision: number;
+  readonly activities: CallPreviewActivities | null;
 }
 
 /** Private native delivery; applications implement ConversationHandler instead. @category Transport */
@@ -55,6 +65,7 @@ export interface NativeEvents {
     readonly reason: string;
   };
   readonly conversationEvent: ConversationEvent;
+  readonly callPreviewActivitiesChanged: CallPreviewActivitiesSnapshot;
 }
 
 /**
@@ -73,6 +84,8 @@ export interface NativeTransport
   getConversations(): Promise<ConversationsSnapshot>;
   getAudioRoutes(): Promise<AudioRoutesSnapshot>;
   getPushToken(): Promise<PushTokenSnapshot>;
+  /** iOS only. */
+  getCallPreviewActivities?(): Promise<CallPreviewActivitiesSnapshot>;
   addListener<Name extends keyof NativeEvents>(
     name: Name,
     listener: (event: NativeEvents[Name]) => void

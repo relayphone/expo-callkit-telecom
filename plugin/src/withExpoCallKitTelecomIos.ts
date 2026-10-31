@@ -17,6 +17,7 @@ import {
   IOS_VOIP_SDK_REPOSITORY,
   IOS_VOIP_SDK_REVISION,
 } from "./constants";
+import { withCallPreviewActivities } from "./withCallPreviewActivities";
 import type { ExpoCallKitTelecomPluginProps } from "./withExpoCallKitTelecom";
 
 const ERROR_MSG_PREFIX = "An error occurred while configuring iOS calls. ";
@@ -158,7 +159,17 @@ const withCallCore: ConfigPlugin<{
   simulator?: boolean;
   unhandledAction?: string;
   callNotifications?: boolean;
-}> = (config, { mediaAdapter, simulator, unhandledAction, callNotifications }) => {
+  callPreviewActivities?: boolean;
+}> = (
+  config,
+  {
+    mediaAdapter,
+    simulator,
+    unhandledAction,
+    callNotifications,
+    callPreviewActivities,
+  },
+) => {
   const media = mediaAdapter ?? "webrtc";
   if (!MEDIA_ADAPTERS.includes(media)) {
     throw new Error(
@@ -174,6 +185,9 @@ const withCallCore: ConfigPlugin<{
     );
     config.modResults["expo-callkit-telecom.callNotifications"] = String(
       callNotifications ?? false,
+    );
+    config.modResults["expo-callkit-telecom.callPreviewActivities"] = String(
+      callPreviewActivities ?? false,
     );
     return config;
   });
@@ -411,14 +425,17 @@ export const withExpoCallKitTelecomIos: ConfigPlugin<ExpoCallKitTelecomPluginPro
     simulator,
     unhandledAction,
     callNotifications,
+    callPreviewActivities,
   } = props;
   config = withCallCore(config, {
     mediaAdapter,
     simulator,
     unhandledAction,
     callNotifications,
+    callPreviewActivities: Boolean(callPreviewActivities),
   });
   config = withCallNotifications(config, { callNotifications });
+  config = withCallPreviewActivities(config, { callPreviewActivities });
   config = withPermissions(config, { cameraPermission, microphonePermission });
   config = withPushNotificationEntitlement(config);
   config = withBackgroundModes(config);

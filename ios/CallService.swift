@@ -42,6 +42,11 @@ final class CallService {
       emit: { [unowned self] in emitConversationEvent($0, $1) },
       deliver: { [unowned self] in deliver($0, $1) })
   #endif
+  #if EXPO_CALLKIT_TELECOM_LIVE_ACTIVITY
+    private lazy var previews = CallPreviews(
+      changed: { [unowned self] in emit("callPreviewActivitiesChanged", $0) },
+      emit: { [unowned self] in emitConversationEvent($0, $1) })
+  #endif
 
   // Conversations
   private var revision = 0
@@ -95,6 +100,10 @@ final class CallService {
       notifications.start()
       observers.append(notifications.notifier)
     #endif
+    #if EXPO_CALLKIT_TELECOM_LIVE_ACTIVITY
+      previews.start()
+      observers.append(previews.activities)
+    #endif
     let client: VoIPClient
     do {
       client = try VoIPClient.start(
@@ -146,6 +155,17 @@ final class CallService {
 
   var pushToken: JSONValue {
     .object(["revision": .number(Double(tokenRevision)), "token": token])
+  }
+
+  /// The TypeScript API's `CallPreviewActivitiesSnapshot`, whose `activities` are null without
+  /// the `callPreviewActivities` plugin option.
+  var callPreviewActivities: JSONValue {
+    #if EXPO_CALLKIT_TELECOM_LIVE_ACTIVITY
+      start()
+      return previews.snapshot
+    #else
+      return .object(["revision": .number(0), "activities": .null])
+    #endif
   }
 
   // MARK: Commands
@@ -593,7 +613,7 @@ final class CallService {
   }
 
   private func tokenChanged(_ data: Data?) {
-    let value = data.map { bytes in bytes.map { String(format: "%02x", $0) }.joined() }
+    let value = data?.hex
     let token: JSONValue =
       value.map { .object(["type": .string("apns-voip"), "value": .string($0)]) } ?? .null
     guard token != self.token else { return }

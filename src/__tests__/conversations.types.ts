@@ -17,6 +17,8 @@ import type {
   CallEndedPayload,
   CallNotificationEvent,
   CallNotificationRoute,
+  CallPreviewActivities,
+  CallPreviewEvent,
   ConversationEventMap,
   ConversationEnd,
   EndedFailure,
@@ -318,3 +320,38 @@ native.addListener("conversationEvent", (event) => {
     void routed;
   }
 });
+
+declare const previews: CallPreviewActivities;
+if (previews.authorization.activitiesEnabled && previews.pushToStartToken) {
+  const token: string = previews.pushToStartToken;
+  void token;
+}
+for (const { conversationId, token } of previews.pushTokens) {
+  const id: ConversationId = conversationId;
+  const value: string = token;
+  void id;
+  void value;
+}
+// @ts-expect-error The servers' tokens are read-only.
+previews.pushTokens.push({ conversationId: id, token: "00" });
+declare const previewEvent: CallPreviewEvent;
+if (previewEvent.type === "startFailed") {
+  const error:
+    | "activitiesDisabled"
+    | "notInForeground"
+    | "tooLarge"
+    | "refused" = previewEvent.error;
+  void error;
+} else {
+  // @ts-expect-error Only a failed start has an error.
+  void previewEvent.error;
+}
+native.addListener(
+  "callPreviewActivitiesChanged",
+  ({ revision, activities }) => {
+    const latest: number = revision;
+    const current: CallPreviewActivities | null = activities;
+    void latest;
+    void current;
+  }
+);
