@@ -436,6 +436,10 @@ export interface Subscription {
 export interface ConversationsApi {
   getConversations(): Promise<readonly Conversation[]>;
   setConversationHandler(handler: ConversationHandler | null): void;
+  /**
+   * Resolves once the start handler placed the conversation, so the start handler must not wait
+   * for it. Joining a call preview waits for the join handler the same way.
+   */
   startConversation(options: StartConversationOptions): Promise<ConversationId>;
   joinConversation(id: ConversationId): Promise<void>;
   endConversation(id: ConversationId): Promise<void>;
@@ -447,6 +451,10 @@ export interface ConversationsApi {
     first: ConversationId,
     second: ConversationId
   ): Promise<void>;
+  /**
+   * iOS holds a connecting or connected report sent before the conversation is placed, from the
+   * start or join handler, and applies it once the handler placed the conversation.
+   */
   reportConversation(
     id: ConversationId,
     report: ConversationReport
