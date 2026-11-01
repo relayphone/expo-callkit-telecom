@@ -154,10 +154,41 @@ describe("withExpoCallKitTelecomIos call preview Live Activities", () => {
 });
 
 describe("addCallPreviewWidget", () => {
+  it.each([
+    [app, "2.3.4", "17"],
+    [{ name: "test-app", slug: "test-app" }, "1.0.0", "1"],
+  ] as const)(
+    "uses the app config's versions in every configuration: %j",
+    (config, version, buildNumber) => {
+      const project = addCallPreviewWidget(templateProject(), {
+        projectName: "HelloWorld",
+        bundleIdentifier: "com.example.calls",
+        config,
+      });
+      const widget = project.pbxTargetByName(`"${WIDGET_TARGET}"`) as {
+        buildConfigurationList: string;
+      };
+      const list = section(project, "XCConfigurationList")[
+        widget.buildConfigurationList
+      ] as {
+        buildConfigurations: { value: string }[];
+      };
+      expect(list.buildConfigurations).toHaveLength(2);
+      for (const { value } of list.buildConfigurations) {
+        expect(section(project, "XCBuildConfiguration")[value]).toMatchObject({
+          buildSettings: {
+            MARKETING_VERSION: version,
+            CURRENT_PROJECT_VERSION: buildNumber,
+          },
+        });
+      }
+    },
+  );
   it("adds the widget extension, embedded in the app, and the shared Join intent", () => {
     const project = addCallPreviewWidget(templateProject(), {
       projectName: "HelloWorld",
       bundleIdentifier: "com.example.calls",
+      config: app,
     });
     const widget = project.pbxTargetByName(`"${WIDGET_TARGET}"`) as {
       productType: string;
@@ -206,6 +237,7 @@ describe("addCallPreviewWidget", () => {
     const options = {
       projectName: "HelloWorld",
       bundleIdentifier: "com.example.calls",
+      config: app,
     };
     const project = addCallPreviewWidget(templateProject(), options);
     const once = project.writeSync();

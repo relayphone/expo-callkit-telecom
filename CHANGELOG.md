@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+* **ios:** give the generated call preview widget the app's version and build number, so apps that use call previews install on devices.
 * **ios:** include the system's refusal reason in refused action messages when available.
 * **ios:** report VoIP pushes while the app isn't active, fixing iOS terminating apps and stopping VoIP push delivery, through the SDK update.
 * **ios:** wait for the app to become active before joining from a call notification, for up to two seconds, through the SDK update.
