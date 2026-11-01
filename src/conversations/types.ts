@@ -213,6 +213,12 @@ export interface ConversationBase {
   readonly ended?: ConversationEnd;
   readonly payload?: IncomingCallPayload;
   readonly pending?: PendingAction;
+  /**
+   * iOS: `"native"` once the app's native media, registered with `NativeCallMedia.register` in
+   * Swift, prepared the conversation's media, for example by joining its room before JavaScript
+   * loaded. Don't connect its media from JavaScript too.
+   */
+  readonly media?: "native";
 }
 
 /**

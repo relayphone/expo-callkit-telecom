@@ -235,6 +235,8 @@ the app is reported and the user can answer before JavaScript runs.
 - **Media.** `mediaAdapter: "webrtc"` or `"livekit"` coordinates WebRTC's
   `RTCAudioSession` in manual audio mode, so the app must link a WebRTC build, such
   as `@livekit/react-native-webrtc`. `"none"` leaves the audio session to the app.
+  To join a call's media natively, before JavaScript loads, register a Swift
+  `CallMedia` instead; see [iOS: native media](./ios-native-media.md).
 - **System call UI.** `includesCallsInRecents`, `defaultRingtoneIos` and
   `iconTemplateIos` set LiveCommunicationKit's `ConversationManager.Configuration`;
   see [Getting started](./getting-started.md).

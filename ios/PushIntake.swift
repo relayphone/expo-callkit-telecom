@@ -2,9 +2,9 @@ import Foundation
 import IosVoipSDK
 import Synchronization
 
-/// Decodes the app's VoIP pushes, and keeps what the TypeScript API shows about incoming calls
-/// that the SDK's values don't carry: the original payload, and the event that answered a call
-/// elsewhere.
+/// Decodes the app's VoIP pushes, and keeps what the SDK's values don't carry about incoming
+/// calls: the original payload and the event that answered a call elsewhere, which the TypeScript
+/// API shows, and the payload's media credentials, which only the app's native media reads.
 ///
 /// PushKit decodes on `VoIPActor` and the module reads on the main actor, so the records are
 /// behind a lock.
@@ -21,7 +21,12 @@ final class PushIntake: Sendable {
     var records: [CallID: Record] = [:]
     var order: [CallID] = []
     var answeredElsewhere: [CallID: EventID] = [:]
+    /// The `media` object of each payload that has one, which JavaScript never sees.
+    var credentials: [CallID: [String: JSONValue]] = [:]
   }
+
+  /// The intake of the running module, which the app's native media reads credentials from.
+  static let shared = PushIntake()
 
   /// How many calls the intake remembers. Ended calls are forgotten at once; this bounds calls
   /// that never appear.
@@ -53,10 +58,12 @@ final class PushIntake: Sendable {
     state.withLock { state in
       if state.records[id] == nil { state.order.append(id) }
       state.records[id] = Record(payload: payload.removing("media"), awaitsOutcome: viaPush)
+      if case .object(let media)? = payload["media"] { state.credentials[id] = media }
       while state.order.count > Self.limit {
         let oldest = state.order.removeFirst()
         state.records[oldest] = nil
         state.answeredElsewhere[oldest] = nil
+        state.credentials[oldest] = nil
       }
     }
   }
@@ -81,6 +88,11 @@ final class PushIntake: Sendable {
     }
   }
 
+  /// The media credentials of the payload that brought the call.
+  func credentials(for id: CallID) -> [String: JSONValue]? {
+    state.withLock { $0.credentials[id] }
+  }
+
   /// The event that answered the call elsewhere.
   func answeredElsewhereEvent(for id: CallID) -> EventID? {
     state.withLock { $0.answeredElsewhere[id] }
@@ -92,6 +104,7 @@ final class PushIntake: Sendable {
       state.records[id] = nil
       state.order.removeAll { $0 == id }
       state.answeredElsewhere[id] = nil
+      state.credentials[id] = nil
     }
   }
 }

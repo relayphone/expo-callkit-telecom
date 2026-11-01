@@ -79,6 +79,7 @@ These recordings show upstream v1's system call UI.
 - 🎚️ **Mute, hold and tones** — commands from your app, and mute and hold from the system's call UI
 - 🗣️ **Dial requests on iOS** — calls started from Recents, Siri or Contacts arrive as `dialRequest` events
 - 🌙 **Focus on iOS** — a call that a Focus filters becomes a call preview, which `callNotifications` announces with a communication notification from the caller and `callPreviewActivities` shows as a Live Activity with a Join button; `focusFilter` gives your servers what your Focus filter asked for ([iOS: Focus and call previews](docs/ios-call-previews.md))
+- 🎙️ **Native media on iOS** — register a Swift `CallMedia`, such as a LiveKit room, so that a call answered on a locked phone has audio before JavaScript loads ([iOS: native media](docs/ios-native-media.md))
 - 🧩 **Typed conversations API** — immutable `Conversation` snapshots, hooks, one module-scope handler, commands and transport reports
 
 ## 📦 Install
