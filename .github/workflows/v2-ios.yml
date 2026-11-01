@@ -44,3 +44,20 @@ jobs:
       - name: Build the example for the iOS Simulator
         working-directory: example/client/ios
         run: xcodebuild -workspace CallKitTel.xcworkspace -scheme CallKitTel -configuration Debug -destination 'generic/platform=iOS Simulator' ARCHS=arm64 -derivedDataPath "$RUNNER_TEMP/v2-ios" CODE_SIGNING_ALLOWED=NO build
+      - name: Verify embedded extension versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/v2-ios/Build/Products/Debug-iphonesimulator/CallKitTel.app"
+          for key in CFBundleVersion CFBundleShortVersionString; do
+            app_version=$(/usr/libexec/PlistBuddy -c "Print :$key" "$app/Info.plist")
+            test -n "$app_version"
+            while IFS= read -r -d '' extension; do
+              extension_version=$(/usr/libexec/PlistBuddy -c "Print :$key" "$extension/Info.plist")
+              test -n "$extension_version"
+              if [[ "$extension_version" != "$app_version" ]]; then
+                echo "::error::$extension $key '$extension_version' differs from app '$app_version'"
+                exit 1
+              fi
+            done < <(find "$app" -type d -name '*.appex' -print0)
+          done

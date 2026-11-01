@@ -150,7 +150,8 @@ export function addCallPreviewWidget(
   {
     projectName,
     bundleIdentifier,
-  }: { projectName: string; bundleIdentifier: string },
+    config,
+  }: { projectName: string; bundleIdentifier: string; config: ExpoConfig },
 ): XcodeProject {
   if (hasWidgetTarget(project)) return project;
   const app = IOSConfig.XcodeUtils.getApplicationNativeTarget({
@@ -256,6 +257,8 @@ export function addCallPreviewWidget(
     Object.assign(configuration.buildSettings, {
       INFOPLIST_FILE: `${WIDGET_TARGET}/Info.plist`,
       GENERATE_INFOPLIST_FILE: "YES",
+      MARKETING_VERSION: IOSConfig.Version.getVersion(config),
+      CURRENT_PROJECT_VERSION: IOSConfig.Version.getBuildNumber(config),
       SWIFT_VERSION: "6.0",
       IPHONEOS_DEPLOYMENT_TARGET: deploymentTarget(
         inherited.IPHONEOS_DEPLOYMENT_TARGET,
@@ -519,6 +522,7 @@ export const withCallPreviewActivities: ConfigPlugin<{
     config.modResults = addCallPreviewWidget(config.modResults, {
       projectName,
       bundleIdentifier,
+      config,
     });
     return config;
   });
