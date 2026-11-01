@@ -1,7 +1,8 @@
 import {
   endConversation, joinConversation, reportConversation, reportIncomingConversation,
   selectAudioRoute, setConversationHandler, setHeld, setMuted, startConversation,
-  useAudioRoutes, useCallPreviewActivities, useConversationEvent, useConversations, usePushToken,
+  useAudioRoutes, useCallPreviewActivities, useConversationEvent, useConversations, useFocusFilterState,
+  usePushToken,
 } from "expo-callkit-telecom";
 import { useEffect, useRef, useState } from "react";
 import { Button, Linking, PermissionsAndroid, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -22,6 +23,7 @@ export default function App() {
   const audio = useAudioRoutes();
   const token = usePushToken();
   const previews = useCallPreviewActivities();
+  const focus = useFocusFilterState();
   const [message, setMessage] = useState("Ready");
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
@@ -48,6 +50,7 @@ export default function App() {
       <Text>Local signaling example. No media room is connected.</Text>
       <Text>Push registration: {token ? "registered" : "none"}</Text>
       {previews && <Text>Call preview Live Activities: {previews.authorization.activitiesEnabled ? "allowed" : "off"}</Text>}
+      {focus && <Text>Focus filter: {focus.state === "active" ? JSON.stringify(focus.settings) : focus.state}</Text>}
       <Text accessibilityLiveRegion="polite">{message}</Text>
       <Button title="Run incoming and outgoing journey" disabled={busy} onPress={() => void perform(runJourney)} />
       <Button title="Report incoming" disabled={busy} onPress={() => void perform(async () => {

@@ -89,6 +89,7 @@ describe("withExpoCallKitTelecomIos call core selection", () => {
       "expo-callkit-telecom.simulator": "false",
       "expo-callkit-telecom.callNotifications": "false",
       "expo-callkit-telecom.callPreviewActivities": "false",
+      "expo-callkit-telecom.focusFilter": "false",
     });
   });
 
@@ -103,6 +104,7 @@ describe("withExpoCallKitTelecomIos call core selection", () => {
       "expo-callkit-telecom.simulator": "true",
       "expo-callkit-telecom.callNotifications": "false",
       "expo-callkit-telecom.callPreviewActivities": "false",
+      "expo-callkit-telecom.focusFilter": "false",
     });
   });
 

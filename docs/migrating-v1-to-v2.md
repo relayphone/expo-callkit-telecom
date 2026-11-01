@@ -228,7 +228,8 @@ the app is reported and the user can answer before JavaScript runs.
   and `endConversation` stops following it. `reportIncomingConversation` returns
   `"previewed"` for such a call. The `callNotifications` option reaches the user
   with a call notification from the caller, and `callPreviewActivities` shows the
-  preview as a Live Activity; see [iOS: Focus and call previews](./ios-call-previews.md).
+  preview as a Live Activity; `focusFilter` reads your Focus filter's state for your
+  servers. See [iOS: Focus and call previews](./ios-call-previews.md).
 - **Identity.** A conversation's ID is the SDK's call ID: the `serverCallId` of an
   incoming call, and a new UUID for an outgoing one. Phone numbers must be E.164.
 - **Media.** `mediaAdapter: "webrtc"` or `"livekit"` coordinates WebRTC's

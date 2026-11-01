@@ -2,6 +2,7 @@ import type {
   ActionOrigin,
   AudioRoutes,
   CallPreviewActivities,
+  FocusFilterState,
   Conversation,
   ConversationEventMap,
   ConversationsApi,
@@ -29,6 +30,15 @@ export interface AudioRoutesSnapshot extends AudioRoutes {
 export interface CallPreviewActivitiesSnapshot {
   readonly revision: number;
   readonly activities: CallPreviewActivities | null;
+}
+
+/**
+ * Focus filter revision timeline; `state` is null on iOS without the `focusFilter` plugin option.
+ * @category Transport
+ */
+export interface FocusFilterStateSnapshot {
+  readonly revision: number;
+  readonly state: FocusFilterState | null;
 }
 
 /** Private native delivery; applications implement ConversationHandler instead. @category Transport */
@@ -66,6 +76,7 @@ export interface NativeEvents {
   };
   readonly conversationEvent: ConversationEvent;
   readonly callPreviewActivitiesChanged: CallPreviewActivitiesSnapshot;
+  readonly focusFilterStateChanged: FocusFilterStateSnapshot;
 }
 
 /**
@@ -86,6 +97,8 @@ export interface NativeTransport
   getPushToken(): Promise<PushTokenSnapshot>;
   /** iOS only. */
   getCallPreviewActivities?(): Promise<CallPreviewActivitiesSnapshot>;
+  /** iOS only. */
+  getFocusFilterState?(): Promise<FocusFilterStateSnapshot>;
   addListener<Name extends keyof NativeEvents>(
     name: Name,
     listener: (event: NativeEvents[Name]) => void

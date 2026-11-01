@@ -14,7 +14,8 @@ public final class ExpoCallKitTelecomModule: Module, @unchecked Sendable {
 
     Events(
       "conversationsChanged", "audioRoutesChanged", "pushTokenUpdated", "handlerAction",
-      "actionCancelled", "conversationEvent", "callPreviewActivitiesChanged")
+      "actionCancelled", "conversationEvent", "callPreviewActivitiesChanged",
+      "focusFilterStateChanged")
 
     OnCreate { [weak self] in
       guard let self else { return }
@@ -61,6 +62,10 @@ public final class ExpoCallKitTelecomModule: Module, @unchecked Sendable {
 
     AsyncFunction("getCallPreviewActivities") { () async -> [String: Any] in
       await CallService.shared.callPreviewActivities.foundationObject
+    }
+
+    AsyncFunction("getFocusFilterState") { () async -> [String: Any] in
+      await CallService.shared.focusFilterState.foundationObject
     }
 
     AsyncFunction("startConversation") { (options: [String: Any]) async throws -> String in

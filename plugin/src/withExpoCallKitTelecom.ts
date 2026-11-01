@@ -3,6 +3,7 @@ import { type ConfigPlugin, createRunOncePlugin } from "expo/config-plugins";
 import pkg from "../../package.json";
 import type { CallPreviewActivitiesOption } from "./withCallPreviewActivities";
 import { withExpoCallKitTelecomAndroid } from "./withExpoCallKitTelecomAndroid";
+import type { FocusFilterOption } from "./withFocusFilter";
 import { withExpoCallKitTelecomIos } from "./withExpoCallKitTelecomIos";
 
 import type { JoinPolicy, MediaAdapter } from "../../build/conversations/types";
@@ -58,6 +59,15 @@ export type ExpoCallKitTelecomPluginProps = {
    * @platform ios
    */
   callPreviewActivities?: CallPreviewActivitiesOption;
+  /**
+   * Lets the app read its Focus filter state on iOS, with `useFocusFilterState()`: what the
+   * app's Focus filter, a `CallFocusFilter` from ios-voip-sdk, last asked for, so that the app's
+   * servers choose how each call appears. The app declares the filter in Swift, with its own
+   * parameters: list its files in `sources` to compile them in the app, or declare it in an App
+   * Intents extension of your own. The plugin adds `appGroup` to the app's App Groups.
+   * @platform ios
+   */
+  focusFilter?: FocusFilterOption;
   /**
    * Custom message for microphone permission prompt. Set to false to skip.
    * @platform ios

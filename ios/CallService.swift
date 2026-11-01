@@ -42,6 +42,11 @@ final class CallService {
       emit: { [unowned self] in emitConversationEvent($0, $1) },
       deliver: { [unowned self] in deliver($0, $1) })
   #endif
+  #if EXPO_CALLKIT_TELECOM_FOCUS
+    private lazy var focusFilter = settings.focusAppGroup.map { appGroup in
+      FocusFilter(appGroup: appGroup) { [unowned self] in emit("focusFilterStateChanged", $0) }
+    }
+  #endif
   #if EXPO_CALLKIT_TELECOM_LIVE_ACTIVITY
     private lazy var previews = CallPreviews(
       changed: { [unowned self] in emit("callPreviewActivitiesChanged", $0) },
@@ -82,6 +87,9 @@ final class CallService {
   /// Starts the client, once. The app delegate subscriber calls it at launch.
   func start() {
     guard client == nil, startError == nil else { return }
+    #if EXPO_CALLKIT_TELECOM_FOCUS
+      focusFilter?.start()
+    #endif
     #if EXPO_CALLKIT_TELECOM_SIMULATOR && DEBUG
       VoIPSimulator.activate()
     #endif
@@ -155,6 +163,15 @@ final class CallService {
 
   var pushToken: JSONValue {
     .object(["revision": .number(Double(tokenRevision)), "token": token])
+  }
+
+  /// The TypeScript API's `FocusFilterStateSnapshot`, whose `state` is null without the
+  /// `focusFilter` plugin option.
+  var focusFilterState: JSONValue {
+    #if EXPO_CALLKIT_TELECOM_FOCUS
+      if let focusFilter { return focusFilter.snapshot }
+    #endif
+    return .object(["revision": .number(0), "state": .null])
   }
 
   /// The TypeScript API's `CallPreviewActivitiesSnapshot`, whose `activities` are null without

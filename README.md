@@ -78,7 +78,7 @@ These recordings show upstream v1's system call UI.
 - 🎧 **Audio routes** — the current route and the available ones, with `useAudioRoutes()` and `selectAudioRoute()`
 - 🎚️ **Mute, hold and tones** — commands from your app, and mute and hold from the system's call UI
 - 🗣️ **Dial requests on iOS** — calls started from Recents, Siri or Contacts arrive as `dialRequest` events
-- 🌙 **Focus on iOS** — a call that a Focus filters becomes a call preview, which `callNotifications` announces with a communication notification from the caller and `callPreviewActivities` shows as a Live Activity with a Join button ([iOS: Focus and call previews](docs/ios-call-previews.md))
+- 🌙 **Focus on iOS** — a call that a Focus filters becomes a call preview, which `callNotifications` announces with a communication notification from the caller and `callPreviewActivities` shows as a Live Activity with a Join button; `focusFilter` gives your servers what your Focus filter asked for ([iOS: Focus and call previews](docs/ios-call-previews.md))
 - 🧩 **Typed conversations API** — immutable `Conversation` snapshots, hooks, one module-scope handler, commands and transport reports
 
 ## 📦 Install
@@ -137,7 +137,7 @@ On iOS, the plugin passes these options to LiveCommunicationKit's `ConversationM
 - `iconTemplateIos` becomes `iconTemplateImageData`, which Apple documents only as the PNG data for the app's icon image. The property is named for a template image, so provide a square PNG, about 40×40 points, whose alpha channel describes the glyph. This option is iOS-only.
 - `includesCallsInRecents` becomes `includesConversationInRecents`, whether the system's Recents list includes a call after it ends.
 
-On iOS, `incomingCallTimeout` also bounds how long an outgoing call dials, and `fulfillAnswerCallTimeout` bounds how long a call stays connecting before it ends as failed. The [migration guide](docs/migrating-v1-to-v2.md#ios) describes `mediaAdapter` and the iOS-only `simulator` option, and [iOS: Focus and call previews](docs/ios-call-previews.md) the iOS-only `callNotifications` and `callPreviewActivities` options.
+On iOS, `incomingCallTimeout` also bounds how long an outgoing call dials, and `fulfillAnswerCallTimeout` bounds how long a call stays connecting before it ends as failed. The [migration guide](docs/migrating-v1-to-v2.md#ios) describes `mediaAdapter` and the iOS-only `simulator` option, and [iOS: Focus and call previews](docs/ios-call-previews.md) the iOS-only `callNotifications`, `callPreviewActivities` and `focusFilter` options.
 
 ## 🧠 API
 
