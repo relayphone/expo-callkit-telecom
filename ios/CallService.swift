@@ -24,7 +24,7 @@ final class CallService {
   private static let log = Logger(subsystem: "ExpoCallKitTelecom", category: "calls")
 
   private let settings = Settings.main
-  private let intake = PushIntake()
+  private let intake = PushIntake.shared
   private var client: VoIPClient?
   private var startError: CommandError?
   private var send: (@MainActor (String, JSONValue) -> Void)?
@@ -94,11 +94,19 @@ final class CallService {
       VoIPSimulator.activate()
     #endif
     let framework = LiveCommunicationKitAdapter()
-    #if EXPO_CALLKIT_TELECOM_WEBRTC
-      let media = RTCAudioSessionMedia()
-    #else
-      let media = AppManagedMedia()
-    #endif
+    // The app's native media, when it registered one, joins each call's media before
+    // JavaScript loads. Otherwise JavaScript connects it.
+    let registered = NativeCallMedia.registration
+    let media: any CallMedia
+    if let registered {
+      media = RegisteredMedia(registered.media) { [weak self] in self?.publish() }
+    } else {
+      #if EXPO_CALLKIT_TELECOM_WEBRTC
+        media = RTCAudioSessionMedia()
+      #else
+        media = AppManagedMedia()
+      #endif
+    }
     let intake = intake
     let push = PushKitSource { intake.decode($0) }
     // The subscription starts before the client attaches the push source, so it receives the
@@ -112,6 +120,7 @@ final class CallService {
       previews.start()
       observers.append(previews.activities)
     #endif
+    observers += registered?.observers ?? []
     let client: VoIPClient
     do {
       client = try VoIPClient.start(
@@ -133,6 +142,9 @@ final class CallService {
     }
     _ = routes
   }
+
+  /// Whether the module started calls, or failed to.
+  var isStarted: Bool { client != nil || startError != nil }
 
   /// The module for a new JavaScript runtime starts sending events.
   func attach(owner: ObjectIdentifier, send: @escaping @MainActor (String, JSONValue) -> Void) {
@@ -464,6 +476,7 @@ final class CallService {
     }
     participants[call.id] = nil
     intake.forget(call.id)
+    RegisteredMedia.prepared.withLock { _ = $0.remove(call.id) }
   }
 
   // MARK: Snapshots
@@ -512,6 +525,9 @@ final class CallService {
     if let connectedAt = call.connectedAt { fields["connectedAt"] = .date(connectedAt) }
     if let payload { fields["payload"] = payload }
     if let pending = handlers.pending(for: call.id) { fields["pending"] = pending }
+    if RegisteredMedia.prepared.withLock({ $0.contains(call.id) }) {
+      fields["media"] = .string("native")
+    }
     return .object(fields)
   }
 

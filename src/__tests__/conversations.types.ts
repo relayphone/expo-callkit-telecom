@@ -377,3 +377,9 @@ native.addListener("focusFilterStateChanged", ({ revision, state }) => {
   void latest;
   void current;
 });
+
+if (conversation.media === "native") {
+  // The app's native media joined the conversation; JavaScript leaves its media alone.
+  const media: "native" = conversation.media;
+  void media;
+}

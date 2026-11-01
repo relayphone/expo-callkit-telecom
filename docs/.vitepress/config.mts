@@ -187,6 +187,7 @@ export default defineConfig({
           { text: "v1 → v2 migration", link: "/migrating-v1-to-v2" },
           { text: "Android quick-start", link: "/android-quick-start" },
           { text: "iOS: Focus and call previews", link: "/ios-call-previews" },
+          { text: "iOS: native media", link: "/ios-native-media" },
           { text: "v2 API reference", link: "/api/" },
         ],
       },
