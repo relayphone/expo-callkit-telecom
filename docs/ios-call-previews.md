@@ -1,5 +1,5 @@
 ---
-description: Reach iOS users whose Focus filters your calls — call notifications from the caller and call previews as Live Activities, with expo-callkit-telecom v2 and ios-voip-sdk.
+description: Reach iOS users whose Focus filters your calls — call notifications from the caller, call previews as Live Activities, and the Focus filter state for your servers, with expo-callkit-telecom v2 and ios-voip-sdk.
 ---
 
 # iOS: Focus and call previews
@@ -14,6 +14,7 @@ opt-in pieces that reach the user anyway, and the config plugin turns them on:
 | --- | --- | --- |
 | `callNotifications` | A communication notification from the caller, which a Focus lets through for the people it allows. It never rings. | `CallNotifier` |
 | `callPreviewActivities` | The call preview as a Live Activity on the Lock Screen and in the Dynamic Island, with a Join button. | `CallPreviewActivities` |
+| `focusFilter` | Your app's Focus filter, which asks the user how calls appear in each Focus; your servers receive what it asked for. | `CallFocusFilter`, `FocusFilterStore` |
 
 Each option is off by default and changes the native build, so rebuild the app after changing it.
 
@@ -240,3 +241,132 @@ target 'YourWidgetExtension' do
   pod 'IosVoipSDK/LiveActivity', :git => 'https://github.com/relayphone/ios-voip-sdk.git', :commit => '<the app's revision>'
 end
 ```
+
+## Focus filter
+
+Your servers choose how each call appears on a device: a VoIP push that rings, or a call preview
+started with a Live Activity push. To choose per Focus, they need what the user wants in each one.
+Your app's Focus filter asks: in Settings > Focus, the user adds the filter to a Focus and sets its
+parameters, such as which calls ring. The module reads the Focus filter state, what the filter last
+asked for, and the app sends it to its servers.
+
+```jsonc
+{
+  "expo": {
+    "plugins": [
+      [
+        "expo-callkit-telecom",
+        {
+          "focusFilter": {
+            "appGroup": "group.com.example.calls",
+            "sources": ["./focus/CallsFocusFilter.swift"]
+          }
+        }
+      ]
+    ]
+  }
+}
+```
+
+Prebuild adds the App Group to the app's entitlements, builds the module with ios-voip-sdk's
+`Focus` subspec, and copies `sources` to `ios/<app>/FocusFilter`, which the app compiles. With an
+explicit App ID, register the App Group for it in the Apple Developer portal; EAS Build does so from
+the entitlements.
+
+### The filter
+
+The filter's parameters are your app's own, so you write it in Swift. Start from this one, which
+asks which calls ring; it is the example app's
+[`focus/CallsFocusFilter.swift`](https://github.com/relayphone/expo-callkit-telecom/blob/v2/example/client/focus/CallsFocusFilter.swift):
+
+```swift
+import AppIntents
+import IosVoipSDK
+
+/// What the filter asks for in one Focus. JavaScript receives it as JSON:
+/// `{ "ringing": "favorites" }`.
+struct CallSettings: Codable, Hashable, Sendable {
+  /// The default is what the app does outside a Focus: every call rings.
+  var ringing = Ringing.everyone
+
+  /// The store in the App Group of the plugin's `focusFilter.appGroup`.
+  static let store = FocusFilterStore<CallSettings>(appGroup: "group.com.example.calls")
+}
+
+enum Ringing: String, Codable, Hashable, Sendable, AppEnum {
+  case everyone
+  case favorites
+  case nobody
+
+  static let typeDisplayRepresentation: TypeDisplayRepresentation = "Calls that ring"
+  static let caseDisplayRepresentations: [Ringing: DisplayRepresentation] = [
+    .everyone: "Everyone",
+    .favorites: "Favorites",
+    .nobody: "Nobody",
+  ]
+}
+
+struct CallsFocusFilter: CallFocusFilter {
+  static let title: LocalizedStringResource = "Incoming calls"
+  static let description: IntentDescription? = "Choose which calls ring during this Focus."
+  static let store = CallSettings.store
+
+  @Parameter(title: "Ring for", default: .everyone)
+  var ringing: Ringing
+
+  var displayRepresentation: DisplayRepresentation {
+    DisplayRepresentation(title: "Ring for \(ringing.rawValue)")
+  }
+
+  var settings: CallSettings { CallSettings(ringing: ringing) }
+}
+```
+
+The system runs the filter when a Focus that has it turns on, and again when that Focus turns off,
+with every parameter reset to its default. Its `perform()`, which ios-voip-sdk provides, records
+the settings in the App Group: `active` with the settings, or `inactive` when they equal the
+defaults, so make the defaults what the app does outside a Focus
+([ADR 0008](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/adr/0008-focus-filter-defaults-are-inactive.md)).
+A target can declare one Focus filter.
+
+### The state
+
+```tsx
+const focus = useFocusFilterState(); // null on Android and without the option
+
+useEffect(() => {
+  if (focus) void server.updateFocusFilterState(focus);
+}, [focus]);
+```
+
+The state is the JSON that ios-voip-sdk sends servers, so send it unchanged:
+`{ "state": "unknown" }` until the filter first runs, `{ "state": "inactive", "since": 1761948000 }`,
+or `{ "state": "active", "since": 1761948000, "settings": { "ringing": "favorites" } }`, with
+`since` in seconds since 1970. It changes whenever the filter runs, in any process, and
+`getFocusFilterState()` reads it outside React. It says what the filter asked for, not whether a
+Focus is on: a Focus without the filter still filters the app's calls. Neither the filter nor the
+state needs a permission.
+
+### Where the filter runs
+
+With `sources`, the filter is in the app, so the system launches the app in the background, and
+with it JavaScript, each time a Focus that has the filter turns on or off. We recommend it for Expo
+apps: prebuild keeps it, and the app needs no extension. To run the filter without launching the
+app, as ios-voip-sdk suggests, declare it in an App Intents extension instead:
+
+1. Leave `sources` out, and keep `appGroup`.
+2. Add an App Intents extension target to the iOS project, with a config plugin of your own so that
+   prebuild keeps it, and give it the same App Group.
+3. Compile the filter's file in the extension, with the extension's entry point:
+
+   ```swift
+   import AppIntents
+   import ExtensionFoundation
+
+   @main
+   struct FocusFilterExtension: AppIntentsExtension {}
+   ```
+
+4. Give the extension's Podfile target ios-voip-sdk's `Focus` subspec from the app's SDK source:
+   `pod 'IosVoipSDK/Focus', :git => 'https://github.com/relayphone/ios-voip-sdk.git', :commit => '<the app's revision>'`.
+5. Send the state to your servers from the filter's `didRecord(_:)` too, since the app may not run.

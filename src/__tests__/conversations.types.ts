@@ -19,12 +19,14 @@ import type {
   CallNotificationRoute,
   CallPreviewActivities,
   CallPreviewEvent,
+  FocusFilterState,
   ConversationEventMap,
   ConversationEnd,
   EndedFailure,
   EndedFailureKind,
   EndedReason,
   IncomingFilterReason,
+  JSONValue,
   PreviewReason,
 } from "../conversations";
 
@@ -355,3 +357,23 @@ native.addListener(
     void current;
   }
 );
+
+declare const focus: FocusFilterState;
+if (focus.state === "active") {
+  const since: number = focus.since;
+  const settings: JSONValue = focus.settings;
+  void since;
+  void settings;
+} else if (focus.state === "inactive") {
+  // @ts-expect-error An inactive filter asks for its defaults, so it carries no settings.
+  void focus.settings;
+} else {
+  // @ts-expect-error An unknown state has no date.
+  void focus.since;
+}
+native.addListener("focusFilterStateChanged", ({ revision, state }) => {
+  const latest: number = revision;
+  const current: FocusFilterState | null = state;
+  void latest;
+  void current;
+});

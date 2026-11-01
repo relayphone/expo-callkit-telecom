@@ -12,6 +12,10 @@ struct Settings: Sendable {
   /// Whether a start or join that no handler received is placed anyway.
   let acceptsUnhandledActions: Bool
 
+  /// The App Group in which the app's Focus filter records its state, from the `focusFilter`
+  /// plugin option.
+  let focusAppGroup: String?
+
   /// The settings in the main bundle's Info.plist.
   static let main = Settings(Bundle.main.infoDictionary ?? [:])
 
@@ -34,6 +38,7 @@ struct Settings: Sendable {
         connect: seconds("ExpoCallKitTelecomFulfillAnswerCallTimeout") ?? defaults.connect))
     mediaAdapter = info["ExpoCallKitTelecomMediaAdapter"] as? String ?? "webrtc"
     acceptsUnhandledActions = info["ExpoCallKitTelecomUnhandledAction"] as? String == "accept"
+    focusAppGroup = info["ExpoCallKitTelecomFocusAppGroup"] as? String
   }
 
   /// The TypeScript API's `ConversationCapabilities`, the same for every call.

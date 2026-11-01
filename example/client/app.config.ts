@@ -60,6 +60,11 @@ const config: ExpoConfig = {
         // Live Activity from the generated widget extension.
         callNotifications: true,
         callPreviewActivities: true,
+        // The app's Focus filter, whose state the app shows.
+        focusFilter: {
+          appGroup: "group.com.example.expocallkittelecom",
+          sources: ["./focus/CallsFocusFilter.swift"],
+        },
       },
     ],
   ],

@@ -451,6 +451,14 @@ export interface ConversationConfiguration {
   readonly callPreviewActivities?:
     | boolean
     | { readonly widgetExtension?: boolean };
+  /**
+   * iOS: reads the app's Focus filter state from the filter's App Group, and compiles the
+   * filter's Swift `sources` in the app. See {@link FocusFilterState}.
+   */
+  readonly focusFilter?: {
+    readonly appGroup: string;
+    readonly sources?: readonly string[];
+  };
 }
 
 /** iOS: what a call notification tells the user. @category Events */
@@ -591,6 +599,32 @@ export type CallPreviewEvent =
       readonly error: CallPreviewStartError;
     }
   | { readonly type: "ended"; readonly conversationId: ConversationId };
+
+/**
+ * iOS, with the `focusFilter` plugin option: what the app's Focus filter last asked for, as
+ * ios-voip-sdk encodes it for the app's servers. Send it to them unchanged; they choose how each
+ * call appears on this device, ringing or as a call preview.
+ *
+ * The system runs the filter when a Focus that has it turns on, and again when that Focus turns
+ * off, with every parameter reset to its default. So the state is `active` with the settings
+ * that the parameters ask for, or `inactive` when they equal the defaults, and `unknown` until the
+ * filter first runs. It doesn't say whether a Focus is on: a Focus without the filter still
+ * filters the app's calls.
+ *
+ * - `since`: when the filter started asking for this, in seconds since 1970 (Unix time), as the
+ *   servers receive it from ios-voip-sdk elsewhere.
+ * - `settings`: the app's settings as its Swift `Settings` type encodes them, such as
+ *   `{ "ringing": "favorites" }`. The module doesn't check them.
+ * @category Focus
+ */
+export type FocusFilterState =
+  | { readonly state: "unknown" }
+  | { readonly state: "inactive"; readonly since: number }
+  | {
+      readonly state: "active";
+      readonly since: number;
+      readonly settings: JSONValue;
+    };
 
 /** Push registers at launch; null state means unavailable or invalidated. @category Push */
 export interface PushToken {

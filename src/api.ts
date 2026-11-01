@@ -13,6 +13,7 @@ import type {
   ConversationEventMap,
   ConversationHandler,
   ConversationId,
+  FocusFilterState,
   PushToken,
 } from "./conversations/types";
 
@@ -24,6 +25,7 @@ class Runtime {
   });
   readonly token = new RevisionStore<PushToken | null>(null);
   readonly previews = new RevisionStore<CallPreviewActivities | null>(null);
+  readonly focus = new RevisionStore<FocusFilterState | null>(null);
   readonly handler = new HandlerDispatcher(bridge);
   constructor() {
     bridge.addListener("conversationsChanged", (event) =>
@@ -59,6 +61,19 @@ class Runtime {
       );
       this.readPreviews().catch((error: unknown) => this.previews.fail(error));
     }
+    // Android has no Focus filter state.
+    if (bridge.getFocusFilterState) {
+      bridge.addListener("focusFilterStateChanged", (event) =>
+        this.focus.accept(event.revision, event.state)
+      );
+      this.readFocus().catch((error: unknown) => this.focus.fail(error));
+    }
+  }
+  async readFocus(): Promise<FocusFilterState | null> {
+    if (!bridge.getFocusFilterState) return null;
+    const event = await bridge.getFocusFilterState();
+    this.focus.accept(event.revision, event.state);
+    return this.focus.read();
   }
   async readPreviews(): Promise<CallPreviewActivities | null> {
     if (!bridge.getCallPreviewActivities) return null;
@@ -128,6 +143,21 @@ export function useCallPreviewActivities(): CallPreviewActivities | null {
     runtime.previews.subscribe,
     runtime.previews.read
   );
+}
+/**
+ * iOS, with the `focusFilter` plugin option: what the app's Focus filter last asked for. Null on
+ * Android and without the option. @category Focus
+ */
+export const getFocusFilterState = (): Promise<FocusFilterState | null> =>
+  runtime.readFocus();
+/**
+ * Subscribe to the app's Focus filter state, which changes when a Focus that has the filter turns
+ * on or off, even while the app isn't running; send each change to the app's servers. Null on
+ * Android and without the `focusFilter` plugin option.
+ * @category Hooks
+ */
+export function useFocusFilterState(): FocusFilterState | null {
+  return useSyncExternalStore(runtime.focus.subscribe, runtime.focus.read);
 }
 /** Register at module scope before React mounts; null detaches and cancels old work. @category Handler */
 export function setConversationHandler(
