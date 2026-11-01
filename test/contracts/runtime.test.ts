@@ -107,6 +107,29 @@ describe("handler generation and cancellation", () => {
     expect(joined).toBe(false);
     expect(h.settlements).toEqual([]);
   });
+  test("joinFailed aborts pending work and ignores its late resolution", async () => {
+    const h = harness();
+    let finish: (() => void) | undefined;
+    let signal: AbortSignal | undefined;
+    h.dispatcher.set({
+      ...signaling,
+      join(_, context) {
+        signal = context.signal;
+        return new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      },
+    });
+    h.dispatcher.dispatch(action());
+    await flush();
+    h.dispatcher.cancel("action", 1, "joinFailed");
+    h.dispatcher.cancel("action", 1, "cancelled");
+    expect(signal?.aborted).toBe(true);
+    expect(signal?.reason).toBe("joinFailed");
+    finish?.();
+    await flush();
+    expect(h.settlements).toEqual([]);
+  });
   test("replacement aborts old work and ignores its late resolution", async () => {
     const h = harness();
     let finish: (() => void) | undefined;

@@ -10,7 +10,7 @@ import {
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 
-import { IOS_VOIP_SDK_REPOSITORY, IOS_VOIP_SDK_REVISION } from "./constants";
+import { IOS_VOIP_SDK_REPOSITORY, IOS_VOIP_SDK_VERSION } from "./constants";
 
 const ERROR_MSG_PREFIX = "An error occurred while configuring call previews. ";
 
@@ -427,7 +427,7 @@ export function addWidgetPods(podfile: string): string {
     `\n${WIDGET_POD_MARKER}\n` +
     `target '${WIDGET_TARGET}' do\n` +
     `  pod 'IosVoipSDK/LiveActivity', :git => '${IOS_VOIP_SDK_REPOSITORY}', ` +
-    `:commit => '${IOS_VOIP_SDK_REVISION}'\n` +
+    `:tag => 'v${IOS_VOIP_SDK_VERSION}'\n` +
     `end\n`
   );
 }
