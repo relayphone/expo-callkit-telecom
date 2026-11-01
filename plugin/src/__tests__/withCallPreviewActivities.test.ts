@@ -6,7 +6,7 @@ import {
 } from "expo/config-plugins";
 import { join } from "path";
 
-import { IOS_VOIP_SDK_REVISION } from "../constants";
+import { IOS_VOIP_SDK_VERSION } from "../constants";
 import {
   addCallPreviewWidget,
   addWidgetPods,
@@ -235,7 +235,7 @@ describe("the widget extension's files and pods", () => {
     expect(once).toContain(
       `target '${WIDGET_TARGET}' do\n  pod 'IosVoipSDK/LiveActivity', ` +
         `:git => 'https://github.com/relayphone/ios-voip-sdk.git', ` +
-        `:commit => '${IOS_VOIP_SDK_REVISION}'\nend\n`,
+        `:tag => 'v${IOS_VOIP_SDK_VERSION}'\nend\n`,
     );
     expect(once.startsWith(podfile)).toBe(true);
   });

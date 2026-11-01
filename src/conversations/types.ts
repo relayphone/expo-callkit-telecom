@@ -263,6 +263,7 @@ export interface ConversationsSnapshot {
 export interface ActionContext {
   /** Native effective deadline, expressed as ISO 8601. */
   readonly deadline: string;
+  /** On iOS, `joinFailed` aborts a join that ended before the call took part. */
   readonly signal: AbortSignal;
   readonly origin: ActionOrigin;
 }

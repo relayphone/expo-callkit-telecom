@@ -30,8 +30,10 @@ struct CommandError: Error {
         code: .invalidArguments, message: "The conversation's status doesn't allow this action")
     case .unsupported:
       self.init(code: .unsupported, message: "This action isn't supported")
-    case .refused:
-      self.init(code: .conversation, message: "The system refused the action")
+    case .refused(let systemError):
+      let message = systemError.map { "The system refused the action: \($0)" }
+        ?? "The system refused the action"
+      self.init(code: .conversation, message: message)
     }
   }
 

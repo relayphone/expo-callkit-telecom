@@ -5,6 +5,19 @@ All notable changes to `expo-callkit-telecom` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Features
+
+* **ios:** move to ios-voip-sdk 0.2.0, pinned by the `v0.2.0` tag.
+* **ios:** cancel pending joins with `joinFailed` when joining ends before the call takes part.
+
+### Bug Fixes
+
+* **ios:** include the system's refusal reason in refused action messages when available.
+* **ios:** report VoIP pushes while the app isn't active, fixing iOS terminating apps and stopping VoIP push delivery, through the SDK update.
+* **ios:** wait for the app to become active before joining from a call notification, for up to two seconds, through the SDK update.
+
 ## [0.5.0](https://github.com/mfairley/expo-callkit-telecom/compare/v0.4.1...v0.5.0) (2026-09-05)
 
 

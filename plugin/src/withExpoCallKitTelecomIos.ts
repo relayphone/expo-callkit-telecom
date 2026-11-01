@@ -15,7 +15,7 @@ import {
   DEFAULT_INCLUDES_CALLS_IN_RECENTS,
   DEFAULT_INCOMING_CALL_TIMEOUT,
   IOS_VOIP_SDK_REPOSITORY,
-  IOS_VOIP_SDK_REVISION,
+  IOS_VOIP_SDK_VERSION,
 } from "./constants";
 import { withCallPreviewActivities } from "./withCallPreviewActivities";
 import type { ExpoCallKitTelecomPluginProps } from "./withExpoCallKitTelecom";
@@ -146,7 +146,7 @@ export function addSDKSource(podfile: string): string {
     anchor + 1,
     0,
     `${indent}pod 'IosVoipSDK/Core', :git => '${IOS_VOIP_SDK_REPOSITORY}', ` +
-      `:commit => '${IOS_VOIP_SDK_REVISION}' ${SDK_SOURCE_MARKER}`,
+      `:tag => 'v${IOS_VOIP_SDK_VERSION}' ${SDK_SOURCE_MARKER}`,
   );
   return lines.join("\n");
 }

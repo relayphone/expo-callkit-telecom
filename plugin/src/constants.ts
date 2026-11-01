@@ -9,4 +9,4 @@ export const DEFAULT_INCLUDES_CALLS_IN_RECENTS = true;
 /** The ios-voip-sdk source that the iOS module builds against. */
 export const IOS_VOIP_SDK_REPOSITORY =
   "https://github.com/relayphone/ios-voip-sdk.git";
-export const IOS_VOIP_SDK_REVISION = "9f37b9830eda07b0ada3e1973b035ab748dee4ef";
+export const IOS_VOIP_SDK_VERSION = "0.2.0";

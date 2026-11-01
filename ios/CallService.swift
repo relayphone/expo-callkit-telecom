@@ -391,6 +391,8 @@ final class CallService {
     switch event {
     case .presented(let call):
       emitPushOutcome(for: call.id, PresentationOutcome.presented.json(id: call.id))
+    case .joinFailed(let call):
+      handlers.cancel(call.id, reason: "joinFailed")
     case .previewStarted(let call):
       // A join that failed returns to the preview.
       handlers.cancel(call.id, reason: "cancelled")
@@ -761,7 +763,7 @@ private final class ActionWaiter {
     case .performed(.start(let started), _):
       if case .start(let outgoing) = action { outgoing.id == started.id } else { false }
     case .performed(let performed, _): performed == action
-    case .ended(let call), .previewStarted(let call): call.id == action.callID
+    case .ended(let call), .previewStarted(let call), .joinFailed(let call): call.id == action.callID
     case .presented, .startRequested, .joinRequested, .audioActivated, .audioDeactivated,
       .audioInterrupted, .mediaServicesReset:
       false

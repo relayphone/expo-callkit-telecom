@@ -238,7 +238,7 @@ the app's, which prebuild writes to the Podfile next to `use_expo_modules!`:
 
 ```ruby
 target 'YourWidgetExtension' do
-  pod 'IosVoipSDK/LiveActivity', :git => 'https://github.com/relayphone/ios-voip-sdk.git', :commit => '<the app's revision>'
+  pod 'IosVoipSDK/LiveActivity', :git => 'https://github.com/relayphone/ios-voip-sdk.git', :tag => 'v0.2.0'
 end
 ```
 
@@ -368,5 +368,5 @@ app, as ios-voip-sdk suggests, declare it in an App Intents extension instead:
    ```
 
 4. Give the extension's Podfile target ios-voip-sdk's `Focus` subspec from the app's SDK source:
-   `pod 'IosVoipSDK/Focus', :git => 'https://github.com/relayphone/ios-voip-sdk.git', :commit => '<the app's revision>'`.
+   `pod 'IosVoipSDK/Focus', :git => 'https://github.com/relayphone/ios-voip-sdk.git', :tag => 'v0.2.0'`.
 5. Send the state to your servers from the filter's `didRecord(_:)` too, since the app may not run.
