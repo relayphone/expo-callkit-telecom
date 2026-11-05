@@ -35,7 +35,14 @@ else. It is never time-sensitive and never rings: its interruption level is acti
 default notification sound
 ([ADR 0009](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/adr/0009-call-notifications-never-ring.md)).
 When the conversation is joined on this device, the module withdraws the notification. When it
-ends without being joined here, the module replaces it with a missed-call notification.
+ends without being joined here, a missed-call notification replaces it only when the caller hung
+up or nobody answered. Ending it on this device, or answering or declining it elsewhere, removes
+the notification. Failures and other end reasons keep it as it is.
+
+This default changed in ios-voip-sdk 0.2.1. The module uses the SDK's default. Native integrations
+that configure their own SDK notifier can restore the previous behavior, a missed-call
+notification for every end reason, with
+`CallNotifier.Options(endedWithoutJoining: { _ in .missedCall })`.
 
 Prebuild adds the Communication Notifications capability, the
 `com.apple.developer.usernotifications.communication` entitlement, and builds the module with
@@ -238,7 +245,7 @@ the app's, which prebuild writes to the Podfile next to `use_expo_modules!`:
 
 ```ruby
 target 'YourWidgetExtension' do
-  pod 'IosVoipSDK/LiveActivity', :git => 'https://github.com/relayphone/ios-voip-sdk.git', :tag => 'v0.2.0'
+  pod 'IosVoipSDK/LiveActivity', :git => 'https://github.com/relayphone/ios-voip-sdk.git', :tag => 'v0.2.1'
 end
 ```
 
@@ -368,5 +375,5 @@ app, as ios-voip-sdk suggests, declare it in an App Intents extension instead:
    ```
 
 4. Give the extension's Podfile target ios-voip-sdk's `Focus` subspec from the app's SDK source:
-   `pod 'IosVoipSDK/Focus', :git => 'https://github.com/relayphone/ios-voip-sdk.git', :tag => 'v0.2.0'`.
+   `pod 'IosVoipSDK/Focus', :git => 'https://github.com/relayphone/ios-voip-sdk.git', :tag => 'v0.2.1'`.
 5. Send the state to your servers from the filter's `didRecord(_:)` too, since the app may not run.
