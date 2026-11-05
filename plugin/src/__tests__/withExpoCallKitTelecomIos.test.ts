@@ -138,7 +138,7 @@ describe("withExpoCallKitTelecomIos call core selection", () => {
     expect(addSDKSource(once)).toBe(once);
     const lines = once.split("\n");
     expect(lines[2]).toMatch(
-      /^  pod 'IosVoipSDK\/Core', :git => 'https:\/\/github\.com\/relayphone\/ios-voip-sdk\.git', :tag => 'v0\.2\.0' # expo-callkit-telecom: ios-voip-sdk source$/,
+      /^  pod 'IosVoipSDK\/Core', :git => 'https:\/\/github\.com\/relayphone\/ios-voip-sdk\.git', :tag => 'v0\.2\.1' # expo-callkit-telecom: ios-voip-sdk source$/,
     );
     expect(lines).toHaveLength(5);
   });

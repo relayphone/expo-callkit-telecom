@@ -9,8 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
-* **ios:** move to ios-voip-sdk 0.2.0, pinned by the `v0.2.0` tag.
+* **ios:** move to ios-voip-sdk 0.2.1, pinned by the `v0.2.1` tag. VoIP pushes now keep the app running briefly, so call notifications and other push-triggered work finish before iOS suspends it.
 * **ios:** cancel pending joins with `joinFailed` when joining ends before the call takes part.
+
+### Changed
+
+* **ios:** call notifications post "missed" only when the caller hung up or nobody answered. They're removed when the call ended on the device or was answered or declined elsewhere; failures and other end reasons keep the notification. This changes the SDK's default behavior. Native integrations that configure their own SDK notifier can restore the previous default with `CallNotifier.Options(endedWithoutJoining: { _ in .missedCall })`.
 
 ### Bug Fixes
 
