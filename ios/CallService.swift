@@ -98,9 +98,12 @@ final class CallService {
     // JavaScript loads. Otherwise JavaScript connects it.
     let registered = NativeCallMedia.registration
     let media: any CallMedia
+    let audio: (any AudioSession)?
     if let registered {
+      audio = AudioSessionAdapter()
       media = RegisteredMedia(registered.media) { [weak self] in self?.publish() }
     } else {
+      audio = nil
       #if EXPO_CALLKIT_TELECOM_WEBRTC
         media = RTCAudioSessionMedia()
       #else
@@ -124,7 +127,7 @@ final class CallService {
     let client: VoIPClient
     do {
       client = try VoIPClient.start(
-        framework: framework, media: media, push: push, observers: observers,
+        framework: framework, media: media, push: push, audio: audio, observers: observers,
         configuration: settings.configuration)
     } catch {
       Self.log.error("Another VoIPClient runs in this process, so calls are unavailable")
@@ -432,8 +435,9 @@ final class CallService {
       emit(
         "conversationEvent", .object(["type": .string("audioActivated"), "payload": .object([:])]))
     case .audioDeactivated, .audioInterrupted, .mediaServicesReset:
-      // The module passes no audio session to the SDK, so only the calling framework's
-      // deactivation arrives; an interruption or a reset would also stop the media.
+      // Native media uses the SDK's audio session adapter, which also reports interruptions
+      // and resets. The JavaScript path forwards only the calling framework's deactivation;
+      // WebRTC owns its session configuration. All three events stop audio for JavaScript.
       routes.refresh()
       emit(
         "conversationEvent",

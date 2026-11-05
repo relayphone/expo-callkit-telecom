@@ -8,7 +8,10 @@ import os
 /// each call's media, such as its LiveKit room. A call answered on a locked phone after a cold
 /// launch then has no audio until JavaScript has loaded and connected. Register a `CallMedia`
 /// instead, and the SDK prepares each call's media natively before it completes the answer,
-/// start or join, then activates and deactivates it with the audio session.
+/// start or join, then activates and deactivates it with the audio session. The module passes
+/// the SDK's `AudioSessionAdapter`, which configures play-and-record in voice chat mode before
+/// the media prepares. The media must not set the session's category itself. JavaScript can still
+/// observe routes with `useAudioRoutes()` and select one with `selectAudioRoute(id)`.
 ///
 /// Register from an app delegate subscriber of the app's own, in
 /// `application(_:willFinishLaunchingWithOptions:)`, which runs before the module starts calls in
@@ -49,8 +52,10 @@ public enum NativeCallMedia {
   /// audio session for the app's JavaScript media.
   ///
   /// Register once, before the module starts calls. The module's `mediaAdapter` doesn't apply
-  /// then: the media configures and uses the audio session itself, in
-  /// `CallMedia.prepare(_:)`, `activate()` and `deactivate()`.
+  /// then. The SDK configures the session through `AudioSessionAdapter` before
+  /// `CallMedia.prepare(_:)`; the media must not set its category. Use the session only between
+  /// `activate()` and `deactivate()`. The system activates it for calls, and the module's
+  /// JavaScript routes API remains available.
   ///
   /// - Parameters:
   ///   - media: The app's media.
