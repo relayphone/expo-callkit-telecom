@@ -40,6 +40,7 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore'
   # The app's Podfile names the SDK's source; the config plugin adds it.
   s.dependency 'IosVoipSDK/Core'
+  s.dependency 'IosVoipSDK/Audio'
   s.dependency 'IosVoipSDK/LiveCommunicationKit'
   s.dependency 'IosVoipSDK/PushKit'
   s.dependency 'IosVoipSDK/Simulator' if simulator

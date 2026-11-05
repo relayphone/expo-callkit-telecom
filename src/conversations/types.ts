@@ -648,6 +648,7 @@ export interface ConversationEventMap {
     readonly outcome: IncomingConversationOutcome;
   };
   readonly audioActivated: { readonly conversationId?: ConversationId };
+  /** iOS native media: also emitted for SDK audio interruptions and media services resets. */
   readonly audioDeactivated: { readonly conversationId?: ConversationId };
   readonly audioActivationMissing: { readonly conversationId: ConversationId };
   readonly audioActivationFailed: { readonly conversationId: ConversationId };

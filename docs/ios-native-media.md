@@ -76,7 +76,6 @@ when the call ends.
    leaves the audio session to the system; adapt it to your version and media.
 
    ```swift
-   import AVFAudio
    import ExpoCallKitTelecom
    import ExpoModulesCore
    import Foundation
@@ -106,8 +105,6 @@ when the call ends.
          case .string(let url)? = credentials["url"],
          case .string(let token)? = credentials["token"]
        else { throw LiveKitCallMediaError.noCredentials }
-       try AVAudioSession.sharedInstance().setCategory(
-         .playAndRecord, mode: .voiceChat, options: [.allowBluetoothHFP])
        let room = Room()
        try await room.connect(url: url, token: token)
        try await room.localParticipant.setMicrophone(enabled: true)
@@ -185,8 +182,19 @@ credentials from your servers in `prepare(_:)`, and report it connected when the
 
 ## Audio
 
+When native media is registered, the module passes ios-voip-sdk's `AudioSessionAdapter` to the
+client. The SDK configures play-and-record in voice chat mode before it prepares the media for an
+answer, start or join, and configures it again after a media services reset. Your `CallMedia` must
+not set the audio session category itself. It uses the session only between `activate()` and
+`deactivate()`; the system activates it for calls.
+
+The SDK's `audioActivated` event becomes JavaScript's `audioActivated` event. Its
+`audioDeactivated`, `audioInterrupted` and `mediaServicesReset` events all become
+`audioDeactivated`, and refresh the audio routes. The JavaScript media path forwards the calling
+framework's activation and deactivation as before, with WebRTC owning its session configuration.
+Use `useAudioRoutes()` to observe routes and `selectAudioRoute(id)` to select one with either path.
+
 The registered media replaces the module's, so `mediaAdapter` no longer applies on iOS: the module
-doesn't put react-native-webrtc's `RTCAudioSession` in manual audio mode. Your media configures the
-audio session in `prepare(_:)` and uses it only between `activate()` and `deactivate()`; the
-system activates it for calls. LiveKit's Swift SDK brings its own WebRTC build: if your JavaScript
-no longer uses react-native-webrtc, remove it and set `mediaAdapter: "none"`.
+doesn't put react-native-webrtc's `RTCAudioSession` in manual audio mode. LiveKit's Swift SDK brings
+its own WebRTC build: if your JavaScript no longer uses react-native-webrtc, remove it and set
+`mediaAdapter: "none"`.
