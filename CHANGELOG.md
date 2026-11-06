@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Documentation
+
+* **ios:** explain delayed update tokens for push-started call previews, Live Activities consent,
+  and how servers handle a preview that ends before its token arrives.
+
 ### Features
 
 * **ios:** move to ios-voip-sdk 0.2.1, pinned by the `v0.2.1` tag. VoIP pushes now keep the app running briefly, so call notifications and other push-triggered work finish before iOS suspends it.

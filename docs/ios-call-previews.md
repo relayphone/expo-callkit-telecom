@@ -169,8 +169,19 @@ useEffect(() => {
 ```
 
 The system can launch the app in the background to deliver a server-started preview's push token,
-and the module follows the previews from launch, so the tokens are in the snapshot when JavaScript
-reads it. `getCallPreviewActivities()` reads the same value outside React. A preview's token leaves
+and the module follows the previews from launch. Tokens enter the snapshot when iOS supplies
+them; a `callPreview` event of type `started` can arrive first. For push-started previews, iOS can
+withhold the update token until the user allows Live Activities on the Lock Screen. Apple DTS
+confirms that ["the update token will come with user acceptance"](https://developer.apple.com/forums/thread/818467).
+`activitiesEnabled: true` and a push-to-start token don't guarantee that a preview's update token
+is available. An absent token alone doesn't prove that consent is pending.
+
+Keep observing `useCallPreviewActivities()` for late tokens and rotations, without a fixed timeout.
+Include `"input-push-token": 1` and a `stale-date` in each start push. Until the update token
+arrives, your servers can't update or end that activity; if the conversation already ended, end
+the activity when its token arrives. See the SDK's
+[server contract](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/call-preview-activity.md#pushes).
+`getCallPreviewActivities()` reads the same snapshot outside React. A preview's token leaves
 `pushTokens` when the preview ends; stop sending its pushes then. Don't start previews on a device
 whose user turned Live Activities off.
 
