@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-* **ios:** explain delayed update tokens for push-started call previews, Live Activities consent,
-  and how servers handle a preview that ends before its token arrives.
+* **ios:** document the observed iOS 27 behavior of delivering a push-started preview's update
+  token after the Live Activities question, and how servers handle a preview that ends before
+  its token arrives.
 
 ### Features
 
