@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token after the Live Activities question, and how servers handle a preview that ends before
   its token arrives.
 
+### Diagnostics
+
+* **ios:** log Focus store reads at launch, foreground activation and changes, and the state sent
+  to JavaScript, under the `VoIPFocus` subsystem. Foreground diagnostics compare persisted and
+  cached state. Logs include only state tags, revisions and conversion failures, without settings.
+
 ### Features
 
 * **ios:** move to ios-voip-sdk 0.2.1, pinned by the `v0.2.1` tag. VoIP pushes now keep the app running briefly, so call notifications and other push-triggered work finish before iOS suspends it.
