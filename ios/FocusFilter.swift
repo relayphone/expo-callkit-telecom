@@ -32,7 +32,7 @@
       store = FocusFilterStore(appGroup: appGroup)
       self.changed = changed
       state = Self.json(store.state)
-      Self.log.info(
+      Self.log.notice(
         "Store read reason=launch state=\(Self.stateName(self.state), privacy: .public)")
     }
 
@@ -43,7 +43,7 @@
 
     /// The TypeScript API's `FocusFilterStateSnapshot`.
     var snapshot: JSONValue {
-      Self.log.info(
+      Self.log.notice(
         "JS snapshot state=\(Self.stateName(self.state), privacy: .public) revision=\(self.revision)"
       )
       return .object(["revision": .number(Double(revision)), "state": state])
@@ -68,7 +68,7 @@
 
     private func update(_ state: FocusFilterState<JSONValue>) {
       let json = Self.json(state)
-      Self.log.info("Store read reason=change state=\(Self.stateName(json), privacy: .public)")
+      Self.log.notice("Store read reason=change state=\(Self.stateName(json), privacy: .public)")
       guard json != self.state else { return }
       self.state = json
       revision += 1
@@ -78,7 +78,7 @@
     /// Compares persistence with the snapshot without changing what JavaScript receives.
     private func logForegroundRead() {
       let current = Self.json(store.state)
-      Self.log.info(
+      Self.log.notice(
         "Store read reason=foreground state=\(Self.stateName(current), privacy: .public); JS state=\(Self.stateName(self.state), privacy: .public) revision=\(self.revision)"
       )
     }
