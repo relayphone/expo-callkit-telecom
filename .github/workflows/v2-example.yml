@@ -3,10 +3,10 @@ name: v2 example
 on:
   pull_request:
     branches: [v2]
-    paths: ['src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', '.github/workflows/v2-example.yml']
+    paths: ['src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/package.json', 'tsconfig.executor.json', '.github/workflows/v2-example.yml']
   push:
     branches: [v2]
-    paths: ['src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', '.github/workflows/v2-example.yml']
+    paths: ['src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/package.json', 'tsconfig.executor.json', '.github/workflows/v2-example.yml']
 
 permissions:
   contents: read
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-4
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -25,13 +25,15 @@ jobs:
           bun-version: '1.4.0'
       - uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: '26'
+      - run: node --test tools/android-emulator-executor.test.ts
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
       - run: bun install --frozen-lockfile
+      - run: node_modules/.bin/tsc -p tsconfig.executor.json
       - run: bun run build
       - run: bun install --frozen-lockfile
         working-directory: example/client
@@ -50,10 +52,16 @@ jobs:
           if-no-files-found: error
   journey:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-4
     timeout-minutes: 15
+    env:
+      ANDROID_EXECUTOR_LABEL: ubicloud-standard-4
+      ANDROID_EXECUTOR_REASON: Preferred Ubicloud executor; hardware acceleration is required.
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
       - uses: actions/download-artifact@v6
         with:
           name: v2-example-apk
@@ -63,18 +71,34 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Require a bounded executor with accessible KVM
+        run: node tools/android-emulator-executor.ts preflight executor-results/preflight.json
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           arch: x86_64
           target: google_apis
           profile: pixel_6
+          cores: 2
+          avd-name: example-journey
+          emulator-boot-timeout: 300
+          disable-linux-hw-accel: false
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash tools/run-example-journey.sh
+          emulator-options: -accel on -cores 2 -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            node tools/android-emulator-executor.ts boot executor-results/boot.json
+            bash tools/run-example-journey.sh
+      - name: Remove the temporary emulator
+        if: always()
+        run: |
+          if [ -n "${ANDROID_AVD_HOME:-}" ]; then
+            rm -rf "$ANDROID_AVD_HOME/example-journey.avd" "$ANDROID_AVD_HOME/example-journey.ini"
+          fi
       - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: v2-example-journey
-          path: example-journey.json
+          path: |
+            example-journey.json
+            executor-results/*.json
           if-no-files-found: error
