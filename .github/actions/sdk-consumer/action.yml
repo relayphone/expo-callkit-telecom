@@ -1,0 +1,17 @@
+name: Install the pinned SDK
+description: Verify and install the shared SDK archive before dependency resolution.
+inputs:
+  project:
+    description: Project directory relative to the checkout.
+    default: '.'
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v6
+      with:
+        name: sdk-evaluation-package
+        path: ${{ runner.temp }}/sdk-package
+    - shell: bash
+      env:
+        SDK_PROJECT: ${{ inputs.project }}
+      run: node "$GITHUB_WORKSPACE/tools/sdk-evaluation.ts" install-sdk "$RUNNER_TEMP/sdk-package" "$SDK_PROJECT"

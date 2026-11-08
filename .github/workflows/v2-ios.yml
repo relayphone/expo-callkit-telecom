@@ -3,10 +3,10 @@ name: v2 iOS
 on:
   pull_request:
     branches: [v2]
-    paths: ['ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', '.github/workflows/v2-ios.yml']
+    paths: ['tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', '.github/workflows/v2-ios.yml']
   push:
     branches: [v2]
-    paths: ['ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', '.github/workflows/v2-ios.yml']
+    paths: ['tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'ios/**', 'example/client/**', 'src/**', 'plugin/**', 'package.json', 'bun.lock', '.github/workflows/v2-ios.yml']
 
 permissions:
   contents: read
@@ -15,7 +15,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sdk-package:
+    uses: ./.github/workflows/sdk-package.yml
   example:
+    needs: sdk-package
     runs-on: xcode-27
     timeout-minutes: 45
     steps:
@@ -25,13 +28,14 @@ jobs:
           bun-version: '1.4.0'
       - uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: '26'
       # ios-voip-sdk requires Swift 6.4.
       - run: sudo xcode-select -s /Applications/Xcode_27.1.app
-      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/sdk-consumer
       - run: bun run build
-      - run: bun install --frozen-lockfile
-        working-directory: example/client
+      - uses: ./.github/actions/sdk-consumer
+        with:
+          project: example/client
       - run: bun run typecheck
         working-directory: example/client
       - run: bunx expo prebuild --platform ios --no-install
