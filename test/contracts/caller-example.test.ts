@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { buildEvent } from "../../example/server/lib/event";
-import type { Caller } from "../../src/conversations/types";
+import type { Caller } from "../../src/types";
 
 test("the example FCM producer supplies the required typed Caller child", () => {
   const phone: Caller = buildEvent({

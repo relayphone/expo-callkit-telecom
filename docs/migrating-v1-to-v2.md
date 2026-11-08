@@ -37,7 +37,7 @@ replaying v1 listener events.
 | `requestId` from an answer event | No public fulfill token; native owns action settlement and deadlines. |
 | A handler resolved, therefore media is connected | `connectedAt` follows a connected transport report, not handler fulfillment. |
 | Any string is a call ID | Use the branded ID returned by the API or snapshot. Do not substitute `serverCallId` or cast an arbitrary string. |
-| An ended call has only a reason | A conversation that ended as `failed` also carries `ended.failure.kind` when the platform knows the cause, such as `notPlaced` or `media`. [`EndedFailureKind`](https://github.com/relayphone/expo-callkit-telecom/blob/v2/src/conversations/types.ts) lists the kinds each platform reports. |
+| An ended call has only a reason | A conversation that ended as `failed` also carries `ended.failure.kind` when the platform knows the cause, such as `notPlaced` or `media`. [`EndedFailureKind`](https://github.com/relayphone/ios-voip-sdk/blob/main/expo/src/conversations/types.ts) lists the kinds each platform reports. |
 
 Incoming conversation UUIDs use UUIDv5 with namespace
 `d460ee4a-efbc-5b0d-8035-0b915bf9551a` over the exact UTF-8 `serverCallId` bytes.
@@ -45,7 +45,7 @@ Do not trim or case-fold that server identity. Outgoing IDs are returned by
 `startConversation`; applications should treat both kinds as opaque native IDs.
 `eventId` still identifies a transport delivery for deduplication, not a second
 genuine call. The accepted [RFC](https://github.com/relayphone/expo-callkit-telecom/blob/v2/rfcs/0001-v2-conversations-api.md) and
-[current types](https://github.com/relayphone/expo-callkit-telecom/blob/v2/src/conversations/types.ts)
+[current SDK types](https://github.com/relayphone/ios-voip-sdk/blob/main/expo/src/conversations/types.ts)
 describe the full model.
 
 ## Map the v1 API

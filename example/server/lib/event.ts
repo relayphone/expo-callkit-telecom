@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Caller } from "../../../src/conversations/types";
+import type { Caller } from "../../../src/types";
 
 export interface IncomingCallEvent {
   eventId: string;
