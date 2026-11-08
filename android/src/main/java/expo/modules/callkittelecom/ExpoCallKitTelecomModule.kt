@@ -1,6 +1,7 @@
 package expo.modules.callkittelecom
 
 import android.content.pm.PackageManager
+import expo.modules.callkittelecom.conversations.CommandRejection
 import expo.modules.callkittelecom.conversations.ConversationEngine
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.functions.Coroutine
@@ -16,16 +17,8 @@ class ExpoCallKitTelecomModule : Module() {
     private suspend fun <T> command(body: suspend () -> T): T = engine.jobs.async {
         try { check(engine.bridgeOwner === owner); body() }
         catch (error: Exception) {
-            if (error is TimeoutCancellationException) throw CodedException("deadline_exceeded", "Conversation deadline exceeded", null)
-            if (error is CancellationException) throw error
-            if (error is expo.modules.callkittelecom.conversations.ConversationFailure) {
-                val fields = mutableMapOf<String, Any>("code" to error.code, "message" to "Conversation operation failed")
-                error.nativeCode?.let { fields["nativeDomain"] = "androidx.core.telecom"; fields["nativeCode"] = it }
-                val details = JSONObject(fields).toString()
-                throw CodedException(error.code, "expo-conversation:$details", null)
-            }
-            val code = error.message?.takeIf { it in setOf("invalid_arguments", "unknown_conversation", "unsupported") } ?: "conversation"
-            throw CodedException(code, "Conversation operation failed", null)
+            val rejection = CommandRejection.from(error)
+            throw CodedException(rejection.code, rejection.encodedMessage, null)
         }
     }.await()
     override fun definition() = ModuleDefinition {
