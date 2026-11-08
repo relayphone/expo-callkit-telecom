@@ -7,7 +7,7 @@ const config: ExpoConfig = {
   plugins: [
     ["expo-build-properties", { ios: { deploymentTarget: "26.0" } }],
     [
-      "@relayphone/ios-voip-sdk/app.plugin",
+      "expo-callkit-telecom/app.plugin",
       { mediaAdapter: "none", simulator: true },
     ],
   ],

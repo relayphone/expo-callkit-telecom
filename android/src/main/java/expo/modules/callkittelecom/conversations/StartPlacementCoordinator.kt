@@ -9,7 +9,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 internal enum class PlacementConnectionReport { CONNECTING, CONNECTED }
 private enum class PlacementCancellation(val wireValue: String) {
@@ -20,7 +20,8 @@ private enum class PlacementCancellation(val wireValue: String) {
 internal class StartPlacementCoordinator(
     private val emit: (String, Map<String, Any?>) -> Unit,
     private val changed: () -> Unit,
-    private val timeout: Duration = 3500.milliseconds,
+    private val timeout: Duration = 10.seconds,
+    private val handlerMargin: Duration = 1.seconds,
     private val monotonicNow: () -> Long = SystemClock::elapsedRealtime,
     private val wallNow: () -> Instant = Instant::now,
 ) {
@@ -36,7 +37,8 @@ internal class StartPlacementCoordinator(
         private set
     var acceptUnhandled = false
 
-    init { require(timeout.inWholeMilliseconds in 1L..3500L) }
+    private val handlerMillis = (timeout - handlerMargin).inWholeMilliseconds
+    init { require(handlerMargin >= Duration.ZERO && handlerMillis > 0 && timeout.isFinite()) }
 
     fun resetBridge() {
         epoch++; generation = 0; attached = false
@@ -94,14 +96,14 @@ internal class StartPlacementCoordinator(
         val id = UUID.randomUUID().toString()
         val entry = Entry(conversationId, mapOf("actionID" to id, "conversation" to conversation.toMap(),
             "kind" to "start", "origin" to origin.wireValue,
-            "deadline" to wallNow().plusMillis(timeout.inWholeMilliseconds).toString()),
-            monotonicNow() + timeout.inWholeMilliseconds)
+            "deadline" to wallNow().plusMillis(handlerMillis).toString()),
+            monotonicNow() + handlerMillis)
         entries[id] = entry
         var cancellation = PlacementCancellation.DEADLINE
         try {
             changed()
             deliver(id, entry)
-            val result = withTimeoutOrNull(timeout.inWholeMilliseconds) { entry.result.await() }
+            val result = withTimeoutOrNull(handlerMillis) { entry.result.await() }
             if (result == null && !(entry.delivered == null && acceptUnhandled)) throw ConversationFailure("deadline_exceeded")
             if (result == false) throw ConversationFailure("handler_failed")
             currentCoroutineContext().ensureActive()

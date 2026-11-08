@@ -13,8 +13,7 @@
     "./app.plugin.js": "./app.plugin.js",
     "./package.json": "./package.json",
     "./types": {
-      "types": "./build/conversations/index.d.ts",
-      "default": "./build/conversations/index.js"
+      "types": "./build/types.d.ts"
     }
   },
   "scripts": {
@@ -22,7 +21,7 @@
     "build:plugin": "expo-module build plugin",
     "clean": "expo-module clean",
     "lint": "expo-module lint",
-    "test": "expo-module test plugin",
+    "test": "node --test test/contracts/composed-plugin.test.ts test/contracts/android-native-media.test.ts test/canonical/*.test.ts",
     "typecheck": "expo-module build && tsc --noEmit && tsc --noEmit -p plugin && tsc -p tsconfig.contract.json",
     "prepare": "expo-module prepare",
     "prepublishOnly": "expo-module prepublishOnly",
@@ -35,7 +34,7 @@
     "docs:preview": "vitepress preview docs",
     "deploy": "bun run docs:build && wrangler deploy",
     "preview": "bun run docs:build && wrangler dev",
-    "test:contracts": "bun test test/contracts"
+    "test:contracts": "bun test test/contracts/caller-example.test.ts && node --test test/contracts/composed-plugin.test.ts test/contracts/android-native-media.test.ts test/canonical/*.test.ts"
   },
   "keywords": [
     "callkit",
@@ -64,7 +63,9 @@
   },
   "license": "MIT",
   "homepage": "https://expo-callkit-telecom.mfairley.com/",
-  "dependencies": {},
+  "dependencies": {
+    "@relayphone/ios-voip-sdk": "0.3.0"
+  },
   "devDependencies": {
     "@types/node": "^26.6.2",
     "@types/react": "~19.2.14",
@@ -83,5 +84,20 @@
     "react": "*",
     "react-native": "*",
     "expo-notifications": "*"
-  }
+  },
+  "files": [
+    "build/index.js",
+    "build/index.d.ts",
+    "build/types.d.ts",
+    "android/build.gradle",
+    "android/src/main",
+    "android/src/livekit",
+    "android/src/withoutLivekit",
+    "plugin/build/withConversations.*",
+    "plugin/build/composedPlugin.*",
+    "plugin/build/androidNativeMedia.*",
+    "plugin/build/androidOptions.*",
+    "app.plugin.js",
+    "expo-module.config.json"
+  ]
 }

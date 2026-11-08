@@ -6,20 +6,12 @@ plugins {
 group = 'expo.modules.callkittelecom'
 version = '0.1.0'
 
-// The config plugin writes the mediaAdapter option to gradle.properties; regenerate the Android
-// project after changing it. "livekit" adds the native media engine: livekit-android, its WebRTC
-// build and JitPack repository, and OkHttp for the built-in HTTPS credentials fetcher.
-def mediaAdapter = findProperty('expo-callkit-telecom.mediaAdapter') ?: 'webrtc'
-if (!(mediaAdapter in ['webrtc', 'livekit', 'none'])) {
-  throw new GradleException("ExpoCallKitTelecom: expo-callkit-telecom.mediaAdapter must be webrtc, livekit or none.")
-}
-// Explicit Android native-media selection overrides mediaAdapter; absent selection preserves its
-// source-set choice.
-def androidNativeMedia = findProperty('expo-callkit-telecom.androidNativeMedia')
-if (androidNativeMedia != null && !(androidNativeMedia in ['livekit', 'none'])) {
+// Only the Android native provider option selects the media engine.
+def androidNativeMedia = findProperty('expo-callkit-telecom.androidNativeMedia') ?: 'none'
+if (!(androidNativeMedia in ['livekit', 'none'])) {
   throw new GradleException("ExpoCallKitTelecom: androidNativeMedia must be livekit or none.")
 }
-def nativeMediaEngine = androidNativeMedia == null ? mediaAdapter == 'livekit' : androidNativeMedia == 'livekit'
+def nativeMediaEngine = androidNativeMedia == 'livekit'
 
 android {
   namespace "expo.modules.callkittelecom"

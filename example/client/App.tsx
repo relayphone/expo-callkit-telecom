@@ -10,7 +10,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { runJourney } from "./journey";
 
 // Attach before React mounts. The example accepts local signaling without a media server.
-setConversationHandler({ join() {}, start() {}, end() {} });
+setConversationHandler({ start() {} });
 
 async function permissions() {
   if (Platform.OS === "android") await PermissionsAndroid.requestMultiple([
@@ -60,7 +60,7 @@ export default function App() {
         if (result.status !== "reported") throw new Error(result.status);
       })} />
       <Button title="Start outgoing" disabled={busy} onPress={() => void perform(async () => {
-        const id = await startConversation({ to: { id: "callee" }, video: false });
+        const id = await startConversation({ id: `manual-outgoing-${Date.now()}`, to: { id: "callee" }, video: false });
         await reportConversation(id, { type: "connected" });
       })} />
       {calls.map((call) => <View key={call.id} style={styles.card}>

@@ -9,7 +9,7 @@
     ]
   },
   "include": [
-    "./src"
+    "./src/withConversations.ts"
   ],
   "exclude": [
     "**/__mocks__/*",

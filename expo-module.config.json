@@ -1,10 +1,10 @@
 {
-  "platforms": ["apple", "android"],
-  "apple": {
-    "modules": ["ExpoCallKitTelecomModule"],
-    "appDelegateSubscribers": ["ExpoCallKitTelecomAppDelegateSubscriber"]
-  },
+  "platforms": [
+    "android"
+  ],
   "android": {
-    "modules": ["expo.modules.callkittelecom.ExpoCallKitTelecomModule"]
+    "modules": [
+      "expo.modules.callkittelecom.ExpoCallKitTelecomModule"
+    ]
   }
 }

@@ -1,6 +1,7 @@
 package expo.modules.callkittelecom.conversations
 
 import android.Manifest
+import android.media.AudioManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
@@ -16,6 +17,10 @@ import org.junit.runner.RunWith
 class ConversationJourneyTest {
     @get:Rule val permissions = GrantPermissionRule.grant(Manifest.permission.RECORD_AUDIO,
         Manifest.permission.POST_NOTIFICATIONS)
+
+    private suspend fun awaitTelecomRemoval() = withTimeout(5000) {
+        while (TelecomEvidence.calls().isNotEmpty()) delay(10)
+    }
 
     @Test fun incomingAndOutgoingJourney() = runBlocking {
         withContext(Dispatchers.Main) {
@@ -44,7 +49,7 @@ class ConversationJourneyTest {
                 val outcome = engine.incoming(payload)
                 assertEquals("reported", outcome["status"])
                 val id = outcome["id"] as String
-                assertEquals(CallIdentity.forServerCallId("journey-incoming").toString(), id)
+                assertEquals("journey-incoming", id)
                 expect(id, "ringing")
                 assertEquals(id, engine.incoming(payload)["id"])
                 engine.join(id)
@@ -69,7 +74,7 @@ class ConversationJourneyTest {
                 engine.end(id)
                 assertNull(status(id))
                 seen += "incoming-ended"
-                val outgoing = engine.start(mapOf("to" to mapOf("id" to "callee"), "video" to false))
+                val outgoing = engine.start(mapOf("id" to "outgoing-${System.nanoTime()}", "to" to mapOf("id" to "callee"), "video" to false))
                 expect(outgoing, "dialing")
                 engine.report(outgoing, mapOf("type" to "connecting"))
                 expect(outgoing, "connecting")
@@ -83,35 +88,10 @@ class ConversationJourneyTest {
             assertEquals(listOf("ringing", "connecting", "connected", "held", "second-ringing", "second-ended", "connected",
                 "incoming-ended", "dialing", "connecting", "connected", "outgoing-ended"), seen)
             File(context.filesDir, "journey-results.json").writeText(JSONObject(mapOf(
-                "passed" to true, "steps" to seen, "identityVectors" to "call-identity.json")).toString())
+                "passed" to true, "steps" to seen, "identityPolicy" to "raw-application-id")).toString())
         }
     }
 
-    @Test fun nativeDeadlineAndReplacement() = runBlocking {
-        withContext(Dispatchers.Main) {
-            val deliveries = mutableListOf<Map<String, Any?>>()
-            val coordinator = ActionCoordinator({ name, body -> if (name == "handlerAction") deliveries += body }, {})
-            val conversation = mapOf<String, Any?>("id" to "test-conversation")
-            val pending = async { coordinator.perform(conversation, "join", "system") }
-            yield()
-            assertNotNull(coordinator.pending("test-conversation"))
-            coordinator.attach(true, 1, coordinator.epoch)
-            assertEquals(1, deliveries.size)
-            coordinator.attach(true, 2, coordinator.epoch)
-            assertEquals(2, deliveries.size)
-            val id = deliveries[0]["actionID"] as String
-            coordinator.settle(id, 1, false, coordinator.epoch)
-            assertFalse(pending.isCompleted)
-            coordinator.settle(id, 2, true, coordinator.epoch)
-            pending.await()
-            assertNull(coordinator.pending("test-conversation"))
-            val began = android.os.SystemClock.elapsedRealtime()
-            val failure = runCatching { coordinator.perform(conversation, "join", "system") }.exceptionOrNull()
-            assertNotNull(failure)
-            assertTrue(android.os.SystemClock.elapsedRealtime() - began in 3300..4500)
-            assertNull(coordinator.pending("test-conversation"))
-        }
-    }
     @Test fun nativeAnswerDoesNotWaitForJavaScript() = runBlocking {
         withContext(Dispatchers.Main) {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -132,6 +112,7 @@ class ConversationJourneyTest {
                     override suspend fun close(reason: String) { order += "close" }
                 }
             }
+            engine.nativeMedia = AndroidNativeMedia.LIVEKIT
             engine.policy = JSONObject(mapOf("type" to "native", "media" to "webrtc", "prewarm" to true))
             engine.actions.resetBridge()
             engine.emit = { name, _ -> assertNotEquals("handlerAction", name) }
@@ -158,7 +139,7 @@ class ConversationJourneyTest {
                 engine.hold(id, false)
                 engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                 withTimeout(3000) { while (!order.contains("close")) delay(10) }
-            } finally { NativeMediaRegistry.factories.remove("webrtc") }
+            } finally { NativeMediaRegistry.factories.remove("webrtc"); engine.nativeMedia = AndroidNativeMedia.NONE }
         }
     }
 
@@ -232,7 +213,215 @@ class ConversationJourneyTest {
                 val end = ended.first { it["id"] == id }["ended"] as Map<*, *>
                 assertEquals("failed", end["reason"])
                 assertEquals(mapOf("kind" to "connectTimedOut"), end["failure"])
+                awaitTelecomRemoval()
             } finally { engine.answerTimeoutMillis = previous }
+        }
+    }
+
+    @Test fun canonicalNativeActionsNeedNoHandlerAndEndPublishesInOrder(): Unit = runBlocking {
+        withContext(Dispatchers.Main) {
+            awaitTelecomRemoval()
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val engine = ConversationEngine.get(context)
+            val audio = context.getSystemService(AudioManager::class.java)
+            val previousMuted = audio.isMicrophoneMute
+            val previous = engine.emit; val selection = engine.nativeMedia
+            val events = mutableListOf<Map<String, Any?>>()
+            val order = mutableListOf<String>()
+            val id = "raw/電話 ${System.nanoTime()}"
+            val muteObserved = CompletableDeferred<Unit>()
+            val muteObserver = NativeMediaObserver { signal ->
+                if (signal.serverCallId == id && signal.stage == NativeMediaStage.CORE_MUTE_OBSERVED &&
+                    signal.measurements["muted"] == 1L) muteObserved.complete(Unit)
+            }
+            engine.nativeMedia = AndroidNativeMedia.NONE
+            engine.actions.resetBridge()
+            engine.emit = { name, body ->
+                assertNotEquals("handlerAction", name)
+                if (name == "conversationsChanged") order += ((body["conversations"] as List<*>).firstOrNull() as? Map<*, *>)?.get("status")?.toString() ?: "empty"
+                if (name == "conversationEvent" && body["type"] == "actionPerformed") {
+                    @Suppress("UNCHECKED_CAST") val payload = body["payload"] as Map<String, Any?>
+                    events += payload; order += "performed-${(payload["action"] as Map<*, *>)["kind"]}"
+                }
+            }
+            try {
+                audio.isMicrophoneMute = false
+                assertFalse(audio.isMicrophoneMute)
+                val payload = mapOf("eventId" to id, "serverCallId" to id,
+                    "caller" to mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), "hasVideo" to false)
+                val first = async(start = CoroutineStart.UNDISPATCHED) { engine.incoming(payload) }
+                val duplicate = async(start = CoroutineStart.UNDISPATCHED) { engine.incoming(payload + ("eventId" to "duplicate-$id")) }
+                val firstOutcome = first.await(); val duplicateOutcome = duplicate.await()
+                assertEquals("First incoming: $firstOutcome", "reported", firstOutcome["status"])
+                assertEquals("Duplicate incoming: $duplicateOutcome", "reported", duplicateOutcome["status"])
+                assertEquals(id, firstOutcome["id"]); assertEquals(id, duplicateOutcome["id"])
+                assertEquals("invalid_arguments", (runCatching { engine.start(mapOf("id" to id, "to" to mapOf("id" to "peer"))) }.exceptionOrNull() as ConversationFailure).code)
+                engine.join(id)
+                engine.report(id, mapOf("type" to "connected"))
+                engine.hold(id, true); engine.hold(id, true)
+                engine.hold(id, false)
+                NativeMediaSignals.observers += muteObserver
+                engine.mute(id, true)
+                assertTrue(audio.isMicrophoneMute)
+                withTimeout(3000) { muteObserved.await() }
+                // Drive the platform state and observe Core-Telecom's system callback.
+                audio.isMicrophoneMute = false
+                withTimeout(3000) {
+                    while (events.none { it["origin"] == "system" &&
+                        it["action"] == mapOf("kind" to "mute", "muted" to false) }) delay(10)
+                }
+                assertFalse(audio.isMicrophoneMute)
+                assertEquals("unsupported", runCatching { engine.tones(id, "123") }.exceptionOrNull()?.message)
+                engine.end(id)
+                assertEquals(listOf("ended", "performed-end", "empty"), order.takeLast(3))
+                val actions = listOf(mapOf("kind" to "answer"), mapOf("kind" to "hold", "held" to true),
+                    mapOf("kind" to "hold", "held" to false), mapOf("kind" to "mute", "muted" to true),
+                    mapOf("kind" to "mute", "muted" to false), mapOf("kind" to "end"))
+                assertEquals(actions.mapIndexed { index, action -> mapOf("conversationId" to id,
+                    "origin" to if (index == 4) "system" else "app", "action" to action) }, events)
+                awaitTelecomRemoval()
+            } finally {
+                NativeMediaSignals.observers -= muteObserver
+                runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
+                engine.emit = previous; engine.nativeMedia = selection; engine.actions.resetBridge()
+                audio.isMicrophoneMute = previousMuted
+            }
+        }
+    }
+
+    @Test fun slowPlacementPrecedesTelecomAndAdvertisesNineSeconds(): Unit = runBlocking {
+        withContext(Dispatchers.Main) {
+            val engine = ConversationEngine.get(InstrumentationRegistry.getInstrumentation().targetContext)
+            awaitTelecomRemoval()
+            val previous = engine.emit
+            val id = "slow/${System.nanoTime()}"
+            val deliveries = mutableListOf<Map<String, Any?>>()
+            engine.actions.resetBridge(); engine.actions.attach(true, 1, engine.actions.epoch)
+            engine.emit = { name, body -> if (name == "handlerAction") deliveries += body }
+            val before = java.time.Instant.now()
+            val pending = async(start = CoroutineStart.UNDISPATCHED) {
+                engine.start(mapOf("id" to id, "to" to mapOf("id" to "peer"), "video" to false))
+            }
+            try {
+                val delivery = deliveries.single()
+                val milliseconds = java.time.Duration.between(before, java.time.Instant.parse(delivery["deadline"] as String)).toMillis()
+                assertTrue(milliseconds in 8900..9200)
+                assertTrue(TelecomEvidence.calls().isEmpty())
+                val holdError = withTimeout(1000) { runCatching { engine.hold(id, true) }.exceptionOrNull() }
+                assertEquals("invalid_arguments", holdError?.message)
+                val collision = runCatching { engine.start(mapOf("id" to id, "to" to mapOf("id" to "peer"))) }.exceptionOrNull()
+                assertEquals("invalid_arguments", (collision as ConversationFailure).code)
+                delay(3750)
+                assertFalse(pending.isCompleted); assertTrue(TelecomEvidence.calls().isEmpty())
+                engine.actions.settle(delivery["actionID"] as String, 1, true, engine.actions.epoch)
+                assertEquals(id, withTimeout(10_000) { pending.await() })
+                assertFalse(TelecomEvidence.calls().isEmpty())
+                engine.end(id)
+                awaitTelecomRemoval()
+            } finally {
+                pending.cancelAndJoin()
+                runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
+                engine.emit = previous; engine.actions.resetBridge()
+            }
+        }
+    }
+
+    @Test fun aCallEndedBeforeAdmissionDisconnectsItsLateCoreScope(): Unit = runBlocking {
+        withContext(Dispatchers.Main) {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val engine = ConversationEngine.get(context)
+            val previous = engine.emit; val selection = engine.nativeMedia
+            val id = "late-admission-${System.nanoTime()}"
+            val baselineJobs = engine.jobs.coroutineContext[Job]!!.children.toSet()
+            val endedBeforeAdmission = CompletableDeferred<Result<Unit>>()
+            val terminal = CompletableDeferred<Unit>()
+            val lateDisconnected = CompletableDeferred<Unit>()
+            var admitted = false
+            val observer = NativeMediaObserver { signal ->
+                if (signal.serverCallId == id && signal.stage == NativeMediaStage.CORE_ADD_REQUESTED) {
+                    engine.jobs.launch(start = CoroutineStart.UNDISPATCHED) {
+                        endedBeforeAdmission.complete(runCatching {
+                            engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+                        })
+                    }
+                }
+                if (signal.serverCallId == id && signal.stage == NativeMediaStage.CORE_ADMITTED) admitted = true
+                if (signal.serverCallId == id && signal.stage == NativeMediaStage.CORE_LATE_DISCONNECTED) lateDisconnected.complete(Unit)
+            }
+            engine.nativeMedia = AndroidNativeMedia.NONE; engine.actions.resetBridge()
+            engine.emit = { name, body ->
+                if (name == "conversationsChanged" && (body["conversations"] as List<*>).any {
+                    (it as Map<*, *>)["id"] == id && it["status"] == "ended"
+                }) terminal.complete(Unit)
+            }
+            NativeMediaSignals.observers += observer
+            try {
+                val outcome = withTimeout(6000) { engine.incoming(mapOf("eventId" to id, "serverCallId" to id,
+                    "caller" to mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), "hasVideo" to false)) }
+                assertEquals("Early incoming: $outcome", "failed", outcome["status"])
+                assertEquals("Early incoming: $outcome", "conversation", (outcome["error"] as Map<*, *>)["code"])
+                try {
+                    withTimeout(6000) {
+                        endedBeforeAdmission.await().getOrThrow(); terminal.await(); lateDisconnected.await()
+                        while (engine.jobs.coroutineContext[Job]!!.children.any { it !in baselineJobs && it.isActive } ||
+                            TelecomEvidence.calls().isNotEmpty()) delay(10)
+                    }
+                } catch (error: TimeoutCancellationException) {
+                    throw AssertionError("Late cleanup: end=${endedBeforeAdmission.isCompleted}, terminal=${terminal.isCompleted}, disconnect=${lateDisconnected.isCompleted}", error)
+                }
+                assertFalse(admitted)
+                assertFalse((engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id })
+            } finally {
+                NativeMediaSignals.observers -= observer
+                runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
+                engine.emit = previous; engine.nativeMedia = selection; engine.actions.resetBridge()
+            }
+        }
+    }
+
+    @Test fun collidingRawIdsHaveIndependentNotificationActions(): Unit = runBlocking {
+        withContext(Dispatchers.Main) {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val engine = ConversationEngine.get(context)
+            val previous = engine.emit; val selection = engine.nativeMedia
+            val prefix = "notification-${System.nanoTime()}-"
+            val first = prefix + "Aa"; val second = prefix + "BB"
+            assertEquals(first.hashCode(), second.hashCode())
+            engine.nativeMedia = AndroidNativeMedia.NONE; engine.actions.resetBridge()
+            val performed = mutableListOf<Map<*, *>>()
+            engine.emit = { name, body -> if (name == "conversationEvent" && body["type"] == "actionPerformed") performed += body["payload"] as Map<*, *> }
+            fun invitation(id: String) = mapOf("eventId" to id, "serverCallId" to id,
+                "caller" to mapOf("handleType" to "generic", "value" to id, "displayName" to id), "hasVideo" to false)
+            fun present(id: String) = (engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id }
+            try {
+                assertEquals(first, engine.incoming(invitation(first))["id"])
+                engine.join(first); engine.hold(first, true)
+                assertEquals(second, engine.incoming(invitation(second))["id"])
+                suspend fun action(id: String): android.app.PendingIntent = withTimeout(5000) {
+                    var found: android.app.PendingIntent? = null
+                    while (found == null) {
+                        found = context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.firstOrNull {
+                            it.notification.extras.getParcelable(android.app.Notification.EXTRA_CALL_PERSON, android.app.Person::class.java)?.name?.toString() == id
+                        }?.notification?.actions?.firstOrNull()?.actionIntent
+                        if (found == null) delay(10)
+                    }
+                    checkNotNull(found)
+                }
+                val firstAction = action(first); val secondAction = action(second)
+                assertNotEquals(firstAction, secondAction)
+                firstAction.send()
+                withTimeout(5000) { while (present(first)) delay(10) }
+                assertTrue(present(second))
+                assertTrue(performed.any { it["conversationId"] == first && it["origin"] == "system" && it["action"] == mapOf("kind" to "end") })
+                val ending = async(start = CoroutineStart.UNDISPATCHED) { runCatching { engine.end(second) } }
+                assertFalse("Must exercise an outstanding native disconnect", ending.isCompleted)
+                runCatching { engine.report(second, mapOf("type" to "ended", "reason" to "remoteEnded")) }
+                withTimeout(5000) { ending.await(); while (present(second) || TelecomEvidence.calls().isNotEmpty()) delay(10) }
+                assertFalse(performed.any { it["conversationId"] == second && it["action"] == mapOf("kind" to "end") })
+            } finally {
+                for (id in listOf(first, second)) runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
+                engine.emit = previous; engine.nativeMedia = selection; engine.actions.resetBridge()
+            }
         }
     }
 

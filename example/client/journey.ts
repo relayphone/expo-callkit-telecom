@@ -68,7 +68,7 @@ export async function runJourney(): Promise<readonly string[]> {
     await expect(id, "ringing");
     if (Platform.OS === "android") {
       await expectRejection("invalid_arguments", () =>
-        startConversation({ to: { id: "" }, video: false })
+        startConversation({ id: `outgoing-${Date.now()}`, to: { id: "" }, video: false })
       );
       await expectRejection("unsupported", () => mergeConversations(id, id));
     }
@@ -87,7 +87,7 @@ export async function runJourney(): Promise<readonly string[]> {
     steps.push("incoming-ended");
     if (Platform.OS === "android")
       await expectRejection("unknown_conversation", () => joinConversation(id));
-    const outgoing = await startConversation({
+    const outgoing = await startConversation({ id: `outgoing-${Date.now()}`,
       to: { id: "example-callee" },
       video: false,
     });
@@ -104,19 +104,17 @@ export async function runJourney(): Promise<readonly string[]> {
     steps.push("outgoing-ended");
     if (Platform.OS === "android") {
       setConversationHandler({
-        join() {},
-        end() {},
         start: () => new Promise<void>(() => {}),
       });
       try {
         await expectRejection("deadline_exceeded", () =>
-          startConversation({
+          startConversation({ id: `outgoing-${Date.now()}`,
             to: { id: "example-timeout-callee" },
             video: false,
           })
         );
       } finally {
-        setConversationHandler({ join() {}, start() {}, end() {} });
+        setConversationHandler({ start() {} });
       }
       if (
         (await getConversations()).some((call) =>

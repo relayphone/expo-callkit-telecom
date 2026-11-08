@@ -8,7 +8,6 @@ import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import kotlinx.coroutines.*
-import org.json.JSONObject
 
 class ExpoCallKitTelecomModule : Module() {
     private lateinit var engine: ConversationEngine
@@ -22,7 +21,7 @@ class ExpoCallKitTelecomModule : Module() {
         }
     }.await()
     override fun definition() = ModuleDefinition {
-        Name("ExpoCallKitTelecom")
+        Name("VoIPConversations")
         Events("conversationsChanged", "audioRoutesChanged", "pushTokenUpdated", "handlerAction", "actionCancelled", "conversationEvent")
         OnCreate {
             val context = appContext.reactContext ?: return@OnCreate
@@ -31,7 +30,7 @@ class ExpoCallKitTelecomModule : Module() {
                 engine.bind(owner) { name, body -> sendEvent(name, body) }
                 epoch = engine.actions.epoch
                 val metadata = context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA).metaData
-                engine.policy = JSONObject(metadata?.getString("ExpoCallKitTelecomJoinPolicy") ?: "{}")
+
                 runCatching { com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
                     engine.jobs.launch { engine.updatePushToken(token) }
                 } }
@@ -40,7 +39,7 @@ class ExpoCallKitTelecomModule : Module() {
         }
         OnDestroy { if (::engine.isInitialized) engine.jobs.launch { if (engine.bridgeOwner === owner) engine.bind(null) { _, _ -> } } }
         Property("snapshot") { engine.snapshot }
-        Property("mediaAdapter") { engine.policy.optString("media", "webrtc") }
+        Property("mediaAdapter") { engine.mediaAdapter }
         AsyncFunction("getConversations") Coroutine { -> command { engine.snapshot } }
         AsyncFunction("getAudioRoutes") Coroutine { -> command { engine.audioRoutes() } }
         AsyncFunction("getPushToken") Coroutine { -> command { engine.pushTokenSnapshot() } }
@@ -56,7 +55,6 @@ class ExpoCallKitTelecomModule : Module() {
         AsyncFunction("reportConversation") Coroutine { id: String, report: Map<String, Any?> -> command { engine.report(id, report) } }
         AsyncFunction("selectAudioRoute") Coroutine { id: String -> command { engine.selectRoute(id) } }
         Function("setHandlerAttached") { attached: Boolean, generation: Int -> engine.jobs.launch { if (engine.bridgeOwner === owner) engine.actions.attach(attached, generation, epoch) }; Unit }
-        Function("setDialRequestListenerAttached") { _: Boolean, _: Int -> Unit }
         Function("settleAction") { id: String, generation: Int, success: Boolean, _: Map<String, Any?>? ->
             engine.jobs.launch { if (engine.bridgeOwner === owner) engine.actions.settle(id, generation, success, epoch) }; Unit
         }

@@ -1,2 +1,1 @@
-export * from "./api";
-export type * from "./conversations/index";
+export * from "@relayphone/ios-voip-sdk";

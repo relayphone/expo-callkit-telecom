@@ -1,1 +1,1 @@
-module.exports = require("./plugin/build/withExpoCallKitTelecom");
+module.exports = require("./plugin/build/withConversations");
