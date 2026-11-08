@@ -144,7 +144,7 @@ On iOS, `incomingCallTimeout` also bounds how long an outgoing call dials, and `
 
 ## 🧠 API
 
-The [migration guide](docs/migrating-v1-to-v2.md) maps every v1 function to its v2 replacement, and the [v2 types](src/conversations/types.ts) document the full model. In short:
+The [migration guide](docs/migrating-v1-to-v2.md) maps every v1 function to its v2 replacement, and the [SDK types](https://github.com/relayphone/ios-voip-sdk/blob/main/expo/src/conversations/types.ts) document the shared model. In short:
 
 - **State** — `getConversations()`, `useConversations()` and `useConversation(id)` read immutable snapshots of every call.
 - **Handler** — one `setConversationHandler({ start, end, join?, hold?, mute?, tones? })`, registered at module scope, places calls and hears about actions.
