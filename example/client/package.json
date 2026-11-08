@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@livekit/react-native-webrtc": ">=144.0.0",
+    "@relayphone/ios-voip-sdk": "0.3.0",
     "expo": "^57.0.24",
     "expo-build-properties": "~57.0.21",
     "expo-crypto": "~57.0.3",

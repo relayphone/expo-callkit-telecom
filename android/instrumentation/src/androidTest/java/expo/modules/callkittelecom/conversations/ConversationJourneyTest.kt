@@ -234,7 +234,10 @@ class ConversationJourneyTest {
                     "caller" to mapOf("handleType" to "generic", "value" to "peer"), "hasVideo" to false)
                 val first = async(start = CoroutineStart.UNDISPATCHED) { engine.incoming(payload) }
                 val duplicate = async(start = CoroutineStart.UNDISPATCHED) { engine.incoming(payload + ("eventId" to "duplicate-$id")) }
-                assertEquals(id, first.await()["id"]); assertEquals(id, duplicate.await()["id"])
+                val firstOutcome = first.await(); val duplicateOutcome = duplicate.await()
+                assertEquals("First incoming: $firstOutcome", "reported", firstOutcome["status"])
+                assertEquals("Duplicate incoming: $duplicateOutcome", "reported", duplicateOutcome["status"])
+                assertEquals(id, firstOutcome["id"]); assertEquals(id, duplicateOutcome["id"])
                 assertEquals("invalid_arguments", (runCatching { engine.start(mapOf("id" to id, "to" to mapOf("id" to "peer"))) }.exceptionOrNull() as ConversationFailure).code)
                 engine.join(id)
                 engine.report(id, mapOf("type" to "connected"))
@@ -299,15 +302,16 @@ class ConversationJourneyTest {
             val previous = engine.emit; val selection = engine.nativeMedia
             val id = "late-admission-${System.nanoTime()}"
             val baselineJobs = engine.jobs.coroutineContext[Job]!!.children.toSet()
-            val endedBeforeAdmission = CompletableDeferred<Unit>()
+            val endedBeforeAdmission = CompletableDeferred<Result<Unit>>()
             val terminal = CompletableDeferred<Unit>()
             val lateDisconnected = CompletableDeferred<Unit>()
             var admitted = false
             val observer = NativeMediaObserver { signal ->
                 if (signal.serverCallId == id && signal.stage == NativeMediaStage.CORE_ADD_REQUESTED) {
                     engine.jobs.launch(start = CoroutineStart.UNDISPATCHED) {
-                        engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
-                        endedBeforeAdmission.complete(Unit)
+                        endedBeforeAdmission.complete(runCatching {
+                            engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+                        })
                     }
                 }
                 if (signal.serverCallId == id && signal.stage == NativeMediaStage.CORE_ADMITTED) admitted = true
@@ -323,12 +327,16 @@ class ConversationJourneyTest {
             try {
                 val outcome = withTimeout(6000) { engine.incoming(mapOf("eventId" to id, "serverCallId" to id,
                     "caller" to mapOf("handleType" to "generic", "value" to "peer"), "hasVideo" to false)) }
-                withTimeout(6000) {
-                    endedBeforeAdmission.await(); terminal.await(); lateDisconnected.await()
-                    while (engine.jobs.coroutineContext[Job]!!.children.any { it !in baselineJobs && it.isActive } ||
-                        TelecomEvidence.calls().isNotEmpty()) delay(10)
+                assertEquals("Early incoming: $outcome", "failed", outcome["status"])
+                try {
+                    withTimeout(6000) {
+                        endedBeforeAdmission.await().getOrThrow(); terminal.await(); lateDisconnected.await()
+                        while (engine.jobs.coroutineContext[Job]!!.children.any { it !in baselineJobs && it.isActive } ||
+                            TelecomEvidence.calls().isNotEmpty()) delay(10)
+                    }
+                } catch (error: TimeoutCancellationException) {
+                    throw AssertionError("Late cleanup: end=${endedBeforeAdmission.isCompleted}, terminal=${terminal.isCompleted}, disconnect=${lateDisconnected.isCompleted}", error)
                 }
-                assertEquals("failed", outcome["status"])
                 assertFalse(admitted)
                 assertFalse((engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id })
             } finally {
@@ -357,12 +365,19 @@ class ConversationJourneyTest {
                 assertEquals(first, engine.incoming(invitation(first))["id"])
                 engine.join(first); engine.hold(first, true)
                 assertEquals(second, engine.incoming(invitation(second))["id"])
-                val notifications = context.getSystemService(android.app.NotificationManager::class.java).activeNotifications
-                fun action(id: String) = notifications.first {
-                    it.notification.extras.getParcelable(android.app.Notification.EXTRA_CALL_PERSON, android.app.Person::class.java)?.name?.toString() == id
-                }.notification.actions.first().actionIntent
-                assertNotEquals(action(first), action(second))
-                action(first).send()
+                suspend fun action(id: String): android.app.PendingIntent = withTimeout(5000) {
+                    var found: android.app.PendingIntent? = null
+                    while (found == null) {
+                        found = context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.firstOrNull {
+                            it.notification.extras.getParcelable(android.app.Notification.EXTRA_CALL_PERSON, android.app.Person::class.java)?.name?.toString() == id
+                        }?.notification?.actions?.firstOrNull()?.actionIntent
+                        if (found == null) delay(10)
+                    }
+                    checkNotNull(found)
+                }
+                val firstAction = action(first); val secondAction = action(second)
+                assertNotEquals(firstAction, secondAction)
+                firstAction.send()
                 withTimeout(5000) { while (present(first)) delay(10) }
                 assertTrue(present(second))
                 assertTrue(performed.any { it["conversationId"] == first && it["origin"] == "system" && it["action"] == mapOf("kind" to "end") })

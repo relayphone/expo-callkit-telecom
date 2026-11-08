@@ -55,7 +55,10 @@ class ConversationEngine(val context: Context) {
         if (current.endJob != null || current.terminal || current.incoming?.intent == null) return
         val id = current.state["id"] as String
         val work = jobs.launch(start = CoroutineStart.LAZY) {
-            try { if (calls[id] === current) finish(id, current.incoming!!.intent!!.payload.reason) }
+            try {
+                current.ready.await()
+                if (calls[id] === current) finish(id, current.incoming!!.intent!!.payload.reason)
+            }
             catch (_: Exception) { if (calls[id] === current) terminal(id, "failed") }
         }
         current.endJob = work
