@@ -17,3 +17,31 @@ Android audio events come from native lifecycle ownership. `audioActivated` foll
 Android advertises `capabilities.tones = false`; `playTones` rejects `unsupported` without a performed event. Preview joining is unsupported on Android; filtered and answered-elsewhere calls terminate and remove their notification. Previews and notification-based preview joins remain iOS-only. Audio routes use canonical `bluetooth` and `other` values.
 
 See the SDK's [iOS and React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/react-native.md) for the shared API and iOS setup.
+
+## Plugin composition and native project upgrades
+
+Configure the fork once; it invokes the SDK's supported iOS plugin:
+
+```ts
+plugins: [
+  ["expo-callkit-telecom", { mediaAdapter: "none", androidNativeMedia: "livekit" }],
+]
+```
+
+When an app also lists the SDK plugin explicitly, the first SDK invocation supplies the iOS
+options, including an invocation made by the fork. The first fork invocation supplies Android
+options. Later duplicate entries keep those choices. Keep shared settings in one fork entry to
+make the platform choices clear. Repeated prebuild preserves one SDK provider, one configured
+call-preview widget and one set of Focus filter sources.
+
+Projects generated with the former iOS provider need clean regeneration. Prebuild reports the
+retired `ExpoCallKitTelecom` integration when it finds its locked pod, generated SDK Git pin or
+old Podfile properties, including widget settings. Commit native customizations, run
+`npx expo prebuild --clean`, then rebuild the development client. Reapply intentional native
+customizations to the regenerated project. This replaces old widget targets, source registrations
+and provider autolinking together. Use the same clean regeneration when upgrading an existing
+Android native project or changing `androidNativeMedia`.
+
+Rebuild installed clients after upgrading the native provider. A client reporting that
+`VoIPConversations` is missing still needs the new native module. The package evaluation checks
+also exercise canonical command errors and route updates through the installed SDK runtime.
