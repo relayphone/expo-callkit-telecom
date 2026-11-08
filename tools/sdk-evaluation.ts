@@ -11,7 +11,7 @@ import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const sdkRevision = "dabaad1589fbc9c5dfc3b4b998bd9cbbe949bfd4";
+export const sdkRevision = "597c39137b51b2537ce60e15e6ecf86d281f5d86";
 const sdkName = "@relayphone/ios-voip-sdk";
 const artifactFile = "sdk-artifact.json";
 
