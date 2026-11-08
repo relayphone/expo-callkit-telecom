@@ -16,6 +16,9 @@ on:
       - 'typedoc.json'
       - 'eslint.config.js'
       - '.github/workflows/v2-typescript.yml'
+      - '.github/workflows/sdk-package.yml'
+      - '.github/actions/sdk-consumer/**'
+      - 'tools/sdk-evaluation*'
   push:
     branches: [v2]
     paths:
@@ -31,6 +34,9 @@ on:
       - 'typedoc.json'
       - 'eslint.config.js'
       - '.github/workflows/v2-typescript.yml'
+      - '.github/workflows/sdk-package.yml'
+      - '.github/actions/sdk-consumer/**'
+      - 'tools/sdk-evaluation*'
 
 permissions:
   contents: read
@@ -40,7 +46,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sdk-package:
+    uses: ./.github/workflows/sdk-package.yml
   typescript:
+    needs: sdk-package
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -50,12 +59,12 @@ jobs:
           bun-version: '1.4.0'
       - uses: actions/setup-node@v6
         with:
-          node-version: '24'
-      - run: bun install --frozen-lockfile
+          node-version: '26'
+      - uses: ./.github/actions/sdk-consumer
       - run: node tools/check-call-identity.mjs
+      - run: bun run build
       - run: bun run test:contracts
       - run: bun run typecheck
       - run: bun run lint
       - run: bun run test -- --runInBand
-      - run: bun run build
       - run: bun run docs:api

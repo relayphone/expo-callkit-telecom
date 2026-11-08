@@ -1,0 +1,39 @@
+name: Pinned SDK package
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubicloud-standard-4
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+      - name: Read the pinned SDK revision
+        id: sdk
+        run: node tools/sdk-evaluation.ts revision >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v6
+        with:
+          repository: relayphone/ios-voip-sdk
+          ref: ${{ steps.sdk.outputs.revision }}
+          path: sdk-source
+          persist-credentials: false
+      - name: Pack the full SDK checkout with prepack
+        run: node tools/sdk-evaluation.ts pack-sdk sdk-source "$RUNNER_TEMP/sdk-package"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: sdk-evaluation-package
+          path: ${{ runner.temp }}/sdk-package/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove temporary SDK sources and archive
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE/sdk-source" "$RUNNER_TEMP/sdk-package"

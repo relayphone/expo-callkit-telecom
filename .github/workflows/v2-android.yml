@@ -3,10 +3,10 @@ name: v2 Android
 on:
   pull_request:
     branches: [v2]
-    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
+    paths: ['tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
   push:
     branches: [v2]
-    paths: ['android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
+    paths: ['tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
 
 permissions:
   contents: read
@@ -15,11 +15,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sdk-package:
+    uses: ./.github/workflows/sdk-package.yml
   emulator:
+    needs: sdk-package
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - uses: ./.github/actions/sdk-consumer
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -76,6 +86,7 @@ jobs:
           if-no-files-found: error
 
   native-bridge:
+    needs: sdk-package
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -85,16 +96,17 @@ jobs:
           bun-version: '1.4.0'
       - uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: '26'
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
-      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/sdk-consumer
       - run: bun run build
-      - run: bun install --frozen-lockfile
-        working-directory: example/client
+      - uses: ./.github/actions/sdk-consumer
+        with:
+          project: example/client
       - run: bunx expo prebuild --platform android --no-install
         working-directory: example/client
         env:

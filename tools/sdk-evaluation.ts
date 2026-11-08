@@ -1,11 +1,17 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const sdkRevision = "d9c6b24bd8c91a287feae71566c3a2658e68a246";
+export const sdkRevision = "dabaad1589fbc9c5dfc3b4b998bd9cbbe949bfd4";
 const sdkName = "@relayphone/ios-voip-sdk";
 const artifactFile = "sdk-artifact.json";
 
@@ -130,6 +136,49 @@ export function readSdkArtifact(
   };
 }
 
+/** Resolves the verified local archive before installation, preserving publishable manifests. */
+export function installSdk(
+  artifactDirectory: string,
+  project: string,
+  expectedRevision = sdkRevision
+): SdkArtifact {
+  const artifact = readSdkArtifact(artifactDirectory, expectedRevision);
+  const manifest = join(project, "package.json");
+  const original = readFileSync(manifest, "utf8");
+  const pkg: unknown = JSON.parse(original);
+  if (!object(pkg)) throw new Error("Invalid consumer package manifest");
+  const archive = `file:${resolve(artifactDirectory, artifact.filename)}`;
+  writeFileSync(
+    manifest,
+    JSON.stringify({
+      ...pkg,
+      dependencies: {
+        ...(object(pkg.dependencies) ? pkg.dependencies : {}),
+        [sdkName]: archive,
+      },
+      overrides: {
+        ...(object(pkg.overrides) ? pkg.overrides : {}),
+        [sdkName]: archive,
+      },
+    })
+  );
+  try {
+    // The existing lock seeds dependency versions; the temporary archive adds no registry lookup.
+    command("bun", ["install", "--no-save"], project, 600_000);
+  } finally {
+    writeFileSync(manifest, original);
+  }
+  const require = createRequire(resolve(manifest));
+  const installed = json(require.resolve(`${sdkName}/package.json`));
+  if (
+    !object(installed) ||
+    installed.name !== sdkName ||
+    installed.version !== artifact.version
+  )
+    throw new Error("Installed SDK version differs from its verified artifact");
+  return artifact;
+}
+
 /** Checks installed public entries and native registration without executing native code. */
 export function inspectInstalledPackages(
   consumer: string,
@@ -153,6 +202,7 @@ export function inspectInstalledPackages(
     );
   }
   require.resolve(sdkName);
+  require.resolve(`${sdkName}/plugin`);
   require.resolve("expo-callkit-telecom");
   for (const name of [sdkName, "expo-callkit-telecom"]) {
     const config = {
@@ -228,6 +278,7 @@ export function checkConsumer(
           react: "19.2.3",
           "react-native": "0.86.3",
           "expo-notifications": "57.0.20",
+          "expo-build-properties": "57.0.21",
         },
         devDependencies: { typescript: "6.0.3", "@types/react": "19.2.14" },
       },
@@ -248,23 +299,9 @@ export function checkConsumer(
     600_000
   );
   const installed = inspectInstalledPackages(consumer, artifact.version);
-  writeFileSync(
-    join(consumer, "consumer.ts"),
-    `
-import { startConversation, setConversationHandler, reportIncomingConversation } from "@relayphone/ios-voip-sdk";
-import type { ConversationHandler, StartConversationOptions, IncomingCallPayload } from "@relayphone/ios-voip-sdk/types";
-import { getConversations as getAndroidConversations } from "expo-callkit-telecom";
-import type { Caller } from "expo-callkit-telecom/types";
-
-const handler: ConversationHandler = { start: async (call, { signal }) => { void call.id; void signal.aborted; } };
-const options: StartConversationOptions = { id: "server-call-id", to: { id: "alice" }, video: false };
-const caller: Caller = { handleType: "generic", value: "alice", displayName: "Alice" };
-const payload: IncomingCallPayload = { eventId: "incoming-event", serverCallId: "server-call-id", caller, hasVideo: false };
-setConversationHandler(handler);
-void startConversation(options);
-void reportIncomingConversation(payload);
-void getAndroidConversations();
-`
+  copyFileSync(
+    join(forkCheckout, "test/fixtures/package-consumer/contract.ts"),
+    join(consumer, "consumer.ts")
   );
   command(
     process.execPath,
@@ -288,6 +325,23 @@ void getAndroidConversations();
   return { sdkRevision: artifact.revision, ...installed };
 }
 
+/** Prepares a small SDK-only Apple provider fixture alongside the installed Android package. */
+export function prepareIosConsumer(consumer: string, fixtures: string) {
+  const path = join(consumer, "package.json");
+  const pkg = json(path);
+  if (!object(pkg)) throw new Error("Invalid consumer package manifest");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      ...pkg,
+      main: "index.ts",
+      expo: { autolinking: { exclude: ["expo-callkit-telecom"] } },
+    })
+  );
+  for (const name of ["app.config.ts", "index.ts"])
+    copyFileSync(join(fixtures, name), join(consumer, name));
+}
+
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
@@ -296,14 +350,27 @@ if (
   if (mode === "revision") console.log(`revision=${sdkRevision}`);
   else if (mode === "pack-sdk" && first && second)
     console.log(JSON.stringify(packSdk(resolve(first), resolve(second))));
-  else if (mode === "check-consumer" && first && second && third) {
-    console.log(
-      JSON.stringify(
-        checkConsumer(resolve(first), resolve(second), resolve(third))
-      )
+  else if (mode === "install-sdk" && first && second)
+    console.log(JSON.stringify(installSdk(resolve(first), resolve(second))));
+  else if (
+    (mode === "check-consumer" || mode === "ios-consumer") &&
+    first &&
+    second &&
+    third
+  ) {
+    const result = checkConsumer(
+      resolve(first),
+      resolve(second),
+      resolve(third)
     );
+    if (mode === "ios-consumer")
+      prepareIosConsumer(
+        resolve(third),
+        resolve(second, "test/fixtures/ios-consumer")
+      );
+    console.log(JSON.stringify(result));
   } else
     throw new Error(
-      "Use revision, pack-sdk SDK_CHECKOUT ARTIFACT_DIRECTORY, or check-consumer ARTIFACT_DIRECTORY FORK_CHECKOUT CONSUMER_DIRECTORY"
+      "Use revision, pack-sdk SDK_CHECKOUT ARTIFACT_DIRECTORY, install-sdk ARTIFACT_DIRECTORY PROJECT, or check-consumer/ios-consumer ARTIFACT_DIRECTORY FORK_CHECKOUT CONSUMER_DIRECTORY"
     );
 }

@@ -18,6 +18,9 @@ on:
       - 'tools/check-android-dnd-study.py'
       - 'tools/aggregate-native-latency.py'
       - '.github/workflows/v2-android-dnd-study.yml'
+      - '.github/workflows/sdk-package.yml'
+      - '.github/actions/sdk-consumer/**'
+      - 'tools/sdk-evaluation*'
   push:
     branches: [v2]
     paths:
@@ -34,6 +37,9 @@ on:
       - 'tools/check-android-dnd-study.py'
       - 'tools/aggregate-native-latency.py'
       - '.github/workflows/v2-android-dnd-study.yml'
+      - '.github/workflows/sdk-package.yml'
+      - '.github/actions/sdk-consumer/**'
+      - 'tools/sdk-evaluation*'
 
 permissions:
   contents: read
@@ -42,7 +48,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sdk-package:
+    uses: ./.github/workflows/sdk-package.yml
   study:
+    needs: sdk-package
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -51,6 +60,13 @@ jobs:
         lane: [platform, native]
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - uses: ./.github/actions/sdk-consumer
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
