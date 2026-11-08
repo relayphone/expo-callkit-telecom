@@ -424,7 +424,10 @@ class ConversationEngine(val context: Context) {
                     launch { controls.availableEndpoints.collect { call.endpoints = it; updateRoutes(id, null) } }
                     launch { controls.currentCallEndpoint.collect { updateRoutes(id, it) } }
                     launch { controls.isMuted.collect { muted ->
-                        if (calls[id] === call && call.state["isMuted"] != muted) mute(id, muted, NativeActionOrigin.SYSTEM)
+                        if (calls[id] === call) {
+                            signal(call, NativeMediaStage.CORE_MUTE_OBSERVED, mapOf("muted" to if (muted) 1L else 0L))
+                            if (call.state["isMuted"] != muted) mute(id, muted, NativeActionOrigin.SYSTEM)
+                        }
                     } }
                         } } catch (error: Exception) {
                             if (error !is CancellationException && calls[id] === call) terminateLater(id, "failed")

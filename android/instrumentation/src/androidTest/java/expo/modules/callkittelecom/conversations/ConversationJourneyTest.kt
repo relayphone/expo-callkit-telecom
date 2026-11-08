@@ -229,6 +229,11 @@ class ConversationJourneyTest {
             val events = mutableListOf<Map<String, Any?>>()
             val order = mutableListOf<String>()
             val id = "raw/電話 ${System.nanoTime()}"
+            val muteObserved = CompletableDeferred<Unit>()
+            val muteObserver = NativeMediaObserver { signal ->
+                if (signal.serverCallId == id && signal.stage == NativeMediaStage.CORE_MUTE_OBSERVED &&
+                    signal.measurements["muted"] == 1L) muteObserved.complete(Unit)
+            }
             engine.nativeMedia = AndroidNativeMedia.NONE
             engine.actions.resetBridge()
             engine.emit = { name, body ->
@@ -255,8 +260,10 @@ class ConversationJourneyTest {
                 engine.report(id, mapOf("type" to "connected"))
                 engine.hold(id, true); engine.hold(id, true)
                 engine.hold(id, false)
+                NativeMediaSignals.observers += muteObserver
                 engine.mute(id, true)
                 assertTrue(audio.isMicrophoneMute)
+                withTimeout(3000) { muteObserved.await() }
                 // Drive the platform state and observe Core-Telecom's system callback.
                 audio.isMicrophoneMute = false
                 withTimeout(3000) {
@@ -274,6 +281,7 @@ class ConversationJourneyTest {
                     "origin" to if (index == 4) "system" else "app", "action" to action) }, events)
                 awaitTelecomRemoval()
             } finally {
+                NativeMediaSignals.observers -= muteObserver
                 runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
                 engine.emit = previous; engine.nativeMedia = selection; engine.actions.resetBridge()
                 audio.isMicrophoneMute = previousMuted
