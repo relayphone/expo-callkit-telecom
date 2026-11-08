@@ -132,7 +132,7 @@ With custom sounds and options:
 }
 ```
 
-Files in `sounds` are copied into the iOS bundle and Android raw resources at prebuild time. The full prop type is `ExpoCallKitTelecomPluginProps` in `plugin/src/`.
+Files in `sounds` are copied into the iOS bundle and Android raw resources at prebuild time. The full prop type is `ComposedPluginProps` in [plugin/src/composedPlugin.ts](plugin/src/composedPlugin.ts).
 
 On iOS, the plugin passes these options to LiveCommunicationKit's `ConversationManager.Configuration`:
 
