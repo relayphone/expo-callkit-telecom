@@ -11,5 +11,5 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["tools/android-emulator-executor*.ts"]
+  "include": ["tools/android-emulator-executor*.ts", "tools/gradle-wrapper-timeout*.ts"]
 }

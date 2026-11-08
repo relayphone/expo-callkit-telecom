@@ -3,10 +3,10 @@ name: v2 Android
 on:
   pull_request:
     branches: [v2]
-    paths: ['tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
   push:
     branches: [v2]
-    paths: ['tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
 
 permissions:
   contents: read
@@ -111,6 +111,7 @@ jobs:
         working-directory: example/client
         env:
           CI: '1'
+      - run: node tools/gradle-wrapper-timeout.ts example/client/android
       - run: ./gradlew :expo-callkit-telecom:compileDebugKotlin --no-daemon --max-workers=2 --stacktrace
         working-directory: example/client/android
       # The example leaves out the LiveKit media engine; compile the module with it as well.
