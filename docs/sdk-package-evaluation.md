@@ -1,11 +1,10 @@
-# Evaluate the SDK package before its npm release
+# Evaluate the SDK package before its release
 
-The SDK's iOS Expo package is not published yet. Each consuming workflow packs a full
+The SDK is currently consumed from a pinned archive. Each consuming workflow packs a full
 `relayphone/ios-voip-sdk` checkout at the revision in `tools/sdk-evaluation.ts`, then installs that
 archive before building its source checkouts. The package evaluation workflow also installs both
 packages' tarballs in a separate consumer directory. The root package
-continues to expose its current API; this check prepares dependency installation without changing
-the native interface or composing the packages yet.
+re-exports the SDK's canonical API, with the SDK providing iOS and this package providing Android.
 
 Use Node.js 26 and a clean, full SDK checkout at the pinned revision. From this repository:
 
@@ -31,11 +30,16 @@ fails, and does not change the checked-in lockfile. No unpublished SDK registry 
 
 The consumer resolves both installed package entries, invokes both supported config plugin entries,
 checks their native module registration metadata, requires a single installed SDK version, and
-compiles a TypeScript consumer against the public root, `types` and SDK `plugin` exports. It uses
+compiles a TypeScript consumer against the public root, `types` and SDK `plugin` exports. A runtime
+fixture then loads both installed public roots with fake native and React boundaries. It verifies
+shared SDK function identity, raw IDs, sanitized canonical errors, Bluetooth/other route updates,
+and Android's absent preview/Focus state. Route and untyped-error fault controls must fail this
+fixture. It uses
 pinned Expo 57, React 19.2.3 and React Native 0.86.3 dependencies. Host checks do not execute React
 Native modules in Node. CI also builds a thin iOS consumer from both installed tarballs, using only
 the SDK's Apple module and plugin; the legacy package is excluded from that fixture's autolinking.
-The existing example retains its current provider and interface.
+The example uses the same composed provider and canonical interface.
 
-These are evaluation tarballs, not releases. The SDK's release and license policy must be resolved
-before publishing a dependency on it; do not commit temporary tarballs or local file dependencies.
+Tagged SDK and fork releases will be distributed as GitHub release assets. The pinned archive
+flow remains in place until the SDK release is available. Keep temporary tarballs and local file
+dependencies outside publishable manifests.
