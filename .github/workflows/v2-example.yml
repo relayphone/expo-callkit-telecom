@@ -3,10 +3,10 @@ name: v2 example
 on:
   pull_request:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/android-journey*', 'tools/package.json', 'tsconfig.executor.json', 'tsconfig.journeys.json', '.github/workflows/v2-example.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/android-journey*', 'tools/package.json', 'tsconfig.executor.json', 'tsconfig.journeys*.json', '.github/workflows/v2-example.yml']
   push:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/android-journey*', 'tools/package.json', 'tsconfig.executor.json', 'tsconfig.journeys.json', '.github/workflows/v2-example.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/android-journey*', 'tools/package.json', 'tsconfig.executor.json', 'tsconfig.journeys*.json', '.github/workflows/v2-example.yml']
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
-      - run: node --test tools/android-emulator-executor.test.ts tools/gradle-wrapper-timeout.test.ts tools/android-journey*.test.ts example/client/journeys/android-drive.test.ts
+      - run: node --test tools/android-emulator-executor.test.ts tools/gradle-wrapper-timeout.test.ts tools/android-journey*.test.ts
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -41,6 +41,7 @@ jobs:
       - run: node_modules/.bin/tsc -p tsconfig.executor.json
       - run: bun run build
       - run: node node_modules/typescript/bin/tsc -p tsconfig.journeys.json
+      - run: node node_modules/typescript/bin/tsc -p tsconfig.journeys-app.json
       - run: node tools/android-journey-project.ts package "$RUNNER_TEMP/journey-package"
       - uses: ./.github/actions/sdk-consumer
         with:

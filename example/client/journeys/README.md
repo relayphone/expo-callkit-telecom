@@ -27,3 +27,6 @@ media hold controls, cold/system actions, duplicate/end races and the 1000 ms re
 `android-journey-results.test.ts` exercises the result oracle with intentional identity,
 ordering, handler, state, report, notification and warmup failures. The older example smoke
 also remains in CI to cover actual bridge rejection and placement-deadline behavior.
+
+Node tests live under `tools/`. `tsconfig.journeys-app.json` also checks journey sources
+with the example's compiler settings before the native build.

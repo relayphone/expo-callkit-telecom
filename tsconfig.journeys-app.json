@@ -1,0 +1,5 @@
+{
+  "extends": "./example/client/tsconfig.json",
+  "include": ["example/client/journeys/*.ts"],
+  "exclude": []
+}

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { driveAndroidJourney, newAndroidResults } from "./android-drive.ts";
-import type { JourneyApi } from "./android-results.ts";
+import {
+  driveAndroidJourney,
+  newAndroidResults,
+} from "../example/client/journeys/android-drive.ts";
+import type { JourneyApi } from "../example/client/journeys/android-results.ts";
 
 function fakeApi(): JourneyApi {
   return {
