@@ -240,8 +240,12 @@ export function inspectInstalledPackages(
   ) {
     throw new Error("Android module registration is missing");
   }
-  if (!object(fork.exports) || !object(fork.exports["./types"]) ||
-      typeof fork.exports["./types"].types !== "string" || "default" in fork.exports["./types"])
+  if (
+    !object(fork.exports) ||
+    !object(fork.exports["./types"]) ||
+    typeof fork.exports["./types"].types !== "string" ||
+    "default" in fork.exports["./types"]
+  )
     throw new Error("The types entry must be type-only");
   const installations = new Set(
     command("npm", ["ls", sdkName, "--all", "--parseable"], consumer)
@@ -308,6 +312,10 @@ export function checkConsumer(
     join(forkCheckout, "test/fixtures/package-consumer/contract.ts"),
     join(consumer, "consumer.ts")
   );
+  copyFileSync(
+    join(forkCheckout, "test/fixtures/package-consumer/runtime.test.ts"),
+    join(consumer, "runtime.test.ts")
+  );
   command(
     process.execPath,
     [
@@ -322,11 +330,13 @@ export function checkConsumer(
       "--moduleResolution",
       "bundler",
       "--types",
-      "react",
+      "react,node",
       "consumer.ts",
+      "runtime.test.ts",
     ],
     consumer
   );
+  command(process.execPath, ["--test", "runtime.test.ts"], consumer);
   return { sdkRevision: artifact.revision, ...installed };
 }
 
