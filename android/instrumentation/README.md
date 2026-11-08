@@ -10,3 +10,8 @@ pinned commit in ios-voip-sdk.
 CI runs `gradle -p android/instrumentation connectedDebugAndroidTest` on an API 35
 Google APIs x86_64 emulator with KVM, and retains machine-checked JUnit results.
 The Expo bridge/example integration is a separate gate from this native seam.
+
+The exploratory DND study and its measurements are preserved on
+[`archive/android-telecom-research`](https://github.com/relayphone/expo-callkit-telecom/tree/archive/android-telecom-research).
+The active suite keeps `DndMatrixTest` for functional filtering and
+`DndWarmCleanupTest` for teardown of prewarmed media after a policy change.
