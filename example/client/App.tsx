@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button, Linking, PermissionsAndroid, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { runJourney } from "./journey";
+import { runAndroidJourney } from "./journeys/android";
 
 // Attach before React mounts. The example accepts local signaling without a media server.
 setConversationHandler({ start() {} });
@@ -39,6 +40,10 @@ export default function App() {
   useEffect(() => {
     const run = (url: string | null) => {
       if (url === "conversations-example://journey") void perform(runJourney);
+      if (Platform.OS === "android" && url?.startsWith("conversations-example://android-journey?")) {
+        const runID = new URL(url).searchParams.get("runID");
+        if (runID) void perform(() => runAndroidJourney(runID));
+      }
     };
     void Linking.getInitialURL().then(run);
     const subscription = Linking.addEventListener("url", ({ url }) => run(url));

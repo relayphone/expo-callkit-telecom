@@ -19,7 +19,8 @@ config.resolver.nodeModulesPaths = [
 ];
 
 config.resolver.extraNodeModules = {
-  'expo-callkit-telecom': path.resolve(__dirname, '../..'),
+  'expo-callkit-telecom': process.env.ANDROID_JOURNEY_PACKED === '1'
+    ? path.resolve(__dirname, 'node_modules/expo-callkit-telecom') : path.resolve(__dirname, '../..'),
 };
 
 config.watchFolders = [path.resolve(__dirname, '../..')];

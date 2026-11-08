@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.executor.json",
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "paths": { "expo-callkit-telecom": ["./src/index.ts"] }
+  },
+  "include": ["tools/android-journey*.ts", "example/client/journeys/*.ts"]
+}
