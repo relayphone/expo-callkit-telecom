@@ -30,3 +30,8 @@ also remains in CI to cover actual bridge rejection and placement-deadline behav
 
 Node tests live under `tools/`. `tsconfig.journeys-app.json` also checks journey sources
 with the example's compiler settings before the native build.
+
+The test APK also checks decoded notification URI identity with Android's actual URI
+construction, including unrelated callers, packages, fragments and double encoding.
+The host requires both instrumentation tests to pass. A failed checkpoint retains its
+latest sanitized native, Telecom and notification observation.

@@ -14,6 +14,7 @@ import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.*
 import org.json.JSONObject
+import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -57,6 +58,29 @@ class AndroidBridgeJourneyTest {
         val call = (callsField.get(engine) as Map<*, *>)[id] ?: error("Missing native identity")
         val ready = call.javaClass.getDeclaredField("ready").apply { isAccessible = true }.get(call) as Deferred<*>
         return (ready.await() as CallControlScope).getCallId().toString()
+    }
+
+    private fun notificationIdentity(value: String?, id: String): String? {
+        val uri = value?.let(Uri::parse) ?: return null
+        return if (uri.fragment == null && when (uri.scheme) {
+            "sip" -> uri.schemeSpecificPart == id
+            "voip" -> uri.schemeSpecificPart == "${context.packageName}/$id"
+            else -> false
+        }) id else "unmatched"
+    }
+
+    @Test fun notificationIdentityUsesDecodedUriComponents() {
+        val id = "raw:/?#+"
+        for (uri in listOf(Uri.fromParts("sip", id, null),
+            Uri.fromParts("voip", "${context.packageName}/$id", null))) {
+            assertEquals(id, notificationIdentity(uri.toString(), id))
+            assertEquals("unmatched", notificationIdentity(uri.toString(), "$id-other"))
+            assertEquals("unmatched", notificationIdentity("$uri#fragment", id))
+        }
+        assertEquals("run-outgoing", notificationIdentity("voip:${context.packageName}%2Frun-outgoing", "run-outgoing"))
+        assertEquals("unmatched", notificationIdentity(Uri.fromParts("voip", "other.package/$id", null).toString(), id))
+        assertEquals("unmatched", notificationIdentity("voip:${context.packageName}%252Frun-outgoing", "run-outgoing"))
+        assertNull(notificationIdentity(null, id))
     }
 
     @Test fun productionPushAndJavaScriptJourneys() = runBlocking {
@@ -149,15 +173,15 @@ class AndroidBridgeJourneyTest {
                     notifications = active.size
                     val notification = active.singleOrNull()?.notification
                     val uri = notification?.extras?.getParcelable("android.callPerson", android.app.Person::class.java)?.uri
-                    notificationID = when (uri) {
-                        "sip:$id", "voip:${context.packageName}/$id" -> id
-                        null -> null
-                        else -> "unmatched"
-                    }
+                    notificationID = notificationIdentity(uri, id)
                     val callStyle = notification?.extras?.getString("android.template") == "android.app.Notification\$CallStyle"
                     val expectedID = platformIDs[id]
                     val platformMatches = if (status == "absent") platform.isEmpty()
                         else platform == listOf(expectedID to telecom)
+                    result["observation"] = mapOf("step" to step, "nativeStatus" to nativeStatus,
+                        "platformStates" to platform.map { it.second }, "platformMatches" to platformMatches,
+                        "notifications" to notifications, "notificationIdentityMatches" to (notificationID == id),
+                        "callStyle" to callStyle)
                     nativeStatus == status && platformMatches && notifications == (if (status == "absent") 0 else 1) &&
                         (status == "absent" || (notificationID == id && callStyle))
                 }

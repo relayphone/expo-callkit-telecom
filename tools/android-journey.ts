@@ -84,7 +84,7 @@ export function runAndroidJourney(
       }
     }
     if (
-      !/OK \(1 test\)/.test(instrumentation) ||
+      !/OK \(2 tests\)/.test(instrumentation) ||
       /FAILURES|INSTRUMENTATION_FAILED|Process crashed/.test(instrumentation)
     )
       throw new Error("Example instrumentation did not pass");
