@@ -396,7 +396,12 @@ class ConversationEngine(val context: Context) {
                     onSetActive = { withTimeout(4500) { check(call.permitted.await()); if (calls[id] === call) hold(id, false, NativeActionOrigin.SYSTEM) } },
                     onSetInactive = { withTimeout(4500) { if (calls[id] === call) hold(id, true, NativeActionOrigin.SYSTEM) } }) {
                     if (calls[id] !== call || !identities.isCurrent(call.reservation) || call.terminal) {
-                        withContext(NonCancellable) { checked(disconnect(DisconnectCause(DisconnectCause.LOCAL))) }
+                        launch(start = CoroutineStart.UNDISPATCHED) {
+                            withContext(NonCancellable) {
+                                checked(disconnect(DisconnectCause(DisconnectCause.LOCAL)))
+                                signal(call, NativeMediaStage.CORE_LATE_DISCONNECTED)
+                            }
+                        }
                         return@addCall
                     }
                     call.admitted = true

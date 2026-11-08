@@ -292,6 +292,53 @@ class ConversationJourneyTest {
         }
     }
 
+    @Test fun aCallEndedBeforeAdmissionDisconnectsItsLateCoreScope(): Unit = runBlocking {
+        withContext(Dispatchers.Main) {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val engine = ConversationEngine.get(context)
+            val previous = engine.emit; val selection = engine.nativeMedia
+            val id = "late-admission-${System.nanoTime()}"
+            val baselineJobs = engine.jobs.coroutineContext[Job]!!.children.toSet()
+            val endedBeforeAdmission = CompletableDeferred<Unit>()
+            val terminal = CompletableDeferred<Unit>()
+            val lateDisconnected = CompletableDeferred<Unit>()
+            var admitted = false
+            val observer = NativeMediaObserver { signal ->
+                if (signal.serverCallId == id && signal.stage == NativeMediaStage.CORE_ADD_REQUESTED) {
+                    engine.jobs.launch(start = CoroutineStart.UNDISPATCHED) {
+                        engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+                        endedBeforeAdmission.complete(Unit)
+                    }
+                }
+                if (signal.serverCallId == id && signal.stage == NativeMediaStage.CORE_ADMITTED) admitted = true
+                if (signal.serverCallId == id && signal.stage == NativeMediaStage.CORE_LATE_DISCONNECTED) lateDisconnected.complete(Unit)
+            }
+            engine.nativeMedia = AndroidNativeMedia.NONE; engine.actions.resetBridge()
+            engine.emit = { name, body ->
+                if (name == "conversationsChanged" && (body["conversations"] as List<*>).any {
+                    (it as Map<*, *>)["id"] == id && it["status"] == "ended"
+                }) terminal.complete(Unit)
+            }
+            NativeMediaSignals.observers += observer
+            try {
+                val outcome = withTimeout(6000) { engine.incoming(mapOf("eventId" to id, "serverCallId" to id,
+                    "caller" to mapOf("handleType" to "generic", "value" to "peer"), "hasVideo" to false)) }
+                withTimeout(6000) {
+                    endedBeforeAdmission.await(); terminal.await(); lateDisconnected.await()
+                    while (engine.jobs.coroutineContext[Job]!!.children.any { it !in baselineJobs && it.isActive } ||
+                        TelecomEvidence.calls().isNotEmpty()) delay(10)
+                }
+                assertEquals("failed", outcome["status"])
+                assertFalse(admitted)
+                assertFalse((engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id })
+            } finally {
+                NativeMediaSignals.observers -= observer
+                runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
+                engine.emit = previous; engine.nativeMedia = selection; engine.actions.resetBridge()
+            }
+        }
+    }
+
     @Test fun collidingRawIdsHaveIndependentNotificationActions(): Unit = runBlocking {
         withContext(Dispatchers.Main) {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
