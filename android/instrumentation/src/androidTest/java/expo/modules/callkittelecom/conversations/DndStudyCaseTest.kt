@@ -27,6 +27,7 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -170,8 +171,17 @@ class DndStudyCaseTest {
         DndObservationService.observations.remove(label)
         val ringtone = AtomicBoolean(false)
         val ringing = AtomicBoolean(false)
+        val playbackCallbackCount = AtomicInteger(0)
+        fun playbackDiagnostics(): Map<String, Any> = runCatching {
+            mapOf("capturedNanos" to SystemClock.elapsedRealtimeNanos(),
+                "callbackCount" to playbackCallbackCount.get(),
+                "activeUsages" to audio.activePlaybackConfigurations.map { it.audioAttributes.usage },
+                "ringStreamMuted" to audio.isStreamMute(AudioManager.STREAM_RING),
+                "audioMode" to audio.mode)
+        }.getOrElse { mapOf("unavailable" to it.javaClass.simpleName) }
         val playback = object : AudioManager.AudioPlaybackCallback() {
             override fun onPlaybackConfigChanged(configs: List<AudioPlaybackConfiguration>) {
+                playbackCallbackCount.incrementAndGet()
                 if (configs.any { it.audioAttributes.usage == AudioAttributes.USAGE_NOTIFICATION_RINGTONE }) ringtone.set(true)
             }
         }
@@ -264,6 +274,7 @@ class DndStudyCaseTest {
             }
             assertEquals("Actual ringtone playback within the observed window", expected, ringtone.get())
             if (expected) assertTrue(audio.getStreamVolume(AudioManager.STREAM_RING) > 0)
+            val playbackAtObservationEnd = playbackDiagnostics()
             val volume = audio.getStreamVolume(AudioManager.STREAM_RING)
             val ringerMode = audio.ringerMode
             val channel = checkNotNull(manager.getNotificationChannel(ConversationService.incomingChannelId(context))) {
@@ -289,6 +300,7 @@ class DndStudyCaseTest {
                     "personUri" to it.personUri, "personKey" to it.personKey,
                     "channelBypass" to it.channelBypass, "importance" to it.importance) },
                 "ringtonePlaybackObserved" to ringtone.get(), "playbackObservationMs" to observedMs,
+                "playbackDiagnostics" to playbackAtObservationEnd,
                 "ringVolume" to volume, "ringerMode" to ringerMode,
                 "channelBypass" to channel.canBypassDnd(), "channelImportance" to channel.importance,
                 "channelSoundConfigured" to (channel.sound != null),
@@ -304,8 +316,11 @@ class DndStudyCaseTest {
                     "policy" to effectivePolicy, "coreAdmitted" to if (admitted || signals.any { it.stage == NativeMediaStage.CORE_ADMITTED }) true else null,
                     "coreRingingObserved" to if (ringing.get()) true else null,
                     "notificationAllowed" to lastRanking?.matchesFilter,
+                    "notificationSoundConfigured" to lastRanking?.soundConfigured,
+                    "notificationImportance" to lastRanking?.importance,
                     "notificationPersonUri" to lastRanking?.personUri, "notificationPersonKey" to lastRanking?.personKey,
                     "ringtonePlaybackObserved" to ringtone.get(), "nativeOutcome" to nativeOutcome,
+                    "playbackDiagnostics" to playbackDiagnostics(),
                     "playbackObservationMs" to (SystemClock.elapsedRealtimeNanos() - observationStart) / 1_000_000,
                     "nativeHookCount" to if (lane == "native") outcomes.size else null,
                     "listenerConnected" to DndObservationService.connected,
