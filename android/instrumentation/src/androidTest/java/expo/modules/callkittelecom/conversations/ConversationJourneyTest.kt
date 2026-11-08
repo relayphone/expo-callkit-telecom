@@ -17,6 +17,10 @@ class ConversationJourneyTest {
     @get:Rule val permissions = GrantPermissionRule.grant(Manifest.permission.RECORD_AUDIO,
         Manifest.permission.POST_NOTIFICATIONS)
 
+    private suspend fun awaitTelecomRemoval() = withTimeout(5000) {
+        while (TelecomEvidence.calls().isNotEmpty()) delay(10)
+    }
+
     @Test fun incomingAndOutgoingJourney() = runBlocking {
         withContext(Dispatchers.Main) {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -208,6 +212,7 @@ class ConversationJourneyTest {
                 val end = ended.first { it["id"] == id }["ended"] as Map<*, *>
                 assertEquals("failed", end["reason"])
                 assertEquals(mapOf("kind" to "connectTimedOut"), end["failure"])
+                awaitTelecomRemoval()
             } finally { engine.answerTimeoutMillis = previous }
         }
     }
@@ -231,7 +236,7 @@ class ConversationJourneyTest {
             }
             try {
                 val payload = mapOf("eventId" to id, "serverCallId" to id,
-                    "caller" to mapOf("handleType" to "generic", "value" to "peer"), "hasVideo" to false)
+                    "caller" to mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), "hasVideo" to false)
                 val first = async(start = CoroutineStart.UNDISPATCHED) { engine.incoming(payload) }
                 val duplicate = async(start = CoroutineStart.UNDISPATCHED) { engine.incoming(payload + ("eventId" to "duplicate-$id")) }
                 val firstOutcome = first.await(); val duplicateOutcome = duplicate.await()
@@ -252,7 +257,7 @@ class ConversationJourneyTest {
                     mapOf("kind" to "mute", "muted" to false), mapOf("kind" to "end"))
                 assertEquals(actions.mapIndexed { index, action -> mapOf("conversationId" to id,
                     "origin" to if (index == 4) "system" else "app", "action" to action) }, events)
-                assertTrue(TelecomEvidence.calls().isEmpty())
+                awaitTelecomRemoval()
             } finally {
                 runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
                 engine.emit = previous; engine.nativeMedia = selection; engine.actions.resetBridge()
@@ -263,6 +268,7 @@ class ConversationJourneyTest {
     @Test fun slowPlacementPrecedesTelecomAndAdvertisesNineSeconds(): Unit = runBlocking {
         withContext(Dispatchers.Main) {
             val engine = ConversationEngine.get(InstrumentationRegistry.getInstrumentation().targetContext)
+            awaitTelecomRemoval()
             val previous = engine.emit
             val id = "slow/${System.nanoTime()}"
             val deliveries = mutableListOf<Map<String, Any?>>()
@@ -287,6 +293,7 @@ class ConversationJourneyTest {
                 assertEquals(id, withTimeout(10_000) { pending.await() })
                 assertFalse(TelecomEvidence.calls().isEmpty())
                 engine.end(id)
+                awaitTelecomRemoval()
             } finally {
                 pending.cancelAndJoin()
                 runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
@@ -326,8 +333,9 @@ class ConversationJourneyTest {
             NativeMediaSignals.observers += observer
             try {
                 val outcome = withTimeout(6000) { engine.incoming(mapOf("eventId" to id, "serverCallId" to id,
-                    "caller" to mapOf("handleType" to "generic", "value" to "peer"), "hasVideo" to false)) }
+                    "caller" to mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), "hasVideo" to false)) }
                 assertEquals("Early incoming: $outcome", "failed", outcome["status"])
+                assertEquals("Early incoming: $outcome", "conversation", (outcome["error"] as Map<*, *>)["code"])
                 try {
                     withTimeout(6000) {
                         endedBeforeAdmission.await().getOrThrow(); terminal.await(); lateDisconnected.await()
