@@ -2,6 +2,7 @@ package expo.modules.callkittelecom.conversations
 
 import android.content.Context
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -38,11 +39,16 @@ internal class NativeMediaController(private val context: Context, private val p
     private var unmuteJob: Job? = null
     private var resumeJob: Job? = null
     @Volatile private var closed = false
+    private val closing = AtomicBoolean()
     @Volatile private var desiredMuted = false
     @Volatile private var activated = false
     @Volatile private var activating = false
     @Volatile private var held = false
     private var retried = false
+
+    init {
+        lifetime.invokeOnCompletion { close("cancelled") }
+    }
 
     @Suppress("UNCHECKED_CAST")
     private suspend fun prepare() = serial.withLock {
@@ -168,7 +174,7 @@ internal class NativeMediaController(private val context: Context, private val p
         }
     }
     fun close(reason: String) {
-        if (closed) return
+        if (!closing.compareAndSet(false, true)) return
         closed = true
         lifetime.cancel()
         // Independent cleanup ownership is intentional; no cancelled parent can skip it.
