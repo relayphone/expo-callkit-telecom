@@ -1,6 +1,7 @@
 package expo.modules.callkittelecom.conversations
 
 import android.Manifest
+import android.media.AudioManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
@@ -219,7 +220,11 @@ class ConversationJourneyTest {
 
     @Test fun canonicalNativeActionsNeedNoHandlerAndEndPublishesInOrder(): Unit = runBlocking {
         withContext(Dispatchers.Main) {
-            val engine = ConversationEngine.get(InstrumentationRegistry.getInstrumentation().targetContext)
+            awaitTelecomRemoval()
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val engine = ConversationEngine.get(context)
+            val audio = context.getSystemService(AudioManager::class.java)
+            val previousMuted = audio.isMicrophoneMute
             val previous = engine.emit; val selection = engine.nativeMedia
             val events = mutableListOf<Map<String, Any?>>()
             val order = mutableListOf<String>()
@@ -235,6 +240,8 @@ class ConversationJourneyTest {
                 }
             }
             try {
+                audio.isMicrophoneMute = false
+                assertFalse(audio.isMicrophoneMute)
                 val payload = mapOf("eventId" to id, "serverCallId" to id,
                     "caller" to mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), "hasVideo" to false)
                 val first = async(start = CoroutineStart.UNDISPATCHED) { engine.incoming(payload) }
@@ -248,7 +255,15 @@ class ConversationJourneyTest {
                 engine.report(id, mapOf("type" to "connected"))
                 engine.hold(id, true); engine.hold(id, true)
                 engine.hold(id, false)
-                engine.mute(id, true); engine.mute(id, false, NativeActionOrigin.SYSTEM)
+                engine.mute(id, true)
+                assertTrue(audio.isMicrophoneMute)
+                // Drive the platform state and observe Core-Telecom's system callback.
+                audio.isMicrophoneMute = false
+                withTimeout(3000) {
+                    while (events.none { it["origin"] == "system" &&
+                        it["action"] == mapOf("kind" to "mute", "muted" to false) }) delay(10)
+                }
+                assertFalse(audio.isMicrophoneMute)
                 assertEquals("unsupported", runCatching { engine.tones(id, "123") }.exceptionOrNull()?.message)
                 engine.end(id)
                 assertEquals(listOf("ended", "performed-end", "empty"), order.takeLast(3))
@@ -261,6 +276,7 @@ class ConversationJourneyTest {
             } finally {
                 runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
                 engine.emit = previous; engine.nativeMedia = selection; engine.actions.resetBridge()
+                audio.isMicrophoneMute = previousMuted
             }
         }
     }
