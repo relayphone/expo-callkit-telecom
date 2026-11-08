@@ -33,11 +33,11 @@ class AnsweredElsewhereOwnershipTest {
             val engine = ConversationEngine.get(context)
             val oldPolicy = engine.policy; val oldEmitter = engine.emit
             val key = "elsewhere-answer-${SystemClock.elapsedRealtime()}"
-            val id = CallIdentity.forServerCallId(key).toString()
+            val id = key
             val observations = mutableListOf<NativeMediaSignal>()
             val endReceived = CompletableDeferred<Unit>()
             var joining: Deferred<Result<Unit>>? = null
-            var settledJoin = false; var pendingCoreAnswer = false; var accepted = false
+            var pendingCoreAnswer = false; var accepted = false
             var endNanos = 0L; var events = 0; var handlers = 0; var warmups = 0
             engine.policy = JSONObject(mapOf("type" to "handler", "prewarm" to false))
             engine.actions.resetBridge(); engine.actions.attach(true, 1, engine.actions.epoch)
@@ -45,7 +45,6 @@ class AnsweredElsewhereOwnershipTest {
                 if (name == "handlerAction") {
                     if (body["kind"] == "join") {
                         engine.actions.settle(body["actionID"] as String, body["generation"] as Int, true, engine.actions.epoch)
-                        settledJoin = true
                     } else handlers++
                 }
                 if (name == "conversationEvent" && body["type"] == "answeredElsewhere") events++
@@ -56,7 +55,7 @@ class AnsweredElsewhereOwnershipTest {
                     if (observation.stage == NativeMediaStage.ANSWER_REQUESTED && endNanos == 0L) {
                         // Handler delivery is posted; this must run after synchronous JS acceptance
                         // while the actual Core answer RPC is still awaiting its result.
-                        pendingCoreAnswer = settledJoin && joining?.isCompleted == false
+                        pendingCoreAnswer = joining?.isCompleted == false
                         endNanos = SystemClock.elapsedRealtimeNanos()
                         accepted = engine.receiveCallEnded(ended(key))
                         endReceived.complete(Unit)
@@ -71,7 +70,7 @@ class AnsweredElsewhereOwnershipTest {
                 val initialWarmups = warmups
                 joining = async { runCatching { engine.join(id) } }
                 withTimeout(3000) { endReceived.await() }
-                assertTrue("The regression must actually interrupt a settled handler's pending Core answer", pendingCoreAnswer)
+                assertTrue("The regression must actually interrupt a pending native Core answer", pendingCoreAnswer)
                 assertTrue(accepted)
                 assertTrue("The cancelled native answer continuation must reject", withTimeout(3000) { joining!!.await() }.isFailure)
                 removed(engine, id)
@@ -98,7 +97,7 @@ class AnsweredElsewhereOwnershipTest {
             val engine = ConversationEngine.get(context)
             val oldPolicy = engine.policy; val oldEmitter = engine.emit
             val key = "elsewhere-admission-${SystemClock.elapsedRealtime()}"
-            val id = CallIdentity.forServerCallId(key).toString()
+            val id = key
             val admitted = CompletableDeferred<Long>()
             var receivedNanos = 0L; var acceptedNanos = 0L
             var accepted = false; var events = 0; var handlers = 0; var warmups = 0
@@ -155,7 +154,7 @@ class AnsweredElsewhereOwnershipTest {
             val oldFilter = NativeIncomingFilters.evaluate
             val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
             val key = "elsewhere-inflight-${SystemClock.elapsedRealtime()}"
-            val id = CallIdentity.forServerCallId(key).toString()
+            val id = key
             var warmups = 0; var events = 0; var handlerCalls = 0
             engine.policy = JSONObject(mapOf("type" to "handler", "prewarm" to false))
             engine.actions.resetBridge(); engine.actions.attach(true, 1, engine.actions.epoch)
@@ -192,7 +191,7 @@ class AnsweredElsewhereOwnershipTest {
             val key = "elsewhere-connected-${SystemClock.elapsedRealtime()}"
             val signal = ended(key)
             val laterSignal = signal + ("eventId" to "later-$key") + ("reason" to "remoteEnded")
-            val id = CallIdentity.forServerCallId(key).toString()
+            val id = key
             var terminalSeen = false; var events = 0; var joins = 0; var ends = 0
             var laterAccepted = false
             engine.policy = JSONObject(mapOf("type" to "handler", "prewarm" to false))
@@ -241,7 +240,7 @@ class AnsweredElsewhereOwnershipTest {
                 })
                 assertTrue(engine.receiveCallEnded(signal))
                 removed(engine, id)
-                assertTrue(terminalSeen); assertEquals(1, events); assertEquals(1, joins); assertEquals(0, ends)
+                assertTrue(terminalSeen); assertEquals(1, events); assertEquals(0, joins); assertEquals(0, ends)
                 assertTrue(laterAccepted); assertFalse(engine.receiveCallEnded(laterSignal))
             } finally {
                 if (present(engine, id)) runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }

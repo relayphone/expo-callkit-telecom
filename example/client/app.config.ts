@@ -53,7 +53,7 @@ const config: ExpoConfig = {
         defaultRingtoneIos: "ringtone.wav",
         defaultRingtoneAndroid: "ringtone.wav",
         iconTemplateIos: "./assets/callkit-icon.png",
-        joinPolicy: { type: "handler" },
+        androidNativeMedia: "none",
         // Debug builds present calls in the iOS Simulator.
         simulator: true,
         // A call that a Focus filters becomes a call preview with a call notification, shown as a

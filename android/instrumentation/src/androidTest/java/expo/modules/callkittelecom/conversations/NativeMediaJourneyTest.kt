@@ -53,6 +53,7 @@ class NativeMediaJourneyTest {
     private fun journey(provider: String, sources: List<String>, benchmarkSample: Int? = null) = runBlocking {
         withContext(Dispatchers.Main) {
             val engine = ConversationEngine.get(context)
+            val previousMedia = engine.nativeMedia
             val previousPolicy = engine.policy
             val previousTimeout = engine.incomingTimeoutMillis
             val previousEmitter = engine.emit
@@ -75,6 +76,7 @@ class NativeMediaJourneyTest {
             NativeMediaAuthenticationProviders.providers["fixture"] = {
                 NativeMediaAuthentication(settings.getString("authentication"), "fixture-device")
             }
+            engine.nativeMedia = AndroidNativeMedia.LIVEKIT
             engine.policy = JSONObject(mapOf("type" to "native", "media" to provider, "credentials" to "fromPush",
                 "fallback" to mapOf("type" to "http", "baseUrl" to settings.getString("baseUrl"), "authentication" to "fixture")))
             engine.actions.resetBridge()
@@ -307,7 +309,7 @@ class NativeMediaJourneyTest {
                 for (id in owned) runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "failed")) }
                 NativeMediaSignals.observers -= observer
                 NativeMediaAuthenticationProviders.providers.remove("fixture")
-                engine.policy = previousPolicy; engine.incomingTimeoutMillis = previousTimeout
+                engine.nativeMedia = previousMedia; engine.policy = previousPolicy; engine.incomingTimeoutMillis = previousTimeout
                 engine.actions.resetBridge(); engine.emit = previousEmitter
             }
         }

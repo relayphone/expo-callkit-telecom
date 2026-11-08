@@ -231,6 +231,8 @@ export function inspectInstalledPackages(
   if (
     !object(forkNative) ||
     !object(forkNative.android) ||
+    JSON.stringify(forkNative.platforms) !== JSON.stringify(["android"]) ||
+    "apple" in forkNative ||
     !Array.isArray(forkNative.android.modules) ||
     !forkNative.android.modules.includes(
       "expo.modules.callkittelecom.ExpoCallKitTelecomModule"
@@ -238,6 +240,9 @@ export function inspectInstalledPackages(
   ) {
     throw new Error("Android module registration is missing");
   }
+  if (!object(fork.exports) || !object(fork.exports["./types"]) ||
+      typeof fork.exports["./types"].types !== "string" || "default" in fork.exports["./types"])
+    throw new Error("The types entry must be type-only");
   const installations = new Set(
     command("npm", ["ls", sdkName, "--all", "--parseable"], consumer)
       .split("\n")
@@ -325,7 +330,7 @@ export function checkConsumer(
   return { sdkRevision: artifact.revision, ...installed };
 }
 
-/** Prepares a small SDK-only Apple provider fixture alongside the installed Android package. */
+/** Prepares the composed plugin consumer with one provider per platform. */
 export function prepareIosConsumer(consumer: string, fixtures: string) {
   const path = join(consumer, "package.json");
   const pkg = json(path);
@@ -335,7 +340,6 @@ export function prepareIosConsumer(consumer: string, fixtures: string) {
     JSON.stringify({
       ...pkg,
       main: "index.ts",
-      expo: { autolinking: { exclude: ["expo-callkit-telecom"] } },
     })
   );
   for (const name of ["app.config.ts", "index.ts"])

@@ -1,5 +1,7 @@
 # 📞 expo-callkit-telecom — LiveCommunicationKit & Core-Telecom for React Native + Expo (with VoIP push)
 
+See the [composed conversations contract](docs/canonical-contract.md) for raw IDs, native Android actions, provider selection and placement deadlines.
+
 ## Fork v2 rollout
 
 This fork's **`v2` branch** replaces the v1 session/listener API with typed

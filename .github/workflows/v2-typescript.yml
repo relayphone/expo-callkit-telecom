@@ -61,7 +61,6 @@ jobs:
         with:
           node-version: '26'
       - uses: ./.github/actions/sdk-consumer
-      - run: node tools/check-call-identity.mjs
       - run: bun run build
       - run: bun run test:contracts
       - run: bun run typecheck

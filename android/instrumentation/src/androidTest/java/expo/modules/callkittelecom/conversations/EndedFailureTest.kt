@@ -37,7 +37,7 @@ class EndedFailureTest {
 
     @Test fun rejectedStartEndsAsNotPlaced() = journey(settles = false) { engine, snapshots ->
         val error = runCatching {
-            engine.start(mapOf("to" to mapOf("id" to "rejected-callee"), "video" to false))
+            engine.start(mapOf("id" to "outgoing-${System.nanoTime()}", "to" to mapOf("id" to "rejected-callee"), "video" to false))
         }.exceptionOrNull()
         assertEquals("handler_failed", (error as ConversationFailure).code)
         val end = ended(snapshots) { (it["members"] as List<*>).firstOrNull() == mapOf("id" to "rejected-callee") }
@@ -45,15 +45,15 @@ class EndedFailureTest {
         assertEquals(mapOf("kind" to "notPlaced"), end?.get("failure"))
     }
 
-    @Test fun rejectedJoinEndsAsNotPlaced() = journey(settles = false) { engine, snapshots ->
-        val id = engine.incoming(invitation("rejected-join"))["id"] as String
-        val error = runCatching { engine.join(id) }.exceptionOrNull()
-        assertEquals("handler_failed", (error as ConversationFailure).code)
-        assertEquals(mapOf("kind" to "notPlaced"), ended(snapshots) { it["id"] == id }?.get("failure"))
+    @Test fun rejectedPlacementHandlerDoesNotGateNativeAnswer() = journey(settles = false) { engine, snapshots ->
+        val id = engine.incoming(invitation("native-answer"))["id"] as String
+        engine.join(id)
+        assertNull(ended(snapshots) { it["id"] == id })
+        engine.end(id)
     }
 
     @Test fun reportedFailureEndsAsServer() = journey(settles = true) { engine, snapshots ->
-        val id = engine.start(mapOf("to" to mapOf("id" to "reported-callee"), "video" to false))
+        val id = engine.start(mapOf("id" to "outgoing-${System.nanoTime()}", "to" to mapOf("id" to "reported-callee"), "video" to false))
         engine.report(id, mapOf("type" to "ended", "reason" to "failed"))
         assertEquals(mapOf("kind" to "server"), ended(snapshots) { it["id"] == id }?.get("failure"))
     }
@@ -67,7 +67,7 @@ class EndedFailureTest {
     }
 
     @Test fun remoteEndCarriesNoFailure() = journey(settles = true) { engine, snapshots ->
-        val id = engine.start(mapOf("to" to mapOf("id" to "remote-callee"), "video" to false))
+        val id = engine.start(mapOf("id" to "outgoing-${System.nanoTime()}", "to" to mapOf("id" to "remote-callee"), "video" to false))
         engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
         val end = ended(snapshots) { it["id"] == id }
         assertEquals("remoteEnded", end?.get("reason"))
@@ -102,8 +102,10 @@ class EndedFailureTest {
                         body: suspend (ConversationEngine, List<Map<String, Any?>>) -> Unit): Unit = runBlocking<Unit> {
         withContext(Dispatchers.Main) {
             val engine = ConversationEngine.get(InstrumentationRegistry.getInstrumentation().targetContext)
+            val previousMedia = engine.nativeMedia
             val previous = engine.policy
             val snapshots = mutableListOf<Map<String, Any?>>()
+            engine.nativeMedia = if (policy["type"] == "native") AndroidNativeMedia.LIVEKIT else AndroidNativeMedia.NONE
             engine.policy = JSONObject(policy)
             engine.actions.resetBridge()
             engine.emit = { name, event ->
@@ -113,7 +115,7 @@ class EndedFailureTest {
             }
             engine.actions.attach(true, 1, engine.actions.epoch)
             try { withTimeout(20_000) { body(engine, snapshots) } }
-            finally { engine.policy = previous }
+            finally { engine.nativeMedia = previousMedia; engine.policy = previous }
         }
     }
 

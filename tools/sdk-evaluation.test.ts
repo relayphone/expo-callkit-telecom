@@ -251,6 +251,7 @@ function installedConsumer(
           "./package.json": "./package.json",
           "./app.plugin": "./app.plugin.js",
           "./plugin": "./app.plugin.js",
+          "./types": { types: "./index.d.ts" },
         },
       })
     );
@@ -281,6 +282,7 @@ function installedConsumer(
     apple: { modules: ["VoIPConversationsModule"] },
   });
   install("expo-callkit-telecom", {
+    platforms: ["android"],
     android: {
       modules: ["expo.modules.callkittelecom.ExpoCallKitTelecomModule"],
     },
@@ -333,6 +335,21 @@ test("the thin iOS fixture retains installed dependencies and chooses one Apple 
   );
   assert.deepEqual(prepared.dependencies, original.dependencies);
   assert.equal(prepared.main, "index.ts");
-  assert.deepEqual(prepared.expo.autolinking.exclude, ["expo-callkit-telecom"]);
+  assert.equal(prepared.expo, undefined);
   assert.equal(readFileSync(join(project, "index.ts"), "utf8"), "export {};\n");
+});
+
+test("the composed package rejects a second Apple provider and a runtime types entry", (t) => {
+  const { consumer } = installedConsumer(t);
+  const root = join(consumer, "node_modules/expo-callkit-telecom");
+  const nativePath = join(root, "expo-module.config.json");
+  const native = JSON.parse(readFileSync(nativePath, "utf8"));
+  writeFileSync(nativePath, JSON.stringify({ ...native, apple: { modules: ["LegacyProvider"] } }));
+  assert.throws(() => inspectInstalledPackages(consumer, "0.3.0"), /Android module registration is missing/);
+  writeFileSync(nativePath, JSON.stringify(native));
+  const path = join(root, "package.json");
+  const pkg = JSON.parse(readFileSync(path, "utf8"));
+  pkg.exports["./types"].default = "./index.js";
+  writeFileSync(path, JSON.stringify(pkg));
+  assert.throws(() => inspectInstalledPackages(consumer, "0.3.0"), /types entry must be type-only/);
 });

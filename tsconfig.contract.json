@@ -3,11 +3,11 @@
   "compilerOptions": {
     "noEmit": true,
     "strict": true,
-    "exactOptionalPropertyTypes": true
+    "exactOptionalPropertyTypes": true,
+    "rootDir": "."
   },
   "include": [
-    "src/conversations/**/*.ts",
-    "src/__tests__/conversations.types.ts"
+    "test/fixtures/package-consumer/contract.ts"
   ],
   "exclude": []
 }

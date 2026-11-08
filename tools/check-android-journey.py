@@ -11,5 +11,5 @@ expected = [
 ]
 assert result.get("passed") is True, "Android journey did not pass"
 assert result.get("steps") == expected, "Android journey steps are incomplete or out of order"
-assert result.get("identityVectors") == "call-identity.json", "Missing shared identity fixture"
+assert result.get("identityPolicy") == "raw-application-id", "Missing raw application identity policy"
 print("Core-Telecom incoming, concurrent held call and outgoing journeys passed")

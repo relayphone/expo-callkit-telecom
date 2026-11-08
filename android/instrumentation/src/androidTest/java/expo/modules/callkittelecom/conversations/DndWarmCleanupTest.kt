@@ -32,6 +32,7 @@ class DndWarmCleanupTest {
         }
         withContext(Dispatchers.Main) {
             val engine = ConversationEngine.get(context)
+            val previousMedia = engine.nativeMedia
             val previous = engine.policy
             val previousEmitter = engine.emit
             val oldFilter = NativeIncomingFilters.evaluate
@@ -48,6 +49,7 @@ class DndWarmCleanupTest {
                 NativeMediaAuthentication(settings.getString("authentication"), "fixture-device")
             }
             engine.emit = { name, body -> if (name == "conversationEvent" && body["type"] == "incomingConversationOutcome") js += body }
+            engine.nativeMedia = AndroidNativeMedia.LIVEKIT
             engine.policy = JSONObject(mapOf("type" to "native", "media" to "livekit", "credentials" to "fromPush",
                 "fallback" to mapOf("type" to "http", "baseUrl" to settings.getString("baseUrl"), "authentication" to "dnd-fixture")))
             val serverId = "dnd-warm-${android.os.SystemClock.elapsedRealtime()}"
@@ -84,7 +86,7 @@ class DndWarmCleanupTest {
                     val request = mapOf("eventId" to key, "serverCallId" to key, "caller" to mapOf("handleType" to "generic", "value" to "caller", "displayName" to key), "hasVideo" to false)
                     val reporting = async { engine.incoming(request) }
                     withTimeout(5000) { entered.await() }
-                    val earlyAnswer = async { runCatching { engine.join(CallIdentity.forServerCallId(key).toString()) } }
+                    val earlyAnswer = async { runCatching { engine.join(key) } }
                     yield()
                     assertFalse(earlyAnswer.isCompleted)
                     assertFalse(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.any {
@@ -110,7 +112,7 @@ class DndWarmCleanupTest {
                 id?.let { value -> runCatching { engine.report(value, mapOf("type" to "ended", "reason" to "remoteEnded")) } }
                 NativeMediaSignals.observers -= mediaObserver; NativeIncomingOutcomes.observers -= outcomeObserver
                 NativeMediaAuthenticationProviders.providers.remove("dnd-fixture")
-                engine.policy = previous; engine.emit = previousEmitter
+                engine.nativeMedia = previousMedia; engine.policy = previous; engine.emit = previousEmitter
             }
         }
     }

@@ -36,8 +36,9 @@ class ConversationService : Service() {
                 if (ringing) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_LOW)
             channel.setSound(if (ringing) sound else null, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build())
             manager.createNotificationChannel(channel)
-            fun action(name: String) = PendingIntent.getBroadcast(context, (id + name).hashCode(),
-                Intent(context, ConversationReceiver::class.java).setAction(name).putExtra("id", id),
+            fun action(name: String) = PendingIntent.getBroadcast(context, 0,
+                Intent(context, ConversationReceiver::class.java).setAction(name)
+                    .setData(Uri.Builder().scheme("voip-conversation").authority(context.packageName).appendPath(id).appendPath(name).build()).putExtra("id", id),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val member = (state["members"] as? List<*>)?.firstOrNull() as? Map<*, *>
             val payload = state["payload"] as? Map<*, *>
@@ -50,8 +51,8 @@ class ConversationService : Service() {
                 .addPerson(person)
                 .setSmallIcon(android.R.drawable.sym_call_incoming).setOngoing(true).setOnlyAlertOnce(true)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
-                .setFullScreenIntent(PendingIntent.getActivity(context, id.hashCode(),
-                    Intent(context, ConversationActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE), state["status"] == "ringing")
+                .setFullScreenIntent(PendingIntent.getActivity(context, 0,
+                    Intent(context, ConversationActivity::class.java).setData(Uri.Builder().scheme("voip-conversation").authority(context.packageName).appendPath(id).build()), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE), state["status"] == "ringing")
             builder.setStyle(if (state["status"] == "ringing") NotificationCompat.CallStyle.forIncomingCall(person, action("end"), action("join"))
                 else NotificationCompat.CallStyle.forOngoingCall(person, action("end")))
             val notificationId = notifications[id]?.first ?: nextId++
@@ -82,7 +83,7 @@ class ConversationReceiver : BroadcastReceiver() {
         val pending = goAsync()
         val engine = ConversationEngine.get(context)
         engine.jobs.launch {
-            try { if (intent.action == "join") engine.join(id) else engine.end(id) }
+            try { if (intent.action == "join") engine.join(id, NativeActionOrigin.SYSTEM) else engine.end(id, NativeActionOrigin.SYSTEM) }
             catch (_: Exception) { /* The native engine owns failure and terminal state. */ }
             finally { pending.finish() }
         }

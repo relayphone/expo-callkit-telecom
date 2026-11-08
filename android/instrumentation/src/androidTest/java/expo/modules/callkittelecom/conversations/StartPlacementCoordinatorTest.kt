@@ -10,6 +10,19 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class StartPlacementCoordinatorTest {
+    @Test fun theDefaultHandlerDeadlineReservesOneSecondFromPlacement(): Unit = runBlocking {
+        var now = 0L
+        val deliveries = mutableListOf<Map<String, Any?>>()
+        val coordinator = StartPlacementCoordinator({ name, body -> if (name == "handlerAction") deliveries += body }, {},
+            monotonicNow = { now }, wallNow = { Instant.parse("2026-11-08T12:00:00Z") })
+        coordinator.attach(true, 1, coordinator.epoch)
+        val pending = async(start = CoroutineStart.UNDISPATCHED) { coordinator.place("slow", mapOf("id" to "slow")) }
+        assertEquals("2026-11-08T12:00:09Z", deliveries.single()["deadline"])
+        now = 8999
+        coordinator.settle(deliveries.single()["actionID"] as String, 1, true, coordinator.epoch)
+        assertNull(pending.await())
+    }
+
     @Test fun missingAppHandlerFailsImmediatelyOrExplicitlyAcceptsWithoutCreatingPendingWork(): Unit = runBlocking {
         val coordinator = StartPlacementCoordinator({ _, _ -> fail("Unexpected delivery") }, {})
         val pending = async(start = CoroutineStart.UNDISPATCHED) {
@@ -33,7 +46,7 @@ class StartPlacementCoordinatorTest {
             coordinator.place("raw/電話", mapOf("id" to "raw/電話"))
         }
         assertEquals(mapOf("id" to events.first().second["actionID"], "kind" to "start",
-            "origin" to "app", "deadline" to "2026-11-08T12:00:03.500Z"), coordinator.pending("raw/電話"))
+            "origin" to "app", "deadline" to "2026-11-08T12:00:09Z"), coordinator.pending("raw/電話"))
         assertEquals("start", events.first().second["kind"])
         assertTrue(coordinator.deferReport("raw/電話", PlacementConnectionReport.CONNECTED))
         assertTrue(coordinator.deferReport("raw/電話", PlacementConnectionReport.CONNECTING))
@@ -56,7 +69,7 @@ class StartPlacementCoordinatorTest {
         val deliveries = mutableListOf<Map<String, Any?>>()
         var now = 0L
         val coordinator = StartPlacementCoordinator({ name, body -> if (name == "handlerAction") deliveries += body }, {},
-            timeout = 40.milliseconds, monotonicNow = { now })
+            timeout = 40.milliseconds, handlerMargin = kotlin.time.Duration.ZERO, monotonicNow = { now })
         coordinator.attach(true, 1, coordinator.epoch)
         suspend fun rejected(id: String, expire: Boolean, cancel: Boolean) {
             val pending = async(start = CoroutineStart.UNDISPATCHED) {
