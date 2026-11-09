@@ -30,7 +30,7 @@ enum class NativeMediaStage(val value: String) {
     CAPTURE_PUMP_STARTED("capturePumpStarted"), CAPTURE_PUMP_STOPPED("capturePumpStopped"),
     OUTPUT_BEFORE_AUTHORITY("outputBeforeAuthority"), OUTPUT_FIRST_NONZERO("outputFirstNonzero"),
     OUTPUT_MUTED("outputMuted"), OUTPUT_OBSERVATION_UNAVAILABLE("outputObservationUnavailable"),
-    OUTPUT_RELEASED("outputReleased"), SILENT_BUFFER_WINDOW("silentBufferWindow")
+    OUTPUT_RELEASED("outputReleased")
 }
 
 /** Native lifecycle observations contain timings/counts, never credentials or audio samples. */

@@ -182,7 +182,6 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
             check(!closed && peer === candidate)
             signal("prejoined")
             check(!closed && peer === candidate)
-            heat.flushSilentWindow()
             prepared = true
             emit(NativeMediaStage.PREJOINED)
         } catch (error: Throwable) { dispose(); throw error }

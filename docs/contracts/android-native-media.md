@@ -25,6 +25,10 @@ callbacks enqueue observations without running app code on the audio thread.
 (-48dBFS), after native activation; it is not a hardware/acoustic measurement.
 No raw audio or credentials are retained.
 
+Recordingless buffers remain paced by their audio duration. The former silent-buffer
+CPU/timing report is preserved in the
+[research archive](https://github.com/relayphone/expo-callkit-telecom/blob/archive/android-telecom-research/android/src/livekit/java/expo/modules/callkittelecom/conversations/NativeWarmAudio.kt).
+
 The Ubuntu/API35 journey uses the production FCM data entry with a synthetic
 high-priority envelope (it does not prove cloud FCM delivery), a real LiveKit
 server and a remote PCM publisher. Both pushed credentials and the instrumentation-only named fetcher

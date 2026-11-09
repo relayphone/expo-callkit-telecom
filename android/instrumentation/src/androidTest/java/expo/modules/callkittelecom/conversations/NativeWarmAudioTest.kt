@@ -46,16 +46,9 @@ class NativeWarmAudioTest {
                     elapsed >= 90_000_000L)
                 assertTrue("A 120 ms audio window stalled for more than two seconds: $elapsed ns",
                     elapsed < 2_000_000_000L)
-                audio.flushSilentWindow()
             }
             audio.pumpStopped()
             drainSignals()
-            val windows = signals.filter { it.stage == NativeMediaStage.SILENT_BUFFER_WINDOW }
-            assertEquals(3, windows.size)
-            windows.forEach {
-                assertEquals(12L, it.measurements["count"])
-                assertEquals(120_000_000L, it.measurements["durationNs"])
-            }
             assertFalse(signals.any { it.stage == NativeMediaStage.CAPTURE_STARTED })
             assertFalse(signals.any { it.stage == NativeMediaStage.CAPTURE_BEFORE_AUTHORITY })
         }

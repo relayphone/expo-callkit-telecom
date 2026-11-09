@@ -175,7 +175,6 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             if (captureEnabled) return
             if (publication == null) publishMutedMicrophone()
             val ready = warmth.armCapture()
-            warmth.flushSilentWindow()
             captureEnabled = true
             recording?.setAudioRecordEnabled(true)
             warmth.publishRecordingEnabled()
