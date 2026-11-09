@@ -47,7 +47,7 @@ const config: ExpoConfig = {
       },
     ],
     [
-      require("../../app.plugin.js").default,
+      require(process.env.ANDROID_JOURNEY_PACKED === "1" ? "expo-callkit-telecom/app.plugin.js" : "../../app.plugin.js").default,
       {
         sounds: ["./assets/sounds/ringtone.wav"],
         defaultRingtoneIos: "ringtone.wav",

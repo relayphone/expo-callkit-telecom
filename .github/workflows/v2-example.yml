@@ -3,10 +3,10 @@ name: v2 example
 on:
   pull_request:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/package.json', 'tsconfig.executor.json', '.github/workflows/v2-example.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/android-journey*', 'tools/package.json', 'tsconfig.executor.json', 'tsconfig.journeys*.json', '.github/workflows/v2-example.yml']
   push:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/package.json', 'tsconfig.executor.json', '.github/workflows/v2-example.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/android-journey*', 'tools/package.json', 'tsconfig.executor.json', 'tsconfig.journeys*.json', '.github/workflows/v2-example.yml']
 
 permissions:
   contents: read
@@ -21,6 +21,8 @@ jobs:
     needs: sdk-package
     runs-on: ubicloud-standard-4
     timeout-minutes: 30
+    env:
+      ANDROID_JOURNEY_PACKED: '1'
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -29,7 +31,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
-      - run: node --test tools/android-emulator-executor.test.ts tools/gradle-wrapper-timeout.test.ts
+      - run: node --test tools/android-emulator-executor.test.ts tools/gradle-wrapper-timeout.test.ts tools/android-journey*.test.ts
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -38,6 +40,9 @@ jobs:
       - uses: ./.github/actions/sdk-consumer
       - run: node_modules/.bin/tsc -p tsconfig.executor.json
       - run: bun run build
+      - run: node node_modules/typescript/bin/tsc -p tsconfig.journeys.json
+      - run: node node_modules/typescript/bin/tsc -p tsconfig.journeys-app.json
+      - run: node tools/android-journey-project.ts package "$RUNNER_TEMP/journey-package"
       - uses: ./.github/actions/sdk-consumer
         with:
           project: example/client
@@ -48,13 +53,18 @@ jobs:
         env:
           CI: '1'
       - run: node tools/gradle-wrapper-timeout.ts example/client/android
-      - run: ./gradlew :app:assembleRelease --no-daemon --max-workers=2 -PreactNativeArchitectures=x86_64 --stacktrace
+      - run: node tools/android-journey-project.ts instrumentation example/client/android
+      - run: ./gradlew :app:assembleRelease :app:assembleReleaseAndroidTest --no-daemon --max-workers=2 -PreactNativeArchitectures=x86_64 --stacktrace
         working-directory: example/client/android
+      - run: node tools/android-journey-project.ts artifacts "$RUNNER_TEMP/journey-apks"
       - uses: actions/upload-artifact@v6
         with:
           name: v2-example-apk
-          path: example/client/android/app/build/outputs/apk/release/app-release.apk
+          path: ${{ runner.temp }}/journey-apks/*.apk
           if-no-files-found: error
+      - name: Delete the temporary package archive
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/journey-package" "$RUNNER_TEMP/journey-apks"
   journey:
     needs: build
     runs-on: ubicloud-standard-4
@@ -93,6 +103,7 @@ jobs:
           script: |
             node tools/android-emulator-executor.ts boot executor-results/boot.json
             bash tools/run-example-journey.sh
+            node tools/android-journey.ts example-apk journey-results
       - name: Remove the temporary emulator
         if: always()
         run: |
@@ -105,5 +116,6 @@ jobs:
           name: v2-example-journey
           path: |
             example-journey.json
+            journey-results/*
             executor-results/*.json
           if-no-files-found: error
