@@ -29,11 +29,6 @@
     "open:ios": "xed example/client/ios",
     "open:android": "open -a \"Android Studio\" example/client/android",
     "docs:api": "typedoc",
-    "docs:dev": "bun run docs:api && vitepress dev docs",
-    "docs:build": "bun run docs:api && vitepress build docs",
-    "docs:preview": "vitepress preview docs",
-    "deploy": "bun run docs:build && wrangler deploy",
-    "preview": "bun run docs:build && wrangler dev",
     "test:contracts": "bun test test/contracts/caller-example.test.ts && node --test test/contracts/composed-plugin.test.ts test/contracts/android-native-media.test.ts test/canonical/*.test.ts"
   },
   "keywords": [

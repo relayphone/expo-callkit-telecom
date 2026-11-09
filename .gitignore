@@ -70,12 +70,9 @@ fcm_key*.json
 # Personal / not for publication
 marketing/
 
-# Docs site — generated artifacts
+# Generated API documentation
 docs/api/
-docs/.vitepress/cache/
-docs/.vitepress/dist/
 
-# wrangler files
-.wrangler
+# Local development variables
 .dev.vars*
 !.dev.vars.example
