@@ -27,9 +27,9 @@ assuming the request changed audio output. The deep link
 `conversations-example://journey` runs the same journey. See
 [the example journey instructions](https://github.com/relayphone/expo-callkit-telecom/blob/v2/example/client/V2-JOURNEYS.md).
 
-The checked-in example deliberately chooses `joinPolicy: { type: "handler" }`
-and registers its handler at module scope, before React mounts. Its signaling
-handler accepts locally, and its buttons explicitly report connected. **It has
+The checked-in example chooses `androidNativeMedia: "none"` and registers its
+start handler at module scope, before React mounts. Incoming answer runs natively;
+outgoing placement accepts locally, and its buttons explicitly report connected. **It has
 no media room and produces no remote call audio.** The release Expo CI journey
 qualifies the bridge/UI flow; native media and decoded-audio timing are qualified
 separately by the instrumentation fixture below.
