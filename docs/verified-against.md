@@ -13,8 +13,9 @@ Current automated checks cover:
   readiness, hold/resume, filtering and cleanup on an API 35 emulator.
 - [Installed Android JavaScript journeys](../.github/workflows/v2-example.yml)
   through the real bridge, with independent Telecom and notification evidence.
-- [SDK-owned iOS integration](../.github/workflows/v2-ios.yml) in a thin installed
-  consumer built for the iOS Simulator.
+- [iOS example](../.github/workflows/v2-ios.yml) and
+  [thin installed SDK consumer](../.github/workflows/v2-sdk-evaluation.yml) builds
+  for the iOS Simulator.
 
 Emulator/simulator results do not establish physical-device audio, cloud push
 transport delivery or production latency percentiles. See

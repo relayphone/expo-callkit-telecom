@@ -11,20 +11,20 @@ const accepted = await receiveCallEnded({
 });
 ```
 
-The input matches [SDK #159 at `8a58905`](https://github.com/relayphone/ios-voip-sdk/blob/8a58905d1be01dcc6c11da183f2564dd80aef79d/Expo/src/types.ts):
+The input uses the [pinned SDK types](https://github.com/relayphone/ios-voip-sdk/blob/597c39137b51b2537ce60e15e6ecf86d281f5d86/expo/src/conversations/types.ts):
 `CallEndedPayload` contains `eventId`, `serverCallId`, and
 `reason: Exclude<EndedReason, "local">`. Local hangups use `endConversation`.
 The promise reports whether a signal was accepted for a known incoming
 invitation; it does not promise that platform or visible UI cleanup has finished.
 
-Accepted signals bypass the End handler and stop native media without waiting
+Accepted signals stop native media without consulting an action handler or waiting
 for JavaScript. Native state publishes an ended conversation with the supplied
 reason before emitting `answeredElsewhere`. That event contains
 `{ conversationId, serverCallId, eventId }`, correlated to the accepted signal,
 and is emitted once. A later platform admission receives a retained end intent
 without restoring the ringing notification or starting media.
 
-Intake follows the SDK's [retained incoming ownership and end-event policy](https://github.com/relayphone/ios-voip-sdk/blob/8a58905d1be01dcc6c11da183f2564dd80aef79d/Sources/VoIPSDK/IncomingIntake.swift):
+Android retains incoming ownership and deduplicates end events:
 
 - End event IDs are deduplicated for 120 seconds before known-call lookup. A
   valid unknown signal consumes its event ID, returns false, and creates no
@@ -49,7 +49,7 @@ The existing FCM envelope uses the same intake:
 ```
 
 The wire body requires both IDs. Missing, local, and unrecognized wire reasons
-normalize to `remoteEnded`, matching the [SDK wire decoder](https://github.com/relayphone/ios-voip-sdk/blob/8a58905d1be01dcc6c11da183f2564dd80aef79d/Sources/VoIPSDK/PushWire.swift).
+normalize to `remoteEnded`, matching the [SDK wire decoder](https://github.com/relayphone/ios-voip-sdk/blob/597c39137b51b2537ce60e15e6ecf86d281f5d86/Sources/VoIPCore/VoIPPush%2BDefaultFormat.swift).
 These defaults do not change the typed host API's required non-local reason.
 
 ## Native disconnect mapping
