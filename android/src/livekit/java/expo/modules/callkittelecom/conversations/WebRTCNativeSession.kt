@@ -19,7 +19,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "ConversationWebRTC") }.asCoroutineDispatcher()
     private val scope = CoroutineScope(SupervisorJob() + worker)
     private var owner: Room? = null
-    private var transportProbe: Job? = null
+    private var transportWatch: Job? = null
     private var peer: PeerConnection? = null
     private var source: AudioSource? = null
     private var microphone: AudioTrack? = null
@@ -149,7 +149,8 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
                 sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             }, observer) ?: error("WebRTC unavailable")
             peer = candidate
-            transportProbe = NativeTransportProbe(attemptServer, scope).watch(0L, candidate::getStats, transportReady)
+            transportWatch = NativeTransportReadiness(scope).watch(candidate::getStats, transportReady,
+                NativeTransportProbe(attemptServer, 0L)::request)
             candidate.setAudioPlayout(true); candidate.setAudioRecording(true); pumpEnabled = true
             source = factory.createAudioSource(MediaConstraints())
             microphone = factory.createAudioTrack("native-microphone", source).also { it.setEnabled(false); candidate.addTrack(it) }
@@ -261,7 +262,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
     private fun dispose() {
         prepared = false; active = false
         pcm.disarm()
-        transportProbe?.cancel(); transportProbe = null
+        transportWatch?.cancel(); transportWatch = null
         remote.forEach { runCatching { it.removeSink(pcm.answerSink); it.removeSink(pcm.decoderSink); it.removeSink(decoded) } }; remote.clear()
         runCatching { peer?.close(); peer?.dispose() }; peer = null
         runCatching { recording?.setAudioRecordEnabled(false) }; recording = null
