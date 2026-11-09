@@ -8,13 +8,13 @@ start with [Migrating from v1](./migrating-v1-to-v2.md).
 ## Run the example's signaling journey
 
 Use an Android native development build, with API 26 or later, microphone and
-notification permission. From a checkout of this fork's `v2` branch:
+notification permission. Prepare the pinned SDK and fork using [package evaluation](./sdk-package-evaluation.md),
+including SDK installation into `example/client`, before building the example.
+Then, from this fork's checkout:
 
 ```sh
-bun install --frozen-lockfile
 bun run build
 cd example/client
-bun install --frozen-lockfile
 bun run android
 ```
 
@@ -135,7 +135,7 @@ the pending iOS prejoin credential policy is identical.
    Remote decoding and muted playback warm before Answer.
    Physical microphone capture and audible output remain off.
 3. The user answers in system UI, or the host calls `joinConversation(id)`.
-   Native policy bypasses the JS Join handler. It waits for preparation and the
+   Native answer does not consult the handler. It waits for preparation and the
    same live Core-active call plus communication audio mode, then unmutes the
    existing media path. Answer does not renegotiate or resubscribe.
 4. Connected state follows native activation. On hold, physical capture stops
@@ -154,7 +154,7 @@ acknowledgment. A returned command promise is not proof of first decoded audio.
 To stop ringing when another endpoint answers, send the same server identity
 through `receiveCallEnded({ eventId, serverCallId, reason: "answeredElsewhere" })`
 or the [native FCM end envelope](./contracts/android-answered-elsewhere.md).
-That intake bypasses the End handler; observe state/events for completion rather
+That intake runs natively without an action handler; observe state/events for completion rather
 than treating its boolean acknowledgment as proof that visible UI is gone.
 
 ## Native audio readiness checks

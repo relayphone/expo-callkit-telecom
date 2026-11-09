@@ -1,13 +1,23 @@
----
-description: Compatibility matrix for expo-callkit-telecom — the iOS, Android, Expo SDK, React Native, and media-transport versions this library has been tested against on real devices.
----
+# Verification scope
 
-# Verified against
+The fork's `v2` branch is an unreleased composition of the SDK's Apple provider
+and this package's Android provider. The former upstream device matrix does not
+qualify this implementation. Its historical copy is preserved on
+[archive/android-telecom-research](https://github.com/relayphone/expo-callkit-telecom/blob/archive/android-telecom-research/docs/verified-against.md).
 
-`expo-callkit-telecom` has been tested end-to-end on real devices via the runnable `example/` app against the platform versions listed below.
+Current automated checks cover:
 
-| Library | [iOS](https://developer.apple.com/ios/) | [Android](https://developer.android.com/about/versions) | [Expo SDK](https://expo.dev/) | [React Native](https://reactnative.dev/) | [New Architecture](https://reactnative.dev/architecture/landing-page) | Media transport |
-| --- | --- | --- | --- | --- | --- | --- |
-| 0.3.x | 26 (min 16.0) | 15 (min API 26) | 55 | 0.83 | Yes | [LiveKit RN SDK](https://github.com/livekit/client-sdk-react-native) |
+- [Packed SDK/fork consumers](../.github/workflows/v2-sdk-evaluation.yml), public
+  types, plugin composition, errors and route updates.
+- [Android native behavior](../.github/workflows/v2-android.yml), including media
+  readiness, hold/resume, filtering and cleanup on an API 35 emulator.
+- [Installed Android JavaScript journeys](../.github/workflows/v2-example.yml)
+  through the real bridge, with independent Telecom and notification evidence.
+- [SDK-owned iOS integration](../.github/workflows/v2-ios.yml) in a thin installed
+  consumer built for the iOS Simulator.
 
-The fork's `v2` branch isn't released and hasn't been through this real-device matrix. It needs iOS 26.0 or later, where it presents calls with LiveCommunicationKit instead of CallKit, and Android API 26 or later. Its CI builds the example app for the iOS Simulator and runs Android journeys on an API 35 emulator.
+Emulator/simulator results do not establish physical-device audio, cloud push
+transport delivery or production latency percentiles. See
+[Getting started](./getting-started.md) and the
+[SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/react-native.md)
+for current integration requirements.
