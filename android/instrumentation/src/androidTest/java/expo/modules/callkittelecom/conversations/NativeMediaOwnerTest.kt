@@ -12,6 +12,19 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class NativeMediaOwnerTest {
+    @Test fun builtInProviderContainsOnlyLiveKit() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            for (adapter in listOf("webrtc", "none", "unknown"))
+                assertNull(BuiltInMedia.session(context, adapter, "provider-selection"))
+            val session = checkNotNull(BuiltInMedia.session(context, "livekit", "provider-selection"))
+            try {
+                assertTrue(session is LiveKitNativeSession)
+                assertFalse(session.isPrepared)
+            } finally { session.close("ended") }
+        }
+    }
+
     @Test fun selectionIsIndependentOfAnswerPolicyAndDefaultsToNone() {
         assertEquals(AndroidNativeMedia.NONE, AndroidNativeMedia.from(null))
         assertEquals(AndroidNativeMedia.NONE, AndroidNativeMedia.from("none"))

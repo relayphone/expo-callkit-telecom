@@ -1,7 +1,11 @@
 # Android WebRTC instrumentation research
 
-Raw WebRTC is an instrumentation research path, outside the public package
-configuration. Its adapter reuses the pinned LiveKit WebRTC runtime and a bounded
+Raw WebRTC lives in the standalone Android instrumentation project and is
+registered explicitly by its media journey. It is excluded from the published
+native module; `androidNativeMedia: "livekit"` includes only the LiveKit session.
+The shared SDK's `MediaAdapter` type remains `"webrtc" | "none"`.
+
+The fixture's adapter reuses the pinned LiveKit WebRTC runtime and a bounded
 HTTPS signaling helper; the credentials lookup is registered by the test APK as
 a named fetcher. The library no longer ships the HTTP credentials-fetch policy
 or native authentication registry. The shared incoming push media contract is

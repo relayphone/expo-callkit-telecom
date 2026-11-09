@@ -33,8 +33,34 @@ class NativeMediaJourneyTest {
     private fun stageForRole(events: List<NativeMediaSignal>, kind: NativeMediaStage, role: Long) =
         events.first { it.stage == kind && it.measurements["role"] == role }
 
+    private fun registerWebRTCFixture(serverId: String) {
+        NativeMediaRegistry.factories["webrtc"] = { WebRTCNativeSession(it, serverId) }
+    }
+
     @Test fun realNativeLiveKitAudioAndCleanup() = journey("livekit", listOf("push", "fetcher"))
     @Test fun realNativeWebRTCAudioAndCleanup() = journey("webrtc", listOf("fetcher", "livekitPush"))
+
+    @Test fun registeredWebRTCFixtureRetainsItsIdWhenClosedBeforePrewarm() = runBlocking {
+        val serverId = "raw-id/closed-before-prewarm "
+        val signals = CopyOnWriteArrayList<NativeMediaSignal>()
+        val observer = NativeMediaObserver { if (it.serverCallId == serverId) signals += it }
+        val previous = NativeMediaRegistry.factories["webrtc"]
+        registerWebRTCFixture(serverId)
+        val session = checkNotNull(NativeMediaRegistry.factories["webrtc"])(context)
+        NativeMediaSignals.observers += observer
+        try {
+            assertFalse(session.isPrepared)
+            session.close("ended")
+            session.close("ended")
+            withContext(Dispatchers.Main) { }
+            assertEquals(1, signals.count { it.stage == NativeMediaStage.CLOSED })
+        } finally {
+            session.close("ended")
+            NativeMediaSignals.observers -= observer
+            if (previous == null) NativeMediaRegistry.factories.remove("webrtc")
+            else NativeMediaRegistry.factories["webrtc"] = previous
+        }
+    }
 
     private fun journey(provider: String, sources: List<String>) = runBlocking {
         withContext(Dispatchers.Main) {
@@ -43,6 +69,7 @@ class NativeMediaJourneyTest {
             val previousPolicy = engine.policy
             val previousTimeout = engine.incomingTimeoutMillis
             val previousEmitter = engine.emit
+            val previousWebRTCFactory = NativeMediaRegistry.factories["webrtc"]
             val signals = CopyOnWriteArrayList<NativeMediaSignal>()
             val observer = NativeMediaObserver { signals += it }
             NativeMediaSignals.observers += observer
@@ -77,6 +104,7 @@ class NativeMediaJourneyTest {
             fun present(id: String) = (engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id }
             suspend fun absent(id: String) = withTimeout(7000) { while (present(id)) delay(10) }
             suspend fun incoming(serverId: String, pushedMedia: Boolean): String {
+                if (provider == "webrtc") registerWebRTCFixture(serverId)
                 val payload = fixture("/fixture/invitation/$serverId?media=${if (pushedMedia && provider == "livekit") 1 else 0}")
                 if (pushedMedia && provider == "webrtc") payload.put("media", JSONObject(mapOf("provider" to "livekit",
                     "url" to "wss://unused.invalid", "room" to "unused", "identity" to "fixture", "token" to "unused-fixture",
@@ -293,6 +321,10 @@ class NativeMediaJourneyTest {
                 NativeMediaSignals.observers -= observer
                 if (previousFetcher == null) NativeMediaRegistry.fetchers.remove("fixture")
                 else NativeMediaRegistry.fetchers["fixture"] = previousFetcher
+                if (provider == "webrtc") {
+                    if (previousWebRTCFactory == null) NativeMediaRegistry.factories.remove("webrtc")
+                    else NativeMediaRegistry.factories["webrtc"] = previousWebRTCFactory
+                }
                 engine.nativeMedia = previousMedia; engine.policy = previousPolicy; engine.incomingTimeoutMillis = previousTimeout
                 engine.actions.resetBridge(); engine.emit = previousEmitter
             }
