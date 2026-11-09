@@ -28,7 +28,6 @@
     "expo-module": "expo-module",
     "open:ios": "xed example/client/ios",
     "open:android": "open -a \"Android Studio\" example/client/android",
-    "docs:api": "typedoc",
     "test:contracts": "bun test test/contracts/caller-example.test.ts && node --test test/contracts/composed-plugin.test.ts test/contracts/android-native-media.test.ts test/canonical/*.test.ts"
   },
   "keywords": [
@@ -68,11 +67,7 @@
     "expo": "^57.0.24",
     "expo-module-scripts": "^56.0.3",
     "react": "19.2.3",
-    "react-native": "0.86.3",
-    "typedoc": "^0.28.19",
-    "typedoc-plugin-markdown": "^4.11.0",
-    "vitepress": "^1.6.4",
-    "wrangler": "^4.92.0"
+    "react-native": "0.86.3"
   },
   "peerDependencies": {
     "expo": ">=55.0.0",

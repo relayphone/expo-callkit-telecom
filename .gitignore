@@ -70,9 +70,6 @@ fcm_key*.json
 # Personal / not for publication
 marketing/
 
-# Generated API documentation
-docs/api/
-
 # Local development variables
 .dev.vars*
 !.dev.vars.example

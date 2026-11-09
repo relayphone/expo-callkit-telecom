@@ -13,7 +13,6 @@ on:
       - 'package.json'
       - 'bun.lock'
       - 'tsconfig*.json'
-      - 'typedoc.json'
       - 'eslint.config.js'
       - '.github/workflows/v2-typescript.yml'
       - '.github/workflows/sdk-package.yml'
@@ -31,7 +30,6 @@ on:
       - 'package.json'
       - 'bun.lock'
       - 'tsconfig*.json'
-      - 'typedoc.json'
       - 'eslint.config.js'
       - '.github/workflows/v2-typescript.yml'
       - '.github/workflows/sdk-package.yml'
@@ -66,4 +64,3 @@ jobs:
       - run: bun run typecheck
       - run: bun run lint
       - run: bun run test -- --runInBand
-      - run: bun run docs:api
