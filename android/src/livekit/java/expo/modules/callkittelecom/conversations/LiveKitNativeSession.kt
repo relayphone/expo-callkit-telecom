@@ -95,9 +95,9 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         } }
         NativeMediaSignals.emit(serverId, NativeMediaStage.MEDIA_CONNECT_STARTED)
         NativeMediaSignals.emit(serverId, NativeMediaStage.SUBSCRIPTION_REQUESTED)
-        NativeTransportProbe(serverId, CoroutineScope(scope.coroutineContext + Dispatchers.IO)).apply {
-            transportJobs += watch(1L, candidate::getPublisherRTCStats, publisherReady)
-            transportJobs += watch(2L, candidate::getSubscriberRTCStats, subscriberReady)
+        NativeTransportReadiness(CoroutineScope(scope.coroutineContext + Dispatchers.IO)).apply {
+            transportJobs += watch(candidate::getPublisherRTCStats, publisherReady, NativeTransportProbe(serverId, 1L)::request)
+            transportJobs += watch(candidate::getSubscriberRTCStats, subscriberReady, NativeTransportProbe(serverId, 2L)::request)
         }
         try {
             candidate.connect(url, token, ConnectOptions(autoSubscribe = true, audio = false, video = false))
