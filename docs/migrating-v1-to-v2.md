@@ -1,247 +1,137 @@
 # Migrate from v1 to v2
 
-This guide covers the fork's conversations API on branch `v2`. It is a
-breaking change from upstream expo-callkit-telecom v1, with no compatibility shim.
-iOS runs the same API over ios-voip-sdk; see [iOS](#ios) for what differs there.
-
-The inherited package name/version and `bun add expo-callkit-telecom` instructions
-do not identify this fork's v2 rollout. Use a reviewed fork `v2` checkout pinned
-to a commit, build the package/plugin and rebuild the native application. See the
-[Android quick-start](./android-quick-start.md) for the example workflow. This is
-not a JavaScript-only upgrade or an Expo Go installation.
+The fork's `v2` branch composes `@relayphone/ios-voip-sdk`. The SDK owns the shared
+TypeScript API and the sole Apple native provider; this package adds Android
+Core-Telecom and the composed config plugin. This is a breaking migration with
+no v1 compatibility API. Use [package evaluation](./sdk-package-evaluation.md)
+for the pinned packages; the inherited version does not identify a published v2
+release. Follow [Getting started](./getting-started.md), regenerate native projects
+and rebuild the development client.
 
 ## Change the state model and imports
 
-Runtime functions and React hooks come from `expo-callkit-telecom`. Types can be
-imported without loading the native module:
+Import functions and hooks from `expo-callkit-telecom`, and types from
+`expo-callkit-telecom/types`. `useConversations()` observes the immutable list;
+`useConversation(id)` observes one call; `getConversations()` reads outside React.
+Replace the single active `CallSession` and its added/updated/removed listeners.
+Several calls can coexist, so select by ID.
+
+Incoming IDs are the exact `serverCallId`; outgoing calls require the application's
+`id`, returned unchanged. Remove UUID derivation, normalization and assumptions
+that native generates an outgoing ID. Platform UUIDs stay internal. `eventId`
+identifies one server event for deduplication. Incoming duplicate reports share
+admission; outgoing duplicate IDs and direction collisions reject on Android.
+
+| v1 field or API | v2 replacement |
+| --- | --- |
+| `CallSession`, `remoteParticipants` | `Conversation`, `members` |
+| `origin: incoming / outgoingApp / outgoingSystem` | Conversation `direction: incoming / outgoing`; action `origin: app / system` |
+| `isOnHold`, `options.hasVideo`, `incomingCallEvent` | `status === "held"`, `isVideo`, `payload` |
+| `startOutgoingCall` | `startConversation({ id, to, video })` |
+| `reportIncomingCall` | `reportIncomingConversation(payload)`; inspect its typed outcome |
+| `answerCall` | `joinConversation(id)`; native answers a ringing call |
+| `fulfillIncomingCallConnected`, `failIncomingCallConnected` | Remove fulfill tokens; report actual transport progress with `reportConversation` |
+| `endCall`, `setMuted`, `setHeld` | `endConversation(id)`, `setMuted(id, muted)`, `setHeld(id, held)` |
+| `reportOutgoingCallConnected`, `reportCallEnded` | `reportConversation(id, { type: "connected" })` or `{ type: "ended", reason }` |
+| `playDTMF` | `playTones(id, digits)` when supported; Android rejects with `unsupported` |
+| Audio-session and route listeners | `useAudioRoutes()`, `selectAudioRoute(route.id)`, audio lifecycle events |
+| VoIP push registration/listeners | Native registration at launch; `usePushToken()` returns `{ type: "apns-voip" / "fcm", value }` or `null` |
+| `addCallIntentReceivedListener` | `useConversationEvent("dialRequest", listener)` |
+
+Read the [SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/react-native.md)
+for all shared APIs, statuses, failure causes and events. Check each conversation's
+capabilities; Android also rejects merging and does not support call previews.
+
+## Place calls and observe native actions
+
+Register one handler at module scope before React mounts. Its required `start`
+places outgoing calls; optional `join` places iOS preview joins. Honor the supplied
+`AbortSignal` and deadline. Resolving confirms placement; report connected when the
+transport actually connects. The handler must not await its own command's promise.
 
 ```ts
-import { getConversations, useConversations } from "expo-callkit-telecom";
-import type { Caller, ConversationId } from "expo-callkit-telecom/types";
+import {
+  setConversationHandler,
+  startConversation,
+} from "expo-callkit-telecom";
+import type { Conversation } from "expo-callkit-telecom/types";
+
+declare function placeCall(call: Conversation, signal: AbortSignal): Promise<void>;
+
+setConversationHandler({ start: (call, { signal }) => placeCall(call, signal) });
+
+export function callAlice(serverCallId: string) {
+  return startConversation({
+    id: serverCallId,
+    to: { id: "alice", displayName: "Alice" },
+    video: false,
+  });
+}
 ```
 
-Replace the single active `CallSession` and its added/updated/removed listeners
-with the immutable conversation list. Several calls can coexist; select one by
-its returned `ConversationId`, rather than treating the first array element as
-the active call. `useConversation(id)` subscribes to one conversation. The native
-runtime reads the synchronous native snapshot before handler attachment; an
-async refresh follows. A late JS observer can recover current calls without
-replaying v1 listener events.
-
-| v1 field or assumption | v2 replacement / breaking change |
-| --- | --- |
-| `CallSession`, `remoteParticipants` | `Conversation`, `members`; outgoing/member identity remains `Participant`. |
-| `origin: incoming / outgoingApp / outgoingSystem` | `direction: incoming / outgoing`; an action's context separately supplies `origin: app / system`. |
-| `status: requesting` | Outgoing calls use `dialing`; statuses also include `held` and `ending`. Rewrite exhaustive switches. |
-| `isOnHold`, `options.hasVideo`, `incomingCallEvent` | `status === "held"`, `isVideo`, `payload`. |
-| `requestId` from an answer event | No public fulfill token; native owns action settlement and deadlines. |
-| A handler resolved, therefore media is connected | `connectedAt` follows a connected transport report, not handler fulfillment. |
-| Any string is a call ID | Use the branded ID returned by the API or snapshot. Do not substitute `serverCallId` or cast an arbitrary string. |
-| An ended call has only a reason | A conversation that ended as `failed` also carries `ended.failure.kind` when the platform knows the cause, such as `notPlaced` or `media`. [`EndedFailureKind`](https://github.com/relayphone/ios-voip-sdk/blob/main/expo/src/conversations/types.ts) lists the kinds each platform reports. |
-
-Incoming conversation UUIDs use UUIDv5 with namespace
-`d460ee4a-efbc-5b0d-8035-0b915bf9551a` over the exact UTF-8 `serverCallId` bytes.
-Do not trim or case-fold that server identity. Outgoing IDs are returned by
-`startConversation`; applications should treat both kinds as opaque native IDs.
-`eventId` still identifies a transport delivery for deduplication, not a second
-genuine call. The accepted [RFC](https://github.com/relayphone/expo-callkit-telecom/blob/v2/rfcs/0001-v2-conversations-api.md) and
-[current SDK types](https://github.com/relayphone/ios-voip-sdk/blob/main/expo/src/conversations/types.ts)
-describe the full model.
-
-## Map the v1 API
-
-The left column comes from the
-[v1 source](https://github.com/relayphone/expo-callkit-telecom/blob/bc335010313712617ffe690ac10936309b0a6e26/src/Calls.ts).
-The right column is the current v2 runtime on both platforms.
-
-| v1 API | v2 migration |
-| --- | --- |
-| `getActiveCallSession`, `addCallSessionAddedListener`, `addCallSessionUpdatedListener`, `addCallSessionRemovedListener` | `getConversations()`, `useConversations()`, `useConversation(id)`. State replaces those event subscriptions. |
-| `startOutgoingCall(recipient, { hasVideo })`, `addOutgoingCallStartedListener` | `startConversation({ to: recipient, video })`; signaling belongs in the module-scope handler's `start`. |
-| `reportIncomingCall`, `addIncomingCallReportedListener` | `reportIncomingConversation(payload)` returns a typed outcome. Native push intake also emits `incomingConversationOutcome` when JS is alive. |
-| `answerCall`, `addCallAnsweredListener` | `joinConversation(id)` requests an in-app answer. The native join policy handles system answers without JS; the explicit handler policy invokes `handler.join`. |
-| `fulfillIncomingCallConnected`, `failIncomingCallConnected` | Remove the fulfill-token flow. Under handler policy resolve/reject `join`; native policy owns its Join. Report actual media progress separately with `reportConversation`. |
-| `reportOutgoingCallConnected` | `reportConversation(id, { type: "connected" })`. The same report describes connected transport state for incoming calls. |
-| `endCall`, `addCallEndedListener` | `endConversation(id)` for a local request; put handler-owned signaling cleanup in `handler.end` and derive UI state from snapshots. |
-| `reportCallEnded`, `addReportedCallEndedListener` | `reportConversation(id, { type: "ended", reason })` for a known conversation. For a backend signal keyed by `serverCallId`, use `receiveCallEnded` below. Reports bypass the action handler. |
-| `setMuted`, `addSetMutedActionListener` | `setMuted(id, muted)` and optional `handler.mute(conversation, context)`, whose context includes `muted`. Observe `isMuted`. |
-| `setHeld`, `addSetHeldActionListener` | `setHeld(id, held)` and optional `handler.hold`, whose context includes `held`. Observe `status === "held"`. |
-| `reportVideo`, `addVideoChangedListener` | `reportConversation(id, { type: "updated", video })`; observe `isVideo`. This reports state; it does not create a camera track. |
-| `playDTMF`, `addDTMFListener` | `playTones(id, digits)` and optional `handler.tones`, whose context includes `digits`. |
-| `getAudioSession`, `addAudioRouteChangedListener`, `setAudioSessionPortOverride` | `useAudioRoutes()` and `selectAudioRoute(route.id)` using a currently available opaque route ID. There is no speaker boolean override. |
-| `addAudioSessionActivatedListener`, `addAudioSessionDeactivatedListener` | `useConversationEvent("audioActivated", callback)` / `"audioDeactivated"`. Watch the missing/failed activation events too. |
-| `setRTCAudioSessionConfiguration`, `prepareAudioSessionForCall`, `restoreAudioSession` | Remove JS audio-session ownership. Native media adapters coordinate activation and teardown with Core-Telecom on Android and LiveCommunicationKit on iOS (see `mediaAdapter` under [iOS](#ios)). |
-| `getCaptureSession` | No equivalent v2 export. The host manages permission/UI needs; conversation state is not a camera-permission API. |
-| `registerVoIPPush`, `getVoIPPushToken`, `useVoIPPushToken`, `addVoIPPushTokenUpdatedListener` | Native registration starts at launch; use `usePushToken()` or the `pushTokenUpdated` hook event. `{ token, type: "APNS_VOIP" / "FCM" }` becomes `{ value, type: "apns-voip" / "fcm" }`, or `null`. |
-| `addCallIntentReceivedListener` | Shared replacement: `useConversationEvent("dialRequest", ...)`. On iOS, a call intent from Recents, Siri or Contacts that arrives before a listener waits for the first `conversationEvent` listener. |
-
-Hooks belong in components; the v1 imperative `add*Listener` helpers are not
-compatibility aliases. Register the one `setConversationHandler` at module scope,
-before mounting React. Its `start` and `end` methods are required; `join` is
-required for the explicit handler join policy and bypassed by native Join.
-Honor `context.signal` cancellation and the native ISO deadline, including handler
-replacement. Do not extend the deadline with a JS timer. Optional hold/mute/tones
-methods may accept by omission. Commands resolve on system acceptance, while
-reports communicate transport facts. Inspect capabilities; Android
-`mergeConversations` currently rejects with `unsupported`.
+Remove handler `end`, `hold`, `mute` and `tones` callbacks. Answer, end, hold and
+mute run natively, including before JavaScript loads. Observe snapshots and
+`actionPerformed`, with its `app` or `system` origin, for completed actions.
+Server reports do not create performed actions. With the default policy, an app
+start without a handler fails immediately. See the [placement contract](./canonical-contract.md)
+for deadlines and Android admission ordering.
 
 ## Replace the incoming caller child
 
-v1 inferred a handle from a participant-like `{ id, phoneNumber?, email? }`.
-v2 requires an explicit `Caller`; the old child is invalid:
+Replace v1's participant-like caller with an explicit `Caller`:
 
 ```ts
 import type { IncomingCallPayload } from "expo-callkit-telecom/types";
 
-const payload: IncomingCallPayload = {
+export const invitation: IncomingCallPayload = {
   eventId: "delivery-123",
   serverCallId: "call-456",
-  caller: {
-    handleType: "phone",
-    value: "+14155551234",
-    displayName: "Jane Smith",
-    hostContactID: "host-contact-42",
-  },
+  caller: { handleType: "phone", value: "+14155551234", displayName: "Alice" },
   hasVideo: false,
 };
 ```
 
-`handleType` is `phone`, `email` or `generic`; `value` and `displayName` are
-required. Phones normalize permitted formatting to E.164; no region or extension
-is guessed. `hostContactID` is optional and opaque: it is not an Android Contacts
-row ID or permission to bypass DND. The normalized communication URI associates
-the call with Android's notification Person/contact matching. Outgoing `to` and
-snapshot `members` still use `Participant`, so do not replace all participant
-objects with Caller. See [validation and projection](./contracts/android-caller.md).
+`handleType` is `phone`, `email` or `generic`. Phone handles require an international
+country code. Outgoing `to` and snapshot `members` remain `Participant` values.
+Follow the [caller contract](./contracts/android-caller.md) and [push formats](./voip-push.md).
 
-FCM retains the `data.messageType` and JSON-string `data.incomingCall` envelope.
-Update the server's inner caller child before upgrading the client. Put optional
-short-lived credentials in `incomingCall.media`, never in `metadata`; media is
-removed from public snapshots. The [quick-start](./android-quick-start.md)
-describes the LiveKit push contract and native WebRTC fetcher path.
+Incoming reports return a typed outcome rather than an unconditional ID. Only a
+`reported` outcome proves Android admission; it does not prove audible ringing.
+Filtering, capacity and failure do not create a usable call ID. iOS can also
+return `previewed`. Android filtered calls terminate and remove the notification;
+a filtered failure records its cause. See [incoming policy](./contracts/android-incoming-policy.md).
 
-## Handle outcomes and answered-elsewhere signals
+When another endpoint answers, send `receiveCallEnded({ eventId, serverCallId,
+reason: "answeredElsewhere" })` or its native push equivalent. Acceptance does not
+mean UI removal has completed. Android publishes terminal state before the
+correlated event and removes the call; iOS can retain a preview. See
+[server end signals](./platform-notes.md#ending-a-call-from-the-server).
 
-`reportIncomingConversation` no longer resolves `void`. Branch on
-`outcome.status`: `reported` includes an ID; `filtered` includes
-`reason: "doNotDisturb" | "blockList" | "other"`; `atCapacity` includes no ID;
-`failed` includes a typed error. A rejected/filtered invitation is not a created
-conversation. Do not continue to answer or report connected without a reported
-ID. Native push intake uses the same outcome envelope through the
-`incomingConversationOutcome` event and a native hook that can run without JS.
+## Replace plugin and media configuration
 
-On Android, `reported` proves Core admission, not audible ringing. Priority DND
-can still allow a matching contact or repeat caller. Caller matching requires
-existing OS authorization; if unavailable, native intake leaves presentation to
-Android. `blockList` is the app's native policy hook, not an automatic Android
-system block-list lookup. A later policy change can filter a ringing prewarmed
-call and close its media. See [native policy/outcomes](./contracts/android-incoming-policy.md)
-and the [Android/iPhone comparison](./research/focus/android-results.md#iphone-comparison-and-host-controlled-breakthrough).
+Configure one `expo-callkit-telecom` plugin entry. It invokes the SDK's supported
+iOS plugin; the SDK package supplies its native sources. Remove the old provider,
+manual SDK Git pod pin and duplicate SDK plugin configuration through
+[clean regeneration](./canonical-contract.md#plugin-composition-and-native-project-upgrades).
 
-When another endpoint takes the call, send the server identity rather than
-pretending the local user hung up:
+- Remove `callingFramework`, `defaultDialtone` and `androidEventReceiver`.
+- Remove `joinPolicy`; Android no longer has a handler-versus-native answer policy.
+- Use `androidNativeMedia: "livekit" | "none"` to select Android native media.
+  Its default is `"none"`, which leaves media to the app and creates no native session.
+- Use `mediaAdapter: "webrtc" | "none"` for SDK audio integration. LiveKit React
+  Native uses `"webrtc"`; `"livekit"` is not a `mediaAdapter` value.
 
-```ts
-import { receiveCallEnded } from "expo-callkit-telecom";
-
-const accepted = await receiveCallEnded({
-  eventId: "ownership-event-789",
-  serverCallId: "call-456",
-  reason: "answeredElsewhere",
-});
-```
-
-The boolean acknowledges a known incoming invitation, not completed UI removal.
-The signal bypasses the End handler and closes native media; terminal state
-precedes the once-only `answeredElsewhere` event
-`{ conversationId, serverCallId, eventId }`. Local hangup still uses
-`endConversation`. Server signals are deduplicated and can also end a known held
-or connected incoming call; do not use them as tombstones for future calls.
-On Android API34+ the transactional platform uses supported REMOTE(3) plus the
-reason string, preserving the SDK's `answeredElsewhere` semantics; visible UI can
-remain for Android's heads-up minimum. See the [contract and measured limits](./contracts/android-answered-elsewhere.md).
-
-## Remove v1-only plugin options
-
-Prebuild fails while the plugin's configuration still sets an option that v2
-removed, so an app that relies on one doesn't build without noticing. Remove it:
-
-| Removed option | What v1 did | Use instead |
-| --- | --- | --- |
-| `callingFramework` (iOS) | Chose CallKit or LiveCommunicationKit. | Nothing: iOS always uses LiveCommunicationKit. See [iOS](#ios). |
-| `defaultDialtone` (Android) | Looped one of `sounds` while an outgoing call connected. | Play a ringback tone from the app while the conversation's `status` is `dialing`, or let your media carry the callee's ringback. Drop the sound from `sounds` if nothing else uses it. |
-| `androidEventReceiver` (Android) | Registered a `BroadcastReceiver` for call events that couldn't reach JavaScript, such as a decline while the app was killed. | The conversation handler's `end`, which receives a decline with `origin: "system"`; native FCM intake starts JavaScript when it reports a call. See [Platform notes](./platform-notes.md#declined-calls-without-javascript). Delete the receiver class. |
-
-v1's Android full-screen incoming-call screen is gone too. An incoming call uses
-the system's UI: Core-Telecom's call with a call-style notification, whose
-full-screen intent opens the app's launch activity on a locked device. Show your
-own call UI there. See [Platform notes](./platform-notes.md#incoming-call-ui).
-
-## Move answer-time media work before Answer
-
-Android's default policy is native answer plus pre-warm. Select the native media
-provider and credential source in typed plugin configuration, rebuild, and
-register any native fetcher/authentication provider during `Application.onCreate`.
-The built-in LiveKit and WebRTC sessions and the HTTPS credentials fetcher run on
-the LiveKit media engine, which only `mediaAdapter: "livekit"` adds to the build;
-without it, register your own session in `NativeMediaRegistry.factories`.
-There is no JS credential callback or feature flag. Reporting to Core happens
-first; then permitted invitations warm native media and the existing JS runtime.
-Remote subscription/decoding stays ready with output muted and physical capture
-off. Native Answer releases the already prepared path after Core audio authority,
-without waiting for a JS Join handler or renegotiating at Answer.
-
-Choose `{ type: "handler" }` explicitly for an app that retains JS-owned media,
-and implement its cancellation-aware `join` method. A successful handler settles
-the action; only the actual transport can report connected. The checked-in
-example deliberately uses this media-free handler flow, so its Connect step is
-not evidence of native Room audio. See [Android quick-start](./android-quick-start.md)
-and [native media lifecycle](./contracts/android-native-media.md) for the separate
-real-media fixtures and cleanup requirements.
+Android's native LiveKit path uses short-lived incoming push credentials and
+prepares before Answer. Capture and audible output wait for Core-Telecom audio
+authority. There is no built-in HTTP credential fallback. Follow the
+[Android guide](./android-quick-start.md) and [native lifecycle contract](./contracts/android-native-media.md).
 
 ## iOS
 
-iOS 26 or later. The module runs ios-voip-sdk's `VoIPClient` from launch, through
-an app delegate subscriber, before JavaScript loads, so a VoIP push that launches
-the app is reported and the user can answer before JavaScript runs.
-
-- **Calling framework.** Calls are presented with LiveCommunicationKit, not CallKit,
-  and there is no option to choose. A Focus's allowed people and Repeated Calls don't
-  make a call ring; the call becomes a call preview instead. CallKit's Call Directory
-  extension doesn't apply, and CarPlay is unverified. Prebuild fails while the
-  plugin's configuration still sets the removed `callingFramework` option. See
-  ios-voip-sdk's [ADR 0002](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/adr/0002-one-calling-framework-per-build.md).
-- **SDK source.** Prebuild adds ios-voip-sdk's pod to the Podfile at a pinned
-  revision; don't add the SDK's own Expo module to the app as well.
-- **Native answer.** The SDK answers, ends, holds, mutes and plays tones itself, then
-  tells the app. `joinPolicy` and media credentials are Android-only. Only `start`,
-  and `join` from a call preview, wait for the handler: resolving them confirms that
-  the app placed the call. Rejecting them, or missing their deadline, fails a start,
-  whose conversation ends with `failure.kind` `notPlaced`, and returns a join to its
-  call preview. As on Android, the app's `startConversation` or `joinConversation`
-  then rejects with `handler_failed` or `deadline_exceeded`. `end`, `hold`, `mute`
-  and `tones` reach the handler after they happened, and their results are ignored.
-  An answer doesn't reach the handler; observe `status === "connecting"`.
-- **Call previews.** A call that the system filtered (Do Not Disturb, a Focus or the
-  block list), or that was answered elsewhere, becomes `status === "previewing"`
-  with a `previewReason`, instead of ringing or ending. `joinConversation` joins it
-  and `endConversation` stops following it. `reportIncomingConversation` returns
-  `"previewed"` for such a call. The `callNotifications` option reaches the user
-  with a call notification from the caller, and `callPreviewActivities` shows the
-  preview as a Live Activity; `focusFilter` reads your Focus filter's state for your
-  servers. See [iOS: Focus and call previews](./ios-call-previews.md).
-- **Identity.** A conversation's ID is the SDK's call ID: the `serverCallId` of an
-  incoming call, and a new UUID for an outgoing one. Phone numbers must be E.164.
-- **Media.** `mediaAdapter: "webrtc"` or `"livekit"` coordinates WebRTC's
-  `RTCAudioSession` in manual audio mode, so the app must link a WebRTC build, such
-  as `@livekit/react-native-webrtc`. `"none"` leaves the audio session to the app.
-  To join a call's media natively, before JavaScript loads, register a Swift
-  `CallMedia` instead; see [iOS: native media](./ios-native-media.md).
-- **System call UI.** `includesCallsInRecents`, `defaultRingtoneIos` and
-  `iconTemplateIos` set LiveCommunicationKit's `ConversationManager.Configuration`;
-  see [Getting started](./getting-started.md).
-- **Simulator.** `simulator: true` presents calls in the iOS Simulator in Debug
-  builds, with ios-voip-sdk's simulator runtime. Release builds and devices are
-  unaffected.
-- **Not on iOS.** `outgoingCallTimeout` (`incomingCallTimeout` also bounds dialing)
-  and `video` in an `updated` report.
+The SDK supplies LiveCommunicationKit, PushKit, native media registration, call
+previews, communication notifications and Focus integration. Use its
+[React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/react-native.md)
+for requirements, plugin options and shared behavior, and
+[native media guidance](./ios-native-media.md) for media prepared before JavaScript.
+Call previews and `providerReset` are iOS-only. Rebuild the application after
+changing native configuration.
