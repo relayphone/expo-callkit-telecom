@@ -19,7 +19,8 @@ installed Expo bridge; network FCM delivery is outside this fixture.
 Incoming answer/hold/end and outgoing placement/connect/end use the public JS API.
 Answered elsewhere proves an ended snapshot, one correlated event and removal. DND filtering
 proves the filtered outcome, teardown and zero media/JS warmup. Android may briefly admit and
-then suppress a filtered incoming call. Its terminal snapshot is recorded; no call or
+then suppress a filtered incoming call. Its terminal snapshot must carry `reason: "failed"`
+and `failure: { kind: "filtered", cause: "doNotDisturb" }`, with no performed end action; no call or
 notification remains. **Preview join is unsupported**, recorded separately and never counted
 as a passed journey. The example disables native media; existing native suites retain real
 media hold controls, cold/system actions, duplicate/end races and the 1000 ms removal gate.

@@ -246,7 +246,7 @@ class ConversationEngine(val context: Context) {
                 // App block-list/other rejections are never presented.
                 if (appFilter == null) ConversationService.show(context, id, current.state)
                 if (filter != null && current.state["status"] == "ringing") {
-                    closeFiltered(id)
+                    closeFiltered(id, filter.reason)
                     filtered(filter)
                 } else {
                     current.visible = true
@@ -280,9 +280,9 @@ class ConversationEngine(val context: Context) {
         emit("conversationEvent", mapOf("type" to "incomingConversationOutcome", "payload" to mapOf(
             "eventId" to payload["eventId"], "serverCallId" to payload["serverCallId"], "outcome" to outcome)))
     }
-    private suspend fun closeFiltered(id: String) {
+    private suspend fun closeFiltered(id: String, reason: NativeIncomingFilterReason) {
         call(id).media?.close("filtered")
-        finish(id, "local")
+        finish(id, "failed", EndedFailure.filtered(reason))
     }
     /** Also closes an already-prewarmed ringing call if the user's policy changes. */
     fun recheckIncomingPolicy() {
@@ -296,7 +296,7 @@ class ConversationEngine(val context: Context) {
                     @Suppress("UNCHECKED_CAST") val payload = current.state["payload"] as? Map<String, Any?> ?: continue
                     val filter = runCatching { incomingPolicy.evaluate(payload) }.getOrNull() ?: continue
                     if (calls[id] !== current || current.state["status"] != "ringing") continue
-                    closeFiltered(id)
+                    closeFiltered(id, filter.reason)
                     val outcome = filtered(filter)
                     val now = android.os.SystemClock.elapsedRealtime()
                     recent["event:${payload["eventId"]}"] = now to outcome
