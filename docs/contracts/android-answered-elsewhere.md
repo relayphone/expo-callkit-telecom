@@ -93,7 +93,7 @@ API35 configures a [2,000 ms heads-up minimum](https://android.googlesource.com/
 Incoming notifications carry a full-screen intent, making heads-up entries
 [sticky](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/packages/SystemUI/src/com/android/systemui/statusbar/policy/BaseHeadsUpManager.java#836);
 [SystemUI may retain a cancelled entry until its earliest removal time](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/packages/SystemUI/src/com/android/systemui/statusbar/notification/collection/coordinator/HeadsUpCoordinator.kt#662).
-The [six-sample results](./android-answered-elsewhere-results.md) report native
+The [archived six-sample results](https://github.com/relayphone/expo-callkit-telecom/blob/archive/android-telecom-research/docs/contracts/android-answered-elsewhere-results.md) report native
 completion and visible-card removal separately, including runtime policy and
 observer cost. They do not establish a universal floor or physical-device timing.
 
