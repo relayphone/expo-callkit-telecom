@@ -52,60 +52,28 @@ setup and is not part of the emulator latency measurements.
 
 ## Configure a host for native answer and audio
 
-The Android default is native answering with pre-warm. Choose an explicit typed
-configuration for your host rather than relying on the demo's handler policy.
-
-The built-in media sessions run on the LiveKit media engine: livekit-android, its
-WebRTC build and OkHttp, from Maven Central and JitPack. Only
-`mediaAdapter: "livekit"` adds it to the app's build. That covers the built-in
-LiveKit session, the built-in raw WebRTC session, which reuses LiveKit's WebRTC
-runtime, and the built-in HTTPS credentials fetcher. With `"webrtc"`, the default, or `"none"`, the
-build has no media dependency: native media then needs your own session in
-`NativeMediaRegistry.factories` and credentials from a named native fetcher.
-Prebuild fails for a native `joinPolicy` with `media: "livekit"` but without
-`mediaAdapter: "livekit"`.
-
-For built-in LiveKit with pushed credentials and a native HTTPS fallback:
+Select the Android native LiveKit engine independently of the SDK's Apple audio
+adapter, then rebuild the native application:
 
 ```ts
-import type { JoinPolicy } from "expo-callkit-telecom/types";
-
-const joinPolicy = {
-  type: "native",
-  media: "livekit",
-  credentials: "fromPush",
-  prewarm: true,
-  fallback: {
-    type: "http",
-    baseUrl: "https://api.example.com",
-    authentication: "device-auth",
-  },
-} satisfies JoinPolicy;
-
-// Place this tuple in app.config.ts's expo.plugins array, then rebuild:
-const callingPlugin: [string, { mediaAdapter: "livekit"; joinPolicy: JoinPolicy }] = [
-  "expo-callkit-telecom", { mediaAdapter: "livekit", joinPolicy },
+const callingPlugin: [string, { androidNativeMedia: "livekit" }] = [
+  "expo-callkit-telecom",
+  { androidNativeMedia: "livekit" },
 ];
 ```
 
-During `Application.onCreate`, register the `device-auth` entry in
-`NativeMediaAuthenticationProviders.providers`. Its suspending native function
-returns `NativeMediaAuthentication(bearer, deviceId)` from the host's native auth
-store. It must work without JS. The built-in fetcher POSTs
-`/v1/calls/{percent-encoded-serverCallId}/media-credentials` with
-`{ eventId, deviceId }` and Bearer authentication. It uses HTTPS, refuses
-redirects and bounds network work. The native fetcher alternative is
-`credentials: { type: "nativeFetcher", name: "your-native-fetcher" }`, registered
-in `NativeMediaRegistry.fetchers` at launch. No bearer belongs in plugin config.
+The default `androidNativeMedia: "none"` leaves media to the application. With
+`"livekit"`, production native media uses fresh LiveKit credentials from the
+incoming push. There is no built-in HTTP credentials endpoint, authentication
+provider registry or configurable HTTP fallback. Supply a short-lived token and
+expiry from your backend; never place a bearer in plugin configuration.
 
-For raw WebRTC, keep `mediaAdapter: "livekit"` and select `media: "webrtc"` with
-the HTTP or named native fetcher;
-implement the [SDP/state endpoint contract](./contracts/android-webrtc.md).
-The shared `incomingCall.media` push object is LiveKit-only; WebRTC credentials
-come from its native fetcher. Read the complete
-[LiveKit/native media contract](./contracts/android-native-media.md) before
-adapting the example. Remove its synthetic connected reports for native media:
-the native adapter reports connected after activation. Your server must treat
+The independent media-server fixture registers a named fetcher inside the
+instrumentation APK. It retains HTTP404/410, cancellation, hold and cleanup
+controls; that fixture lookup is not packaged in the library. Raw WebRTC signaling
+also remains an instrumentation research path, outside the public configuration.
+See the [native media contract](./contracts/android-native-media.md) and
+[composed package contract](./canonical-contract.md). Your server must treat
 prejoined and answered as distinct states.
 
 ### Send the incoming payload
@@ -163,8 +131,8 @@ the pending iOS prejoin credential policy is identical.
 1. Native FCM intake reports through Core-Telecom `addCall` first, then resolves
    the incoming policy. A filtered/capacity/failed result does not start media.
 2. For an accepted invitation, native media and the existing JS host receive
-   warm requests independently. LiveKit stays joined and subscribed; WebRTC
-   negotiates once. Remote decoding and muted playback warm before Answer.
+   warm requests independently. LiveKit stays joined and subscribed.
+   Remote decoding and muted playback warm before Answer.
    Physical microphone capture and audible output remain off.
 3. The user answers in system UI, or the host calls `joinConversation(id)`.
    Native policy bypasses the JS Join handler. It waits for preparation and the
@@ -174,8 +142,9 @@ the pending iOS prejoin credential policy is identical.
    and output is muted while receive decoding stays warm. Resume waits for
    native audio authority again. Decline, incoming timeout, filtering and remote
    end close the owned media generation and Core call; canceled work cannot
-   restore it. Missing/expired credentials use the configured fallback, with at
-   most one answer-time preparation retry. HTTP 404/410 abandons that preparation.
+   restore it. Missing or expired push credentials fail preparation, with at most
+   one answer-time preparation retry. HTTP404/410 controls apply to the
+   instrumentation-only named fetcher.
 
 Core-Telecom owns focus/mode; the media adapter does not acquire its own audio
 authority. The native starting-route preference is cached without delaying the

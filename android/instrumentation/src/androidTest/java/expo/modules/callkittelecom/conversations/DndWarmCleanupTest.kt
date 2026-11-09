@@ -47,8 +47,9 @@ class DndWarmCleanupTest {
             NativeIncomingOutcomes.observers += outcomeObserver
             val output = File(context.filesDir, "dnd-warm-cleanup.json")
             output.delete()
-            NativeMediaAuthenticationProviders.providers["dnd-fixture"] = {
-                NativeMediaAuthentication(settings.getString("authentication"), "fixture-device")
+            val credentials = FixtureMediaCredentials({ FixtureMediaAuthentication(settings.getString("authentication"), "fixture-device") })
+            val previousFetcher = NativeMediaRegistry.fetchers.put("dnd-fixture") { payload ->
+                credentials.fetch(payload, settings.getString("baseUrl"))
             }
             engine.emit = { name, body ->
                 if (name == "conversationsChanged") for (call in (body["conversations"] as List<*>).filterIsInstance<Map<*, *>>()) {
@@ -61,7 +62,7 @@ class DndWarmCleanupTest {
             }
             engine.nativeMedia = AndroidNativeMedia.LIVEKIT
             engine.policy = JSONObject(mapOf("type" to "native", "media" to "livekit", "credentials" to "fromPush",
-                "fallback" to mapOf("type" to "http", "baseUrl" to settings.getString("baseUrl"), "authentication" to "dnd-fixture")))
+                "fallback" to mapOf("name" to "dnd-fixture")))
             val serverId = "dnd-warm-${android.os.SystemClock.elapsedRealtime()}"
             var id: String? = null
             try {
@@ -129,7 +130,8 @@ class DndWarmCleanupTest {
                 NativeIncomingFilters.evaluate = oldFilter
                 id?.let { value -> runCatching { engine.report(value, mapOf("type" to "ended", "reason" to "remoteEnded")) } }
                 NativeMediaSignals.observers -= mediaObserver; NativeIncomingOutcomes.observers -= outcomeObserver
-                NativeMediaAuthenticationProviders.providers.remove("dnd-fixture")
+                if (previousFetcher == null) NativeMediaRegistry.fetchers.remove("dnd-fixture")
+                else NativeMediaRegistry.fetchers["dnd-fixture"] = previousFetcher
                 engine.nativeMedia = previousMedia; engine.policy = previous; engine.emit = previousEmitter
             }
         }

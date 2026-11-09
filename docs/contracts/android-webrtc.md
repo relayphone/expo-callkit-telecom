@@ -1,28 +1,16 @@
-# Android native WebRTC
+# Android WebRTC instrumentation research
 
-The built-in `media: "webrtc"` session supports audio with a call-scoped HTTPS
-SDP exchange. It reuses the exact pinned LiveKit2.29.2 WebRTC runtime and its
-initialization/resource owner; it does not join a LiveKit room. So it is part of
-the LiveKit media engine, which the plugin's `mediaAdapter: "livekit"` adds to
-the build; set it along with `media: "webrtc"`. This avoids a
-second WebRTC binary and reinitialization while another factory is alive.
-The pinned SDK component boundary is compile-qualified in CI on every change.
+Raw WebRTC is an instrumentation research path, outside the public package
+configuration. Its adapter reuses the pinned LiveKit WebRTC runtime and a bounded
+HTTPS signaling helper; the credentials lookup is registered by the test APK as
+a named fetcher. The library no longer ships the HTTP credentials-fetch policy
+or native authentication registry. The shared incoming push media contract is
+LiveKit-only.
 
-```ts
-joinPolicy: {
-  type: "native", media: "webrtc",
-  credentials: {
-    type: "http", baseUrl: "https://api.example.com",
-    authentication: "device-auth",
-  },
-}
-```
-
-The native credentials endpoint returns `WebRTCMediaCredentials`: provider
-`webrtc`, an HTTPS `url`, a short-lived call-scoped `token`, Unix-seconds
-`expiresAt`, and optional `iceServers` with urls/username/credential. The shared
-APNs/FCM `incomingCall.media` object remains the existing LiveKit-only contract.
-Apps can also use a named native credentials fetcher. Neither fetcher waits for JS.
+The complete original setup and measurements are preserved on
+[archive/android-telecom-research](https://github.com/relayphone/expo-callkit-telecom/tree/archive/android-telecom-research).
+The independent fixture supplies an HTTPS signaling URL, short-lived token,
+expiry and ICE server configuration for each test attempt.
 
 The SDP endpoint accepts Bearer authentication and JSON:
 
@@ -63,7 +51,7 @@ subscription acknowledgment. CI artifacts and telemetry contain no SDP, ICE
 credentials, JWT or raw PCM. SDP and the scoped Bearer travel only to the configured
 HTTPS signaling endpoint.
 
-The HTTPS exchange is this library's explicit reference signaling contract.
+The HTTPS exchange is the retained research fixture's reference signaling contract.
 WebRTC itself does not specify application signaling; existing servers must
 implement this endpoint or provide compatible native negotiation through the
 existing native session registry.

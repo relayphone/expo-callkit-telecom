@@ -12,10 +12,10 @@ internal object WebRTCTerminalSignal {
             var httpErrorStatus = 0L
             var deadlineExpired = 0L
             try {
-                withTimeout(3000) { NativeHttpCredentials().post(url, token, snapshot) }
+                withTimeout(3000) { NativeMediaHttp().post(url, token, snapshot) }
                 delivered = 1L
             } catch (_: TimeoutCancellationException) { deadlineExpired = 1L }
-            catch (error: MediaCredentialsUnavailable) { httpErrorStatus = error.status.toLong() }
+            catch (error: NativeMediaHttpFailure) { httpErrorStatus = error.status.toLong() }
             catch (_: Exception) { /* Failure is reported numerically, without credentials. */ }
             finally {
                 NativeMediaSignals.emit(serverId, NativeMediaStage.TERMINAL_SIGNAL_COMPLETED,

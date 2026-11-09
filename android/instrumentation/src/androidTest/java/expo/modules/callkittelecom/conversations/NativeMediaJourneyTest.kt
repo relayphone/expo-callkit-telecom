@@ -73,12 +73,13 @@ class NativeMediaJourneyTest {
             output.delete()
             var warmRequests = 0
             var joinHandlerCalls = 0
-            NativeMediaAuthenticationProviders.providers["fixture"] = {
-                NativeMediaAuthentication(settings.getString("authentication"), "fixture-device")
+            val credentials = FixtureMediaCredentials({ FixtureMediaAuthentication(settings.getString("authentication"), "fixture-device") })
+            val previousFetcher = NativeMediaRegistry.fetchers.put("fixture") { payload ->
+                credentials.fetch(payload, settings.getString("baseUrl"))
             }
             engine.nativeMedia = AndroidNativeMedia.LIVEKIT
             engine.policy = JSONObject(mapOf("type" to "native", "media" to provider, "credentials" to "fromPush",
-                "fallback" to mapOf("type" to "http", "baseUrl" to settings.getString("baseUrl"), "authentication" to "fixture")))
+                "fallback" to mapOf("name" to "fixture")))
             engine.actions.resetBridge()
             engine.emit = { name, _ -> if (name == "handlerAction") joinHandlerCalls++ }
             val entry = NativeCallPush(engine) { warmRequests++ }
@@ -308,7 +309,8 @@ class NativeMediaJourneyTest {
             } finally {
                 for (id in owned) runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "failed")) }
                 NativeMediaSignals.observers -= observer
-                NativeMediaAuthenticationProviders.providers.remove("fixture")
+                if (previousFetcher == null) NativeMediaRegistry.fetchers.remove("fixture")
+                else NativeMediaRegistry.fetchers["fixture"] = previousFetcher
                 engine.nativeMedia = previousMedia; engine.policy = previousPolicy; engine.incomingTimeoutMillis = previousTimeout
                 engine.actions.resetBridge(); engine.emit = previousEmitter
             }
