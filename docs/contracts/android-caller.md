@@ -1,6 +1,6 @@
 # Typed incoming caller identity
 
-The Android v2 caller matches [SDK #150 at e25b64f](https://github.com/relayphone/ios-voip-sdk/blob/e25b64f71fb9b2c1ea884c1d39d965c131f00ac1/Expo/CALLER.md).
+Incoming callers use the SDK's [shared Caller contract](https://github.com/relayphone/ios-voip-sdk/blob/597c39137b51b2537ce60e15e6ecf86d281f5d86/expo/src/conversations/types.ts).
 `Participant` remains the outgoing/member model. Incoming callers now require:
 
 ```ts
@@ -40,9 +40,9 @@ Contacts row ID, nor does it grant starred/VIP or DND privileges.
 Both host reports and the FCM intake use this path. Invalid caller input returns
 the existing v2 failed outcome with `invalid_arguments`. Media credentials remain
 the fork's separate optional `incomingCall.media` extension; no credentials enter
-snapshots. iOS native wiring is unchanged.
+snapshots. The SDK supplies iOS caller handling.
 
-[Caller Swift validation](https://github.com/relayphone/ios-voip-sdk/blob/e25b64f71fb9b2c1ea884c1d39d965c131f00ac1/Sources/VoIPSDK/ConversationModels.swift#L44)
-provides the parity vectors. Instrumented tests cover normalization, strict field
+[Android caller tests](../../android/instrumentation/src/androidTest/java/expo/modules/callkittelecom/conversations/CallerTest.kt)
+cover normalization, strict field
 types, Unicode controls, projections and actual Android URI encoding; the complete
 Core, media, DND and release Expo journeys also run with the new fixture schema.
