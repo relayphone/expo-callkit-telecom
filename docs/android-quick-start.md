@@ -8,7 +8,7 @@ start with [Migrating from v1](./migrating-v1-to-v2.md).
 ## Run the example's signaling journey
 
 Use an Android native development build, with API 26 or later, microphone and
-notification permission. Prepare the pinned SDK and fork using [package evaluation](./sdk-package-evaluation.md),
+notification permission. Prepare the fork with the SDK release asset using [package evaluation](./sdk-package-evaluation.md),
 including SDK installation into `example/client`, before building the example.
 Then, from this fork's checkout:
 

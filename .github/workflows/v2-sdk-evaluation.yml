@@ -56,13 +56,13 @@ jobs:
           node --test tools/sdk-evaluation.test.ts
           node node_modules/typescript/bin/tsc -p tsconfig.sdk-evaluation.json
       - run: npm run build
-      - name: Install and check both tarballs in an isolated consumer
+      - name: Install the fork tarball with the SDK release URL in an isolated consumer
         run: node tools/sdk-evaluation.ts check-consumer "$RUNNER_TEMP/sdk-package" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/package-consumer"
       - name: Record evaluation provenance
         if: always()
         run: |
-          if [ -f "$RUNNER_TEMP/sdk-package/sdk-artifact.json" ]; then
-            cat "$RUNNER_TEMP/sdk-package/sdk-artifact.json" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$RUNNER_TEMP/sdk-package/SHA256SUMS" ]; then
+            cat "$RUNNER_TEMP/sdk-package/SHA256SUMS" >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Delete the temporary consumer and package
         if: always()

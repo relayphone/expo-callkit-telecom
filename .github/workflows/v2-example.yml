@@ -46,6 +46,7 @@ jobs:
       - uses: ./.github/actions/sdk-consumer
         with:
           project: example/client
+          install-mode: temporary-fork
       - run: bun run typecheck
         working-directory: example/client
       - run: bunx expo prebuild --platform android --no-install

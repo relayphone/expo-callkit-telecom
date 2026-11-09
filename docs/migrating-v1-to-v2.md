@@ -4,7 +4,7 @@ The fork's `v2` branch composes `@relayphone/ios-voip-sdk`. The SDK owns the sha
 TypeScript API and the sole Apple native provider; this package adds Android
 Core-Telecom and the composed config plugin. This is a breaking migration with
 no v1 compatibility API. Use [package evaluation](./sdk-package-evaluation.md)
-for the pinned packages; the inherited version does not identify a published v2
+for the fork tarball and SDK release asset; the inherited version does not identify a published v2
 release. Follow [Getting started](./getting-started.md), regenerate native projects
 and rebuild the development client.
 

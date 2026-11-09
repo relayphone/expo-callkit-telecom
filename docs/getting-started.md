@@ -3,9 +3,10 @@
 `expo-callkit-telecom` composes `@relayphone/ios-voip-sdk`. The SDK owns the shared
 conversations API and Apple native integration; this package supplies Android
 Core-Telecom and the composed config plugin. The fork's `v2` migration is evaluated
-from pinned source and SDK archives. Follow [package evaluation](./sdk-package-evaluation.md)
-to build the packages; the inherited package version does not identify a published
-v2 release.
+from a chosen fork checkout and the SDK's v0.4.0 release asset. Follow
+[package evaluation](./sdk-package-evaluation.md) to build the fork tarball and
+install it together with the SDK asset; the inherited fork version does not
+identify a published v2 release.
 
 ## Configure the native application
 
