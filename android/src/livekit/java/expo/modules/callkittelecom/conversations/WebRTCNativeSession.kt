@@ -42,6 +42,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
     override val isPrepared get() = prepared
     override fun setFailureListener(listener: () -> Unit) { failed = listener }
     private var pcm = NativePcmProbe(invitationId)
+    private var decoded = NativeDecodedAudioReadiness()
     private var warmth = NativeWarmAudio(invitationId)
 
     @Suppress("UNCHECKED_CAST")
@@ -64,9 +65,10 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
             PeerConnection.IceServer.builder(urls).setUsername(server["username"] as? String ?: "")
                 .setPassword(server["credential"] as? String ?: "").createIceServer()
         }
-        pcm.close(); warmth.close()
+        pcm.close(); decoded.close(); warmth.close()
         val attemptServer = serverId
-        val decode = NativePcmProbe(attemptServer).also { pcm = it }
+        val probe = NativePcmProbe(attemptServer).also { pcm = it }
+        val decode = NativeDecodedAudioReadiness().also { decoded = it }
         val heat = NativeWarmAudio(attemptServer).also { warmth = it }
         emit(NativeMediaStage.MEDIA_CONNECT_STARTED)
         val connected = CompletableDeferred<Unit>()
@@ -167,7 +169,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
             candidate.receivers.forEach { receiver -> (receiver.track() as? AudioTrack)?.let { track ->
                 remote += track; track.setEnabled(true)
                 emit(NativeMediaStage.REMOTE_TRACK_AVAILABLE)
-                track.addSink(decode.decoderSink); track.addSink(decode.answerSink)
+                track.addSink(probe.decoderSink); track.addSink(probe.answerSink); track.addSink(decode)
                 emit(NativeMediaStage.REMOTE_SUBSCRIBED)
             } }
             check(remote.isNotEmpty()) { "SDP answer has no audio" }
@@ -260,14 +262,14 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
         prepared = false; active = false
         pcm.disarm()
         transportProbe?.cancel(); transportProbe = null
-        remote.forEach { runCatching { it.removeSink(pcm.answerSink); it.removeSink(pcm.decoderSink) } }; remote.clear()
+        remote.forEach { runCatching { it.removeSink(pcm.answerSink); it.removeSink(pcm.decoderSink); it.removeSink(decoded) } }; remote.clear()
         runCatching { peer?.close(); peer?.dispose() }; peer = null
         runCatching { recording?.setAudioRecordEnabled(false) }; recording = null
         captureEnabled = false; pumpEnabled = false
         runCatching { microphone?.dispose() }; microphone = null
         runCatching { source?.dispose() }; source = null
         runCatching { owner?.release() }; owner = null
-        pcm.close(); warmth.close()
+        pcm.close(); decoded.close(); warmth.close()
     }
     override suspend fun close(reason: String) {
         if (closed) return

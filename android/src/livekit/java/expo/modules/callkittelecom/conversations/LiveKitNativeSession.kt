@@ -30,6 +30,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     private var failed: () -> Unit = {}
     override fun setFailureListener(listener: () -> Unit) { failed = listener }
     private var pcm = NativePcmProbe(invitationId)
+    private var decoded = NativeDecodedAudioReadiness()
     private var warmth = NativeWarmAudio(invitationId)
     private val tracks = mutableSetOf<RemoteAudioTrack>()
 
@@ -43,8 +44,9 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         require(java.net.URI(url).let { it.scheme == "wss" && it.host != null && it.userInfo == null })
         require((media["expiresAt"] as? Number)?.toLong()?.let { it > System.currentTimeMillis() / 1000 } == true)
         val token = media["token"] as? String ?: error("Missing media token")
-        pcm.close(); warmth.close()
-        val decode = NativePcmProbe(serverId).also { pcm = it }
+        pcm.close(); decoded.close(); warmth.close()
+        val probe = NativePcmProbe(serverId).also { pcm = it }
+        val decode = NativeDecodedAudioReadiness().also { decoded = it }
         val heat = NativeWarmAudio(serverId).also { warmth = it }
         val candidate = LiveKit.create(context, overrides = LiveKitOverrides(audioOptions = AudioOptions(
             audioHandler = NoAudioHandler(), disableAudioPrewarming = true, disableCommunicationModeWorkaround = true,
@@ -75,16 +77,16 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
                     NativeMediaSignals.emit(serverId, NativeMediaStage.REMOTE_SUBSCRIBED)
                     NativeMediaSignals.emit(serverId, NativeMediaStage.REMOTE_TRACK_AVAILABLE, mapOf("role" to 2L))
                     tracks += track; track.enabled = true
-                    track.addSink(decode.decoderSink); track.addSink(decode.answerSink)
+                    track.addSink(probe.decoderSink); track.addSink(probe.answerSink); track.addSink(decode)
                     remoteTrackReady.complete(Unit)
                 }
                 is RoomEvent.TrackUnsubscribed -> (event.track as? RemoteAudioTrack)?.let { track ->
                     NativeMediaSignals.emit(serverId, NativeMediaStage.REMOTE_UNSUBSCRIBED)
-                    tracks.remove(track); runCatching { track.removeSink(decode.decoderSink); track.removeSink(decode.answerSink) }
+                    tracks.remove(track); runCatching { track.removeSink(probe.decoderSink); track.removeSink(probe.answerSink); track.removeSink(decode) }
                 }
                 is RoomEvent.Disconnected -> if (!closed && room === candidate) {
                     room = null; transportJobs.forEach { it.cancel() }
-                    decode.close(); heat.close(); runCatching { candidate.release() }
+                    probe.close(); decode.close(); heat.close(); runCatching { candidate.release() }
                     if (active) failed()
                     currentCoroutineContext().cancel()
                 }
@@ -121,8 +123,8 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             NativeMediaSignals.emit(serverId, NativeMediaStage.PREJOINED)
         } catch (error: Throwable) {
             collector.cancel(); transportJobs.forEach { it.cancel() }
-            decode.close(); heat.close(); room = null
-            tracks.forEach { runCatching { it.removeSink(decode.decoderSink); it.removeSink(decode.answerSink) } }; tracks.clear()
+            probe.close(); decode.close(); heat.close(); room = null
+            tracks.forEach { runCatching { it.removeSink(probe.decoderSink); it.removeSink(probe.answerSink); it.removeSink(decode) } }; tracks.clear()
             microphone = null; publication = null; captureEnabled = false; recording = null
             runCatching { candidate.release() }
             throw error
@@ -195,8 +197,8 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     }
     override suspend fun close(reason: String): Unit = withContext(Dispatchers.Main.immediate) {
         if (closed) return@withContext
-        closed = true; active = false; pcm.close(); warmth.close()
-        scope.cancel(); tracks.forEach { runCatching { it.removeSink(pcm.decoderSink); it.removeSink(pcm.answerSink) } }; tracks.clear()
+        closed = true; active = false; pcm.close(); decoded.close(); warmth.close()
+        scope.cancel(); tracks.forEach { runCatching { it.removeSink(pcm.decoderSink); it.removeSink(pcm.answerSink); it.removeSink(decoded) } }; tracks.clear()
         microphone?.let { track ->
             runCatching { room?.localParticipant?.unpublishTrack(track) }
             runCatching { track.stopPrewarm(); track.dispose() }
