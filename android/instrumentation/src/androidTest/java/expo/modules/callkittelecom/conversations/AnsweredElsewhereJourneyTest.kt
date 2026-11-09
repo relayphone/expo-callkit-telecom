@@ -15,6 +15,12 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import java.io.File
+import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.ResolverStyle
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.*
@@ -35,6 +41,7 @@ class AnsweredElsewhereJourneyTest {
     @Volatile private var lastPlatform: Map<String, Any?> = emptyMap()
     @Volatile private var uiSummary: Map<String, Any?> = emptyMap()
     private val uiScans = ConcurrentLinkedQueue<Map<String, Any?>>()
+    private val platformPolls = ConcurrentLinkedQueue<Map<String, Any?>>()
     private var expansionAttempts = 0
     private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
         instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }
@@ -238,33 +245,116 @@ class AnsweredElsewhereJourneyTest {
                 notification.notification.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name?.toString() == label
         }
 
-    private data class NativeEnd(val observedNanos: Long, val code: Int, val reason: String)
-    private data class NativeCompletion(val terminal: Long, val event: Long, val empty: Long,
-        val notification: Long, val native: NativeEnd)
+    private data class RecordedDisconnect(val wallMillis: Long, val code: Int, val reason: String)
+    private data class NativeEnd(val recorded: RecordedDisconnect, val eventObservedNanos: Long,
+        val observedNanos: Long)
+    private data class AppCompletion(val terminal: Long, val event: Long, val empty: Long,
+        val notification: Long)
     private data class Completion(val terminal: Long, val event: Long, val empty: Long,
         val notification: Long, val ui: UiGone, val native: NativeEnd)
-    private suspend fun platformGone(callId: String): NativeEnd = withContext(Dispatchers.IO) {
+    /** API35 EventManager records HH:mm:ss.SSS in the system timezone at event creation. */
+    private fun recordedDisconnect(line: String, callId: String, signalWallMillis: Long,
+        zone: ZoneId): RecordedDisconnect {
+        val fields = line.trim().split(',', limit = 4)
+        require(fields.size == 4 && fields[1] == callId && fields[2] == "SET_DISCONNECTED")
+        require(Regex("[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}").matches(fields[0])) {
+            "Unexpected API35 Telecom timestamp format"
+        }
+        val formatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS", Locale.ROOT)
+            .withResolverStyle(ResolverStyle.STRICT)
+        val time = LocalTime.parse(fields[0], formatter)
+        val signalDate = Instant.ofEpochMilli(signalWallMillis).atZone(zone).toLocalDate()
+        // The dump has no date/offset. Resolve the closest valid instant, including midnight
+        // and either offset of a repeated local hour; never coerce an invalid local time.
+        val candidates = (-1L..1L).flatMap { day ->
+            val local = signalDate.plusDays(day).atTime(time)
+            zone.rules.getValidOffsets(local).map { local.toInstant(it).toEpochMilli() }
+        }
+        val recorded = candidates.minBy { kotlin.math.abs(it - signalWallMillis) }
+        require(fields[3].contains("Code: (REMOTE)")) { "Unexpected platform disconnect code" }
+        val reason = Regex("Reason: \\(([^)]*)\\)").find(fields[3])?.groupValues?.get(1)
+            ?: error("Missing platform disconnect reason")
+        require(reason == "answeredElsewhere") { "Unexpected platform disconnect reason" }
+        return RecordedDisconnect(recorded, android.telecom.DisconnectCause.REMOTE, reason)
+    }
+
+    private fun assertDisconnectBudget(recorded: RecordedDisconnect, signalWallMillis: Long, budgetMs: Long) {
+        val elapsed = recorded.wallMillis - signalWallMillis
+        assertTrue("Telecom recorded SET_DISCONNECTED after $elapsed ms (limit $budgetMs ms)", elapsed in 0..budgetMs)
+    }
+
+    @Test fun telecomTimestampUsesTheSignalDateAndTimezoneAcrossMidnight() {
+        val signal = Instant.parse("2026-12-31T18:29:59.900Z").toEpochMilli()
+        val parsed = recordedDisconnect("  00:00:00.050,TC@test,SET_DISCONNECTED,Code: (REMOTE) Reason: (answeredElsewhere)",
+            "TC@test", signal, ZoneId.of("Asia/Kolkata"))
+        assertEquals(150L, parsed.wallMillis - signal)
+        val repeatedHour = Instant.parse("2026-11-01T06:30:00Z").toEpochMilli()
+        val repeated = recordedDisconnect("01:30:00.010,TC@test,SET_DISCONNECTED,Code: (REMOTE) Reason: (answeredElsewhere)",
+            "TC@test", repeatedHour, ZoneId.of("America/New_York"))
+        assertEquals(10L, repeated.wallMillis - repeatedHour)
+    }
+
+    @Test fun telecomTimestampAndCauseMustMatchTheApi35Contract() {
+        val signal = Instant.parse("2026-11-09T15:00:00Z").toEpochMilli()
+        for (timestamp in listOf("15:00:00", "15:00:00.000Z", "24:00:00.000", "15:60:00.000", "15:00:60.000"))
+            assertTrue("Invalid timeline time was accepted: $timestamp", runCatching {
+                recordedDisconnect("$timestamp,TC@test,SET_DISCONNECTED,Code: (REMOTE) Reason: (answeredElsewhere)",
+                    "TC@test", signal, ZoneId.of("UTC"))
+            }.isFailure)
+        for (cause in listOf("Code: (LOCAL) Reason: (answeredElsewhere)", "Code: (REMOTE) Reason: (remoteEnded)"))
+            assertTrue(runCatching {
+                recordedDisconnect("15:00:00.010,TC@test,SET_DISCONNECTED,$cause", "TC@test", signal, ZoneId.of("UTC"))
+            }.isFailure)
+        assertTrue(runCatching {
+            recordedDisconnect("15:00:00.010,TC@other,SET_DISCONNECTED,Code: (REMOTE) Reason: (answeredElsewhere)",
+                "TC@test", signal, ZoneId.of("UTC"))
+        }.isFailure)
+    }
+
+    @Test fun recordedDisconnectRetainsTheInclusive1000MillisecondLimit() {
+        val signal = Instant.parse("2026-11-09T15:00:00Z").toEpochMilli()
+        fun recorded(time: String) = recordedDisconnect("$time,TC@test,SET_DISCONNECTED,Code: (REMOTE) Reason: (answeredElsewhere)",
+            "TC@test", signal, ZoneId.of("UTC"))
+        assertDisconnectBudget(recorded("15:00:01.000"), signal, 1000)
+        for (time in listOf("15:00:01.001", "14:59:59.999"))
+            assertTrue("An out-of-budget recorded disconnect passed", runCatching {
+                assertDisconnectBudget(recorded(time), signal, 1000)
+            }.exceptionOrNull() is AssertionError)
+    }
+
+    private suspend fun platformGone(callId: String, signalWallMillis: Long, zone: ZoneId,
+        nativeBudgetMs: Long): NativeEnd = withContext(Dispatchers.IO) {
+        var firstEventObserved = 0L
         while (true) {
             // Telecom's own historical event contains the cause installed on the actual call.
             val requested = now()
-            val dump = shell("dumpsys -t 5 telecom timeline")
+            val dump = try { shell("dumpsys -t 5 telecom timeline") } catch (error: Exception) {
+                val poll = mapOf("requestedNanos" to requested, "returnedNanos" to now(),
+                    "trackedCall" to null, "disconnectEventFound" to null, "probeError" to error.javaClass.simpleName)
+                platformPolls.add(poll); lastPlatform = poll
+                throw error
+            }
+            val returned = now()
             val event = dump.lineSequence().firstOrNull { it.contains(",$callId,SET_DISCONNECTED,") }
             val current = dump.lineSequence().any { it.trimStart().startsWith("[Call id=$callId,") }
-            lastPlatform = mapOf("requestedNanos" to requested, "returnedNanos" to now(),
+            val poll = mutableMapOf<String, Any?>("requestedNanos" to requested, "returnedNanos" to returned,
                 "trackedCall" to current, "disconnectEventFound" to (event != null),
                 "remoteCodeFound" to (event?.contains("Code: (REMOTE)") == true),
                 "answeredReasonFound" to (event?.contains("Reason: (answeredElsewhere)") == true))
-            if (!current && event != null) {
-                val code = when {
-                    event.contains("Code: (REMOTE)") -> android.telecom.DisconnectCause.REMOTE
-                    event.contains("Code: (ANSWERED_ELSEWHERE)") -> android.telecom.DisconnectCause.ANSWERED_ELSEWHERE
-                    else -> error("Unexpected platform disconnect code")
+            try {
+                check(ZoneId.systemDefault() == zone) { "System timezone changed during the sample" }
+                val recorded = event?.let { recordedDisconnect(it, callId, signalWallMillis, zone) }
+                if (recorded != null) {
+                    poll["recordedDisconnectWallMillis"] = recorded.wallMillis
+                    poll["recordedDisconnectElapsedMs"] = recorded.wallMillis - signalWallMillis
+                    assertDisconnectBudget(recorded, signalWallMillis, nativeBudgetMs)
+                    if (firstEventObserved == 0L) firstEventObserved = returned
                 }
-                val reason = Regex("Reason: \\(([^)]*)\\)").find(event)?.groupValues?.get(1)
-                    ?: error("Missing platform disconnect reason")
-                lastPlatform = lastPlatform + mapOf("nativeCode" to code,
-                    "nativeReasonMatchesExpected" to (reason == "answeredElsewhere"))
-                return@withContext NativeEnd(now(), code, reason)
+                if (!current && recorded != null)
+                    return@withContext NativeEnd(recorded, firstEventObserved, returned)
+            } finally {
+                val observation = poll.toMap()
+                platformPolls.add(observation); lastPlatform = observation
             }
             delay(20)
         }
@@ -290,6 +380,9 @@ class AnsweredElsewhereJourneyTest {
             var eventCount = 0
             var handlerCalls = 0
             var phase = "prepare"
+            var signalWallMillis = 0L
+            val timelineZone = ZoneId.systemDefault()
+            var platformZone = ""
             var timings = ConcurrentHashMap<String, Long>()
             var observerErrors = ConcurrentHashMap<String, String>()
             var postFailure: Map<String, Any?> = emptyMap()
@@ -329,6 +422,11 @@ class AnsweredElsewhereJourneyTest {
             automation.serviceInfo = automation.serviceInfo.apply { flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS }
             try {
                 phase = "system-ui-policy"
+                check(android.os.Build.VERSION.SDK_INT == 35) { "This timeline contract is verified on API35" }
+                platformZone = withContext(Dispatchers.IO) { shell("getprop persist.sys.timezone").trim() }
+                check(platformZone.isNotEmpty() && ZoneId.of(platformZone).rules == timelineZone.rules) {
+                    "Telecom system timezone does not match the test process"
+                }
                 val systemUi = context.packageManager.getResourcesForApplication("com.android.systemui")
                 val minimumId = systemUi.getIdentifier("heads_up_notification_minimum_time", "integer", "com.android.systemui")
                 check(minimumId != 0) { "Missing SystemUI heads-up minimum resource" }
@@ -337,7 +435,7 @@ class AnsweredElsewhereJourneyTest {
                 uiBudgetMs = headsUpMinimumMs + uiObserverAllowanceMs
                 for (source in listOf("host", "push")) for (index in 1..3) {
                     expansionAttempts = 0
-                    uiScans.clear(); uiSummary = emptyMap()
+                    uiScans.clear(); uiSummary = emptyMap(); platformPolls.clear()
                     phase = "$source/$index display-ready"
                     prepareDisplay()
                     withContext(Dispatchers.IO) { shell("timeout -k 1 1 cmd statusbar collapse") }
@@ -363,6 +461,7 @@ class AnsweredElsewhereJourneyTest {
                     val uiBefore = showRing(key)
                     val visibleBefore = now()
                     val end = mapOf("eventId" to currentEvent, "serverCallId" to key, "reason" to "answeredElsewhere")
+                    signalWallMillis = System.currentTimeMillis()
                     val signal = now()
                     timings["signalNanos"] = signal
                     phase = "$source/$index signal-to-dismissal"
@@ -379,7 +478,10 @@ class AnsweredElsewhereJourneyTest {
                             }
                         }
                         val native = async {
-                            try { platformGone(platformId).also { timings["platformGoneNanos"] = it.observedNanos } }
+                            try { platformGone(platformId, signalWallMillis, timelineZone, nativeBudgetMs).also {
+                                timings["platformGoneNanos"] = it.observedNanos
+                                timings["platformDisconnectObservedNanos"] = it.eventObservedNanos
+                            } }
                             catch (error: Exception) {
                                 if (error !is CancellationException) observerErrors["platform"] = error.javaClass.simpleName
                                 throw error
@@ -391,12 +493,12 @@ class AnsweredElsewhereJourneyTest {
                         }
                         try {
                             phase = "$source/$index native-completion"
-                            val completed = withTimeout(nativeBudgetMs) { NativeCompletion(terminal.await(), correlated.await(), empty.await(),
-                                notification.await(), native.await()) }
-                            phase = "$source/$index ui-removal"
+                            val completed = withTimeout(nativeBudgetMs) { AppCompletion(terminal.await(), correlated.await(), empty.await(),
+                                notification.await()) }
+                            phase = "$source/$index platform-and-ui-removal"
                             val remainingUiMs = (uiBudgetMs - (now() - signal) / 1_000_000).coerceAtLeast(1)
-                            val removed = withTimeout(remainingUiMs) { ui.await() }
-                            Completion(completed.terminal, completed.event, completed.empty, completed.notification, removed, completed.native)
+                            val (nativeEnd, removed) = withTimeout(remainingUiMs) { native.await() to ui.await() }
+                            Completion(completed.terminal, completed.event, completed.empty, completed.notification, removed, nativeEnd)
                         } catch (error: Throwable) {
                             // The strict verdict has already failed. Keep these same observers
                             // alive briefly to measure completion rather than hiding the slow stage.
@@ -414,23 +516,31 @@ class AnsweredElsewhereJourneyTest {
                     val native = completion.native
                     val terminalAt = completion.terminal; val eventAt = completion.event
                     val notificationAt = completion.notification; val uiAt = completion.ui.observedNanos
-                    assertEquals(android.telecom.DisconnectCause.REMOTE, native.code)
-                    assertEquals("answeredElsewhere", native.reason)
+                    assertEquals(android.telecom.DisconnectCause.REMOTE, native.recorded.code)
+                    assertEquals("answeredElsewhere", native.recorded.reason)
+                    assertDisconnectBudget(native.recorded, signalWallMillis, nativeBudgetMs)
                     assertEquals(1, eventCount); assertEquals(0, handlerCalls)
                     assertFalse((engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id })
                     assertTrue(terminalAt >= signal && eventAt >= terminalAt && completion.empty >= eventAt)
-                    for (at in listOf(terminalAt, eventAt, completion.empty, notificationAt, native.observedNanos))
+                    for (at in listOf(terminalAt, eventAt, completion.empty, notificationAt))
                         assertTrue("Native completion exceeded the 1000 ms engineering budget", at - signal in 0..nativeBudgetMs * 1_000_000)
+                    assertTrue("Tracked Telecom call removal exceeded the visible-removal budget",
+                        native.observedNanos - signal in 0..uiBudgetMs * 1_000_000)
                     assertTrue("Visible removal exceeded SystemUI minimum plus observer allowance", uiAt - signal in 0..uiBudgetMs * 1_000_000)
                     assertFalse(engine.receiveCallEnded(end))
                     delay(25); assertEquals(1, eventCount)
                     samples += mapOf("source" to source, "sampleIndex" to index, "conversationId" to id,
                         "serverCallId" to key, "eventId" to currentEvent, "uiBefore" to uiBefore.json(),
                         "incomingNanos" to incomingAt, "reportedNanos" to reportedAt, "visibleBeforeNanos" to visibleBefore,
-                        "signalNanos" to signal, "acceptedNanos" to accepted, "terminalSnapshotNanos" to terminalAt,
+                        "signalNanos" to signal, "signalWallMillis" to signalWallMillis,
+                        "acceptedNanos" to accepted, "terminalSnapshotNanos" to terminalAt,
                         "eventNanos" to eventAt, "emptyHookNanos" to completion.empty,
                         "notificationGoneNanos" to notificationAt, "uiGoneNanos" to uiAt,
-                        "platformGoneNanos" to native.observedNanos, "nativeCode" to native.code, "nativeReason" to native.reason,
+                        "platformGoneNanos" to native.observedNanos,
+                        "platformDisconnectWallMillis" to native.recorded.wallMillis,
+                        "platformDisconnectObservedNanos" to native.eventObservedNanos,
+                        "platformPolls" to platformPolls.toList(),
+                        "nativeCode" to native.recorded.code, "nativeReason" to native.recorded.reason,
                         "nativeEvidence" to "telecom-historical-SET_DISCONNECTED", "correlatedEvents" to eventCount,
                         "endHandlerCalls" to handlerCalls, "uiAbsenceObservations" to completion.ui.observations,
                         "uiAbsentWindowId" to completion.ui.windowId, "firstUiCallerAbsentNanos" to completion.ui.firstAbsentNanos,
@@ -439,6 +549,8 @@ class AnsweredElsewhereJourneyTest {
                     owned = null
                 }
                 output.writeText(JSONObject(mapOf("passed" to true, "nativeBudgetMs" to nativeBudgetMs,
+                    "timelineTimestampFormat" to "HH:mm:ss.SSS", "timelineTimeZone" to timelineZone.id,
+                    "platformTimeZone" to platformZone,
                     "uiBudgetMs" to uiBudgetMs, "headsUpMinimumMs" to headsUpMinimumMs,
                     "uiObserverAllowanceMs" to uiObserverAllowanceMs, "samples" to samples,
                     "pushEntry" to "NativeCallPush.handle (not cloud FCM)")).toString())
@@ -447,9 +559,13 @@ class AnsweredElsewhereJourneyTest {
                     .firstOrNull { it["id"] == currentId }
                 output.writeText(JSONObject(mapOf("passed" to false, "samples" to samples,
                     "phase" to phase, "failure" to error.javaClass.simpleName,
+                    "signalWallMillis" to signalWallMillis,
+                    "timelineTimestampFormat" to "HH:mm:ss.SSS", "timelineTimeZone" to timelineZone.id,
+                    "platformTimeZone" to platformZone,
                     "nativeBudgetMs" to nativeBudgetMs, "uiBudgetMs" to uiBudgetMs, "headsUpMinimumMs" to headsUpMinimumMs,
                     "uiScanTimings" to uiScans.toList(), "uiSummary" to uiSummary,
                     "partialTimings" to timings.toMap(), "observerErrors" to observerErrors.toMap(),
+                    "platformPolls" to platformPolls.toList(),
                     "postFailure" to postFailure, "platformObservation" to lastPlatform,
                     "sdkObservation" to mapOf("present" to (current != null), "status" to current?.get("status"),
                         "endedReason" to (current?.get("ended") as? Map<*, *>)?.get("reason"),
