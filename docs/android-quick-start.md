@@ -174,19 +174,9 @@ process launch and acoustic output, and did not establish production percentiles
 
 ## DND, contacts and repeat callers
 
-| Allowance | Android Core-Telecom, API 35 emulator | iPhone 13/iOS 27 LCK research |
-| --- | --- | --- |
-| Contact/person allowed | Matching contacts rang under Contacts/Anyone; starred contacts also rang under Starred, 3/3 per cell in each lane. | Caller-only People allowance remained filtered with no call UI. |
-| Repeat callers enabled | Second genuine call from an otherwise excluded caller rang, 3/3 per cell in each lane. | The second call 69.4 s later remained filtered with no call UI. |
-
-The [Android study](./research/focus/android-results.md) retains 216 reports,
-three samples per setting/caller cell in each of two independent lanes, using
-exact `tel:` handles matched against actual contacts. It observes ringtone
-playback, not physical sound. The linked pinned iPhone research has one sample
-per measured row and no acoustic/haptic or CallKit qualification; app allowance
-did admit its tested LCK calls. Neither result is a universal platform guarantee.
-Those iPhone findings are SDK research, not measurements of this module; on iOS a
-filtered call becomes a call preview rather than ringing.
+Android applies its DND policy to call notifications. Historical contact, starred
+and repeat-caller measurements and the linked iOS comparison are preserved in the
+[archived typed-caller study](https://github.com/relayphone/expo-callkit-telecom/blob/archive/android-telecom-research/docs/research/focus/android-results.md).
 
 On Android the host can read `NotificationManager.currentInterruptionFilter`
 and the effective consolidated policy. On API 33+, caller-specific
