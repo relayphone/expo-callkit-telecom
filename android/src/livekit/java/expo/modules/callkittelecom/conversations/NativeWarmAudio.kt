@@ -1,7 +1,6 @@
 package expo.modules.callkittelecom.conversations
 
 import android.media.AudioFormat
-import android.os.Debug
 import android.os.SystemClock
 import io.livekit.android.audio.AudioBufferCallback
 import java.nio.ByteBuffer
@@ -31,10 +30,6 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         var durationNanos = 0L
         var deadlineNanos = 0L
     }
-    private data class SilentWindow(
-        val threadId: Long, val firstNanos: Long, val firstCpuNanos: Long,
-        var lastNanos: Long, var lastCpuNanos: Long, var count: Long, var durationNanos: Long,
-    )
 
     private val closed = AtomicBoolean(false)
     private val sequence = AtomicLong()
@@ -47,8 +42,6 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
     private val pumpGeneration = AtomicLong()
     private val pacing = ThreadLocal.withInitial { Pacing() }
     private val parkedThread = AtomicReference<Thread?>(null)
-    private val silentLock = Any()
-    private var silentWindow: SilentWindow? = null
     private val playbackActive = AtomicBoolean(false)
     private val playbackReady = AtomicReference(CompletableDeferred<Unit>())
     private val output = AtomicReference(OutputEpoch(0, SystemClock.elapsedRealtimeNanos(), false))
@@ -88,7 +81,6 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         if (pumpActive.getAndSet(false)) emit(NativeMediaStage.CAPTURE_PUMP_STOPPED)
         stopCapture(SystemClock.elapsedRealtimeNanos())
         stoppedReady.get().complete(Unit)
-        flushSilentWindow()
     }
 
     suspend fun awaitPumpStopped() { if (pumpActive.get()) withTimeout(900) { stoppedReady.get().await() } }
@@ -146,7 +138,6 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         if (closed.get()) return captureTimeNs
         if (bytesRead > 0) {
             pacing.get().deadlineNanos = 0
-            flushSilentWindow()
             val armedNanos = firstCaptureArmNanos.get()
             if ((armedNanos == 0L || observedNanos < armedNanos) && captureBeforeAuthority.compareAndSet(false, true))
                 emit(NativeMediaStage.CAPTURE_BEFORE_AUTHORITY, observedAtNanos = observedNanos)
@@ -157,12 +148,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         } else if (bytesRead == 0) {
             if (physicalCapture.get()) stopCapture(observedNanos)
             val duration = bufferDurationNanos(buffer.capacity(), audioFormat, channelCount, sampleRate)
-            if (duration > 0) {
-                val cpuNanos = Debug.threadCpuTimeNanos()
-                if (pace(duration, observedNanos))
-                    recordSilentWindow(observedNanos, cpuNanos, SystemClock.elapsedRealtimeNanos(),
-                        Debug.threadCpuTimeNanos(), duration)
-            }
+            if (duration > 0) pace(duration, observedNanos)
         }
         return captureTimeNs
     }
@@ -185,7 +171,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         return capacity.toLong() * 1_000_000_000L / bytesPerSample / channels / sampleRate
     }
 
-    private fun pace(duration: Long, observedNanos: Long): Boolean {
+    private fun pace(duration: Long, observedNanos: Long) {
         val state = pacing.get()
         val generation = pumpGeneration.get()
         if (state.generation != generation || state.durationNanos != duration || state.deadlineNanos == 0L ||
@@ -200,44 +186,10 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         try {
             while (!closed.get() && !thread.isInterrupted && pumpGeneration.get() == generation) {
                 val remaining = state.deadlineNanos - SystemClock.elapsedRealtimeNanos()
-                if (remaining <= 0) return true
+                if (remaining <= 0) return
                 LockSupport.parkNanos(this, minOf(remaining, 10_000_000L))
             }
-            return false
         } finally { parkedThread.compareAndSet(thread, null) }
-    }
-
-    private fun recordSilentWindow(startNanos: Long, startCpuNanos: Long, endNanos: Long,
-        endCpuNanos: Long, duration: Long) {
-        val threadId = Thread.currentThread().id
-        var previous: SilentWindow? = null
-        synchronized(silentLock) {
-            if (closed.get()) return
-            var window = silentWindow
-            if (window == null || window.threadId != threadId) {
-                previous = window
-                window = SilentWindow(threadId, startNanos, startCpuNanos, endNanos, endCpuNanos, 0, 0)
-                silentWindow = window
-            }
-            window.lastNanos = endNanos
-            window.lastCpuNanos = endCpuNanos
-            window.count++
-            window.durationNanos += duration
-        }
-        previous?.let { emitSilentWindow(it) }
-    }
-
-    fun flushSilentWindow() {
-        val window = synchronized(silentLock) { silentWindow.also { silentWindow = null } }
-        window?.let { emitSilentWindow(it) }
-    }
-
-    private fun emitSilentWindow(window: SilentWindow) {
-        if (window.count < 2) return
-        emit(NativeMediaStage.SILENT_BUFFER_WINDOW, mapOf("count" to window.count,
-            "elapsedNs" to (window.lastNanos - window.firstNanos).coerceAtLeast(0),
-            "threadCpuNs" to (window.lastCpuNanos - window.firstCpuNanos).coerceAtLeast(0),
-            "durationNs" to window.durationNanos), window.lastNanos)
     }
 
     override fun onWebRtcAudioTrackSamplesReady(samples: JavaAudioDeviceModule.AudioSamples) {
@@ -271,7 +223,6 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         playbackReady.get().cancel()
         pumpGeneration.incrementAndGet()
         parkedThread.get()?.let { LockSupport.unpark(it) }
-        flushSilentWindow()
     }
 
     private fun emit(stage: NativeMediaStage, measurements: Map<String, Long> = emptyMap(),
