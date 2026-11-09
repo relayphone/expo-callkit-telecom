@@ -8,8 +8,14 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "skipLibCheck": true
   },
-  "include": ["tools/android-emulator-executor*.ts", "tools/gradle-wrapper-timeout*.ts"]
+  "include": [
+    "tools/android-emulator-executor*.ts",
+    "tools/gradle-wrapper-timeout*.ts",
+    "tools/run-native-media-journey*.ts"
+  ]
 }

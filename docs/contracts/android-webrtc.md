@@ -59,5 +59,5 @@ existing native session registry.
 API references: [PeerConnection audio recording/playout controls](https://webrtc.googlesource.com/src/+/refs/heads/main/sdk/android/api/org/webrtc/PeerConnection.java),
 [independent aiortc peer API](https://aiortc.readthedocs.io/en/latest/api.html).
 
-The [shared latency qualification](./android-latency.md) uses the same decoded-PCM
-method and fresh-process sampling regime for this adapter and LiveKit.
+The [native audio readiness contract](./android-latency.md) describes the retained
+functional checks and the archived latency benchmark.

@@ -47,6 +47,5 @@ lifecycle hooks provide the app's backend integration boundary. Required decline
 cleanup is Core call removal, native closure, no capture, and verified server
 participant departure.
 
-[Android latency qualification](./android-latency.md) records five fresh-process
-samples per provider/credential path, transport/decoder/route phases and the
-before/after timing comparison. The original full journeys still run separately.
+[Native audio readiness](./android-latency.md) describes the retained functional
+checks and links to the archived fresh-process latency study.
