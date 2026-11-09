@@ -3,10 +3,10 @@ name: v2 Android
 on:
   pull_request:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
   push:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/summarize-native-latency.py', 'tools/aggregate-native-latency.py', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey.py', 'tools/check-answered-elsewhere.py', '.github/workflows/v2-android.yml']
 
 permissions:
   contents: read
@@ -26,6 +26,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
+      - run: node --test tools/run-native-media-journey.test.ts
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.0'
@@ -60,7 +61,7 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: |
-            bash tools/run-native-media-journey.sh
+            node tools/run-native-media-journey.ts
             bash tools/run-android-dnd.sh
       - name: Stop native media fixture
         if: always()
@@ -77,11 +78,6 @@ jobs:
             android/instrumentation/build/answered-elsewhere-results.json
             android/instrumentation/build/native-media-results.json
             android/instrumentation/build/native-webrtc-results.json
-            android/instrumentation/build/native-latency-livekit.json
-            android/instrumentation/build/native-latency-webrtc.json
-            android/instrumentation/build/native-latency-samples
-            android/instrumentation/build/native-latency-summary.json
-            android/instrumentation/build/native-latency-summary.md
             android/instrumentation/build/dnd-results
           if-no-files-found: error
 

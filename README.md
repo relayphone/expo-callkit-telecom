@@ -27,10 +27,9 @@ Start with the [v1 → v2 migration guide](docs/migrating-v1-to-v2.md) and
 - Typed DND/filter outcomes and the measured Android/iOS LCK allowance contrast.
   `reported` alone does not prove ringing.
 
-The [checked latency comparison](docs/contracts/android-latency-results.md)
-records 40 optimized emulator samples across two runs, all below 300 ms after
-completed pre-warm. This measures decoded remote PCM, excludes cloud push/process
-launch/acoustic latency, and does not establish production percentiles.
+The [native audio readiness checks](docs/contracts/android-latency.md) cover
+prewarm, physical audio authority and cleanup. The repeated latency benchmark and
+its comparisons are preserved on the research archive branch linked there.
 
 ## What the module does
 

@@ -157,36 +157,20 @@ or the [native FCM end envelope](./contracts/android-answered-elsewhere.md).
 That intake bypasses the End handler; observe state/events for completion rather
 than treating its boolean acknowledgment as proof that visible UI is gone.
 
-## Measured answer latency
+## Native audio readiness checks
 
-The [checked before/after results](./contracts/android-latency-results.md) use
-API 35 x86_64 `google_apis` / `pixel_6` on Ubuntu with KVM, real LiveKit and an
-independent WebRTC peer. Five fresh-process attempts per provider/credential path
-form each 20-sample profile. Answer follows completed PREJOINED plus 150 ms.
+The [native audio readiness contract](./contracts/android-latency.md) describes
+prewarm, physical audio authority and the retained functional media controls.
+The [v2 Android workflow](https://github.com/relayphone/expo-callkit-telecom/blob/v2/.github/workflows/v2-android.yml)
+runs media, privacy, hold/resume, cleanup and DND checks on a CI emulator. It
+exercises production native FCM intake with a synthetic envelope. The
+[example workflow](https://github.com/relayphone/expo-callkit-telecom/blob/v2/.github/workflows/v2-example.yml)
+separately runs the media-free Expo journey.
 
-| Measurement | Result |
-| --- | --- |
-| LiveKit push, median Answer → eligible decoded PCM | 1039.07 → 164.25 ms in the controlled comparison |
-| LiveKit fetcher, median | 965.17 → 180.84 ms in the controlled comparison |
-| All optimized primary samples | LiveKit 159.65–186.27 ms; WebRTC 160.39–189.06 ms (20/20 below 300 ms) |
-| Separate merged-source verification | LiveKit 150.30–195.06 ms; WebRTC 157.24–251.31 ms (20/20 below 300 ms) |
-
-Across those two optimized runs, all 40 answers met the 300 ms target. WebRTC already
-met the target in the controlled baseline; no WebRTC median speedup is claimed.
-The metric is the first eligible decoded PCM16 callback (peak ≥128), not acoustic
-speaker output. It excludes OS process launch and cloud FCM delivery. It requires
-completed pre-warm; an earlier answer can wait for preparation. Work moved before
-Answer and did not improve invitation-to-audio time in these runs. The unchanged
-test failure bound is 3,000 ms. These samples establish neither a production
-percentile nor a fixed emulator floor. Full method, phase timings and source-hashed
-JSON are linked from the results page.
-
-The existing [v2 Android workflow](https://github.com/relayphone/expo-callkit-telecom/blob/v2/.github/workflows/v2-android.yml) reproduces
-native media, privacy/hold/cleanup, DND controls and the 20-sample benchmark on a CI
-emulator; it exercises production native FCM intake with a synthetic envelope,
-not cloud delivery. The [release example workflow](https://github.com/relayphone/expo-callkit-telecom/blob/v2/.github/workflows/v2-example.yml)
-separately runs the media-free Expo journey. No large local SDK installation is
-needed to inspect the checked results.
+The historical latency benchmark and comparisons are preserved on
+[archive/android-telecom-research](https://github.com/relayphone/expo-callkit-telecom/tree/archive/android-telecom-research).
+They measured decoded PCM after completed prewarm, excluded cloud delivery,
+process launch and acoustic output, and did not establish production percentiles.
 
 ## DND, contacts and repeat callers
 
