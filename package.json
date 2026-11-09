@@ -52,17 +52,17 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mfairley/expo-callkit-telecom.git"
+    "url": "git+https://github.com/relayphone/expo-callkit-telecom.git"
   },
   "bugs": {
-    "url": "https://github.com/mfairley/expo-callkit-telecom/issues"
+    "url": "https://github.com/relayphone/expo-callkit-telecom/issues"
   },
   "author": {
     "name": "Michael Fairley",
     "url": "https://github.com/mfairley"
   },
   "license": "MIT",
-  "homepage": "https://expo-callkit-telecom.mfairley.com/",
+  "homepage": "https://github.com/relayphone/expo-callkit-telecom/tree/v2#readme",
   "dependencies": {
     "@relayphone/ios-voip-sdk": "0.3.0"
   },
