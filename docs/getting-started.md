@@ -1,110 +1,48 @@
----
-description: Install expo-callkit-telecom v2 in an Expo or React Native app — config plugin setup, the conversations API, VoIP push and push tokens.
----
-
 # Getting started
 
-`expo-callkit-telecom` is opinionated about *system integration* and unopinionated about *media*. It presents calls with [LiveCommunicationKit](https://developer.apple.com/documentation/livecommunicationkit) on iOS, through [ios-voip-sdk](https://github.com/relayphone/ios-voip-sdk), and with Jetpack Core-Telecom on Android. You connect your media library ([LiveKit](https://livekit.io/), plain [WebRTC](https://webrtc.org/), etc.) from the conversation handler, or use Android's native media.
+`expo-callkit-telecom` composes `@relayphone/ios-voip-sdk`. The SDK owns the shared
+conversations API and Apple native integration; this package supplies Android
+Core-Telecom and the composed config plugin. The fork's `v2` migration is evaluated
+from pinned source and SDK archives. Follow [package evaluation](./sdk-package-evaluation.md)
+to build the packages; the inherited package version does not identify a published
+v2 release.
 
-::: info v2 isn't published
-This guide covers the fork's `v2` branch. Build the package from a reviewed checkout of that branch, as the [Android quick-start](./android-quick-start) describes, and rebuild the native app. Coming from v1? Start with [Migrating from v1](./migrating-v1-to-v2).
-:::
+## Configure the native application
 
-## Install
-
-### Peer dependencies
-
-Your app also needs `expo-notifications` and, on iOS unless `mediaAdapter` is `"none"`, a `react-native-webrtc` build:
-
-```sh
-bun add @livekit/react-native-webrtc expo-notifications
-```
-
-- A `react-native-webrtc` build. [`@livekit/react-native-webrtc`](https://github.com/livekit/react-native-webrtc) `>= 144` is the one the maintainers test against. The module doesn't depend on a specific WebRTC pod: on iOS it links against whichever WebRTC framework your app ships, so upstream [`react-native-webrtc`](https://github.com/react-native-webrtc/react-native-webrtc) `>= 124.0.5` and other forks also work (community-verified). Install only one of them.
-- [`expo-notifications`](https://docs.expo.dev/versions/latest/sdk/notifications/) — required on Android, where the module's FCM service builds on it.
-
-Add the config plugin to `app.json` / `app.config.ts`. Minimal form:
-
-```jsonc
-{
-  "expo": {
-    "plugins": ["expo-callkit-telecom"]
-  }
-}
-```
-
-With custom sounds and options:
-
-```jsonc
-{
-  "expo": {
-    "plugins": [
-      [
-        "expo-callkit-telecom",
-        {
-          "sounds": ["./assets/sounds/ringtone.wav"],
-          "defaultRingtoneIos": "ringtone.wav",
-          "defaultRingtoneAndroid": "ringtone.wav",
-          "iconTemplateIos": "./assets/call-icon.png",
-          "incomingCallTimeout": 45,
-          "outgoingCallTimeout": 60,
-          "fulfillAnswerCallTimeout": 30,
-          "includesCallsInRecents": true,
-          "microphonePermission": "$(PRODUCT_NAME) needs the microphone to make calls."
-        }
-      ]
-    ]
-  }
-}
-```
-
-Files in `sounds` are copied into the iOS bundle and Android raw resources at prebuild time. The full prop type is `ComposedPluginProps` in `plugin/src/composedPlugin.ts`.
-
-On iOS, three options set LiveCommunicationKit's [`ConversationManager.Configuration`](https://developer.apple.com/documentation/livecommunicationkit/conversationmanager/configuration-swift.struct):
-
-- `defaultRingtoneIos` sets [`ringtoneName`](https://developer.apple.com/documentation/livecommunicationkit/conversationmanager/configuration-swift.struct/ringtonename), the sound resource in the app bundle that rings for incoming calls. `"default"`, the default, uses the system ringtone.
-- `iconTemplateIos` sets [`iconTemplateImageData`](https://developer.apple.com/documentation/livecommunicationkit/conversationmanager/configuration-swift.struct/icontemplateimagedata), which Apple documents only as the PNG data for the app's icon image. The property is named for a template image, so provide a square PNG, about 40×40 points, whose alpha channel describes the glyph. This option is iOS-only.
-- `includesCallsInRecents` sets [`includesConversationInRecents`](https://developer.apple.com/documentation/livecommunicationkit/conversationmanager/configuration-swift.struct/includesconversationinrecents): whether the system's Recents list includes a call after it ends. It defaults to `true`.
-
-On iOS, `incomingCallTimeout` also bounds how long an outgoing call dials, and `fulfillAnswerCallTimeout` bounds how long a call stays connecting before it ends as failed. See [iOS](./migrating-v1-to-v2#ios) for `mediaAdapter` and the iOS-only `simulator` option, and the [Android quick-start](./android-quick-start) for `joinPolicy`.
-
-## Concepts
-
-- **State.** `getConversations()`, `useConversations()` and `useConversation(id)` read immutable snapshots of every call. Several calls can coexist.
-- **Handler.** Register one `setConversationHandler({ start, end, join?, hold?, mute?, tones? })` at module scope, before React mounts. Resolving `start` (or `join`) confirms that your app placed the call. [Migrating from v1](./migrating-v1-to-v2) describes how each platform treats the other methods.
-- **Commands** ask the system to act: `startConversation`, `joinConversation`, `endConversation`, `setMuted`, `setHeld`, `playTones` and `selectAudioRoute`.
-- **Reports** tell the module transport facts: `reportConversation(id, { type: "connected" })`, `reportIncomingConversation(payload)` and `receiveCallEnded(payload)`. A handler resolving doesn't mean media is connected; report it.
-- **Events** carry what a snapshot can't show, through `useConversationEvent(...)`, such as `dialRequest` and `answeredElsewhere`.
-
-The [API reference](./api/) documents every function and type.
-
-## Push tokens
-
-Each platform registers for its pushes when the app launches; there's nothing to call. Read the token with `usePushToken()`:
+Use the SDK's [React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/react-native.md)
+for shared options, Apple setup and media dependencies. Android also needs
+`expo-notifications`. Configure one fork plugin entry:
 
 ```ts
-import { usePushToken } from "expo-callkit-telecom";
-import { useEffect } from "react";
-
-function PushRegistration() {
-  const token = usePushToken();
-  useEffect(() => {
-    // { type: "apns-voip", value } on iOS, { type: "fcm", value } on Android, or null.
-    if (token) sendToBackend(token.type, token.value);
-  }, [token]);
-  return null;
-}
+plugins: [
+  ["expo-callkit-telecom", {
+    mediaAdapter: "none",
+    androidNativeMedia: "none",
+  }],
+]
 ```
 
-On iOS the value is the hex-encoded PushKit VoIP token. The token is `null` until the system issues one, and again if it's invalidated.
+The fork composes the SDK plugin. `mediaAdapter` accepts `"webrtc" | "none"`;
+`androidNativeMedia` independently accepts `"livekit" | "none"` and defaults to
+`"none"`. Select `"livekit"` for Android's built-in native media with fresh
+credentials from the incoming push. The old `joinPolicy` option is rejected.
+See the [Android guide](./android-quick-start.md) for that path.
 
-## Example app
+Commit native customizations before regenerating an existing project with
+`npx expo prebuild --clean`, then rebuild the development client. Follow the
+[upgrade instructions](./canonical-contract.md#plugin-composition-and-native-project-upgrades)
+for retired provider, Podfile and widget integration. Native provider changes
+require a rebuilt application.
 
-The repo's `example/` contains a runnable Expo app (`example/client/`) and a push-sender script (`example/server/`). See their READMEs for setup.
+## Use the conversations API
 
-## Next steps
+Import runtime functions and hooks from `expo-callkit-telecom`, and types from
+`expo-callkit-telecom/types`. The [SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/react-native.md)
+is the shared API reference. The [fork contract](./canonical-contract.md) describes
+raw call IDs, start placement, native performed actions and Android's limits.
+Report connected only when the transport actually connects.
 
-- [VoIP push payload shape](./voip-push)
-- [Platform notes](./platform-notes)
-- [API reference](./api/)
-- [Comparison with `react-native-callkeep`](./vs-callkeep)
+See the public [example client](../example/client/README.md) and
+[push sender](../example/server/README.md), [push payloads](./voip-push.md), and
+[package evaluation](./sdk-package-evaluation.md). For an existing v1 application,
+read the [migration guide](./migrating-v1-to-v2.md).
