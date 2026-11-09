@@ -1,8 +1,7 @@
 # Android native media
 
-`joinPolicy: { type: "native", media: "livekit", credentials: "fromPush" }`
-uses the built-in LiveKit session, which the plugin's `mediaAdapter: "livekit"`
-adds to the build with the rest of the LiveKit media engine. Reporting to Core-Telecom precedes pre-warm.
+`androidNativeMedia: "livekit"` includes the built-in LiveKit session.
+Production native media uses fresh LiveKit credentials from the incoming push. Reporting to Core-Telecom precedes pre-warm.
 The room connects with automatic remote subscription and the camera disabled.
 A prepublished, muted microphone uses paced recordingless buffers. Remote audio
 tracks and decoding run during pre-warm with native speaker output muted.
@@ -12,31 +11,12 @@ Answer unmutes the existing sender and output without another negotiation.
 Hold stops physical capture and mutes output while receive decoding stays warm. Decline, timeout and termination close
 the native session through the controller's cancellation lifetime.
 
-For missing/expired push credentials, configure a built-in HTTPS fallback:
-
-```ts
-joinPolicy: {
-  type: "native", media: "livekit", credentials: "fromPush",
-  fallback: {
-    type: "http", baseUrl: "https://api.example.com",
-    authentication: "device-auth",
-  },
-}
-```
-
-Register `NativeMediaAuthenticationProviders.providers["device-auth"]` during
-`Application.onCreate`. The suspending native provider returns
-`NativeMediaAuthentication(bearer, deviceId)` from the app's existing native
-authentication store. It must not wait for JavaScript. No token belongs in the
-plugin configuration. App-registered named fetchers remain supported. The HTTPS
-fetcher is part of the LiveKit media engine; without `mediaAdapter: "livekit"`,
-use a named fetcher.
-
-The client POSTs `/v1/calls/{percent-encoded-serverCallId}/media-credentials` with
-`{ eventId, deviceId }` and Bearer authentication. TLS validation is enabled,
-redirects are refused and request/body sizes are bounded. HTTP404/410 abandons
-pre-warm; the controller permits one answer-time preparation retry. Credentials
-are never logged or placed in conversation snapshots.
+The production package has no built-in HTTP credentials fetcher or native
+authentication-provider registry. Missing or expired push credentials fail
+preparation; an answer may spend the controller's existing single preparation
+retry. The independent server's named credentials fetcher lives entirely in the
+instrumentation APK and retains HTTPS, identity, cancellation and HTTP404/410
+failure controls. It is not shipped in either library media variant.
 
 `NativeMediaSignals.observers` is a native main-thread lifecycle hook. Signals
 carry a serverCallId, a monotonic timestamp and numeric measurements. Audio
@@ -47,7 +27,7 @@ No raw audio or credentials are retained.
 
 The Ubuntu/API35 journey uses the production FCM data entry with a synthetic
 high-priority envelope (it does not prove cloud FCM delivery), a real LiveKit
-server and a remote PCM publisher. Both pushed credentials and the HTTPS fetcher
+server and a remote PCM publisher. Both pushed credentials and the instrumentation-only named fetcher
 must prejoin without physical capture or audible output. The tone fixture requires
 subscription, decoded PCM and muted native playback to be ready before prejoin. Native answer runs
 without a JS Join handler. Checked `native-media-results.json` records the report,

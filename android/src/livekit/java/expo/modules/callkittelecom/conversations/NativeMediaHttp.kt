@@ -1,7 +1,6 @@
 package expo.modules.callkittelecom.conversations
 
 import java.net.URI
-import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.*
@@ -12,26 +11,14 @@ import org.json.JSONArray
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** Built-in HTTPS fetcher. No redirects, credentials in URLs, or credential logging. */
-internal class NativeHttpCredentials(private val client: OkHttpClient = defaultClient) {
+internal class NativeMediaHttpFailure(val status: Int) : Exception("Native media request unavailable")
+
+/** Bounded HTTPS signaling for the raw WebRTC session; never fetches invitation credentials. */
+internal class NativeMediaHttp(private val client: OkHttpClient = defaultClient) {
     companion object {
     private val defaultClient = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(2, TimeUnit.SECONDS).readTimeout(2, TimeUnit.SECONDS)
         .callTimeout(3, TimeUnit.SECONDS).build()
-    }
-
-    suspend fun fetch(payload: Map<String, Any?>, config: JSONObject): Map<String, Any?> {
-        val base = URI(config.getString("baseUrl"))
-        require(base.scheme == "https" && base.host != null && base.rawUserInfo == null &&
-            base.rawQuery == null && base.rawFragment == null) { "Invalid credentials origin" }
-        val authentication = NativeMediaAuthenticationProviders.providers[config.getString("authentication")]
-            ?.invoke() ?: error("Native media authentication unavailable")
-        require(authentication.bearer.isNotBlank() && authentication.deviceId.isNotBlank())
-        val serverId = payload["serverCallId"] as? String ?: error("Invalid media invitation")
-        val eventId = payload["eventId"] as? String ?: error("Invalid media invitation")
-        val encoded = URLEncoder.encode(serverId, "UTF-8").replace("+", "%20")
-        val url = base.toString().trimEnd('/') + "/v1/calls/$encoded/media-credentials"
-        return post(url, authentication.bearer, mapOf("eventId" to eventId, "deviceId" to authentication.deviceId))
     }
 
     suspend fun post(url: String, bearer: String, values: Map<String, Any?>): Map<String, Any?> {
@@ -50,7 +37,7 @@ internal class NativeHttpCredentials(private val client: OkHttpClient = defaultC
                 }
                 override fun onResponse(call: Call, response: Response) {
                     val result = runCatching { response.use {
-                        if (!it.isSuccessful) throw MediaCredentialsUnavailable(it.code)
+                        if (!it.isSuccessful) throw NativeMediaHttpFailure(it.code)
                         val bytes = it.peekBody(65_537).bytes()
                         require(bytes.size <= 65_536) { "Media credentials response too large" }
                         val json = JSONObject(String(bytes, Charsets.UTF_8))

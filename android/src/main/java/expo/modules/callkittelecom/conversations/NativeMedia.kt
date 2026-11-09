@@ -72,12 +72,9 @@ internal class NativeMediaController(private val context: Context, private val p
         val resolved = if (nativeNegotiation || (policy.opt("credentials") !is JSONObject && fresh && compatiblePush)) payload else {
             val source = policy.optJSONObject("credentials") ?: policy.optJSONObject("fallback")
             val credentials = withTimeout(3000) {
-                if (source?.optString("type") == "http") BuiltInMedia.fetchCredentials(payload, source)
-                else {
-                    val fetcher = source?.optString("name")?.let { NativeMediaRegistry.fetchers[it] }
-                        ?: error("Native credentials unavailable")
-                    fetcher(payload)
-                }
+                val fetcher = source?.optString("name")?.let { NativeMediaRegistry.fetchers[it] }
+                    ?: error("Native credentials unavailable")
+                fetcher(payload)
             }
             payload + ("media" to credentials)
         }

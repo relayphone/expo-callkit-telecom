@@ -156,7 +156,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
             withTimeout(4000) { while (candidate.iceGatheringState() != PeerConnection.IceGatheringState.COMPLETE) delay(10) }
             exchangeAttempted = true
             NativeMediaSignals.emit(serverId, NativeMediaStage.SUBSCRIPTION_REQUESTED, mapOf("role" to 0L))
-            val answer = NativeHttpCredentials().post(url, token, mapOf("type" to "offer", "sdp" to candidate.localDescription.description,
+            val answer = NativeMediaHttp().post(url, token, mapOf("type" to "offer", "sdp" to candidate.localDescription.description,
                 "eventId" to eventId, "serverCallId" to serverId, "negotiationId" to negotiationId))
             require(answer["type"] == "answer")
             val description = answer["sdp"] as? String ?: error("Missing SDP answer")
@@ -254,7 +254,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
     }
     private fun emit(stage: NativeMediaStage) = NativeMediaSignals.emit(serverId, stage)
     private suspend fun signal(state: String) {
-        NativeHttpCredentials().post(url, token, mapOf("type" to "state", "state" to state, "eventId" to eventId,
+        NativeMediaHttp().post(url, token, mapOf("type" to "state", "state" to state, "eventId" to eventId,
             "serverCallId" to serverId, "negotiationId" to negotiationId))
     }
     private fun dispose() {
