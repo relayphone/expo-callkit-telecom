@@ -81,13 +81,25 @@ card in the expanded SystemUI notification shade.
 Completion requires terminal SDK state, the correlated event, notification
 removal, Core call removal, and visible card removal. UI absence must be observed
 in two consecutive valid SystemUI accessibility roots; a missing or unrelated
-root is not evidence of dismissal. The result records monotonic timestamps for
-all six samples, together with actual native disconnect code and reason. Native
-SDK state/event, notification-manager removal and verified Core removal retain
-the 1,000 ms engineering budget. Visible-card removal has a separate bound:
+root is not evidence of dismissal. The result records monotonic observation
+timestamps and Telecom's recorded disconnect time, code and reason for all six
+samples. Terminal state, correlated event, empty snapshot and notification-manager
+removal retain the 1,000 ms engineering budget. Telecom's own `SET_DISCONNECTED`
+event must also be recorded within 1,000 ms of the signal, with the expected code
+and reason. API35 [EventManager](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/telecomm/java/android/telecom/Logging/EventManager.java)
+records wall time as `HH:mm:ss.SSS` in the system timezone. The test captures
+wall time next to the signal's monotonic timestamp, checks the timezone, and
+resolves the event's date across midnight. Polling does not determine disconnect latency.
+
+The call must still leave Telecom's tracked calls. Observing that removal and
+visible-card removal share the existing separate bound:
 the runtime SystemUI `heads_up_notification_minimum_time` resource plus 1,000 ms
 for observation. The test reads that integer with public package/resources APIs;
 it does not change notification policy or simulate a dismissal.
+Every Telecom poll records its request/return timestamps, tracked-call presence
+and disconnect-event presence without retaining raw dumps. Results report the
+recorded disconnect, first event observation and tracked-call removal observation
+separately, so emulator polling and removal lag remain visible.
 
 API35 configures a [2,000 ms heads-up minimum](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/packages/SystemUI/res/values/config.xml#158).
 Incoming notifications carry a full-screen intent, making heads-up entries
