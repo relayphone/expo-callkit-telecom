@@ -1,17 +1,21 @@
-name: Install the pinned SDK
-description: Verify and install the shared SDK archive before dependency resolution.
+name: Install the SDK release
+description: Verify the release checksum and install the locked SDK URL dependency.
 inputs:
   project:
     description: Project directory relative to the checkout.
     default: '.'
+  install-mode:
+    description: Use temporary-fork only after adding the journey's local fork tarball.
+    default: frozen
 runs:
   using: composite
   steps:
     - uses: actions/download-artifact@v6
       with:
-        name: sdk-evaluation-package
+        name: sdk-release-package
         path: ${{ runner.temp }}/sdk-package
     - shell: bash
       env:
         SDK_PROJECT: ${{ inputs.project }}
-      run: node "$GITHUB_WORKSPACE/tools/sdk-evaluation.ts" install-sdk "$RUNNER_TEMP/sdk-package" "$SDK_PROJECT"
+        SDK_INSTALL_MODE: ${{ inputs.install-mode }}
+      run: node "$GITHUB_WORKSPACE/tools/sdk-evaluation.ts" install-sdk "$RUNNER_TEMP/sdk-package" "$SDK_PROJECT" "$SDK_INSTALL_MODE"

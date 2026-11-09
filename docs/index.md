@@ -1,7 +1,7 @@
 # expo-callkit-telecom documentation
 
 This fork composes the SDK's conversations API and Apple provider with an Android
-Core-Telecom provider. The `v2` branch uses pinned package evaluation before release.
+Core-Telecom provider. The `v2` fork tarball is evaluated with the SDK's v0.4.0 release asset.
 
 - [Getting started](./getting-started.md)
 - [Conversations contract and native project regeneration](./canonical-contract.md)

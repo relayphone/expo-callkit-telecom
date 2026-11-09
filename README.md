@@ -8,7 +8,7 @@ platforms' config plugins. The SDK supplies the sole Apple native provider.
 
 The fork's `v2` branch is a breaking migration from upstream v1. The inherited
 package version does not identify a published v2 release. Evaluate a pinned fork
-checkout with the pinned SDK archive using the
+checkout with the SDK's v0.4.0 release asset using the
 [package evaluation guide](https://github.com/relayphone/expo-callkit-telecom/blob/v2/docs/sdk-package-evaluation.md).
 
 ## Integration

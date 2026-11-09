@@ -1,6 +1,6 @@
 # Conversations contract
 
-The package composes `@relayphone/ios-voip-sdk`: its root re-exports that API and `expo-callkit-telecom/types` exports types only. Install both packages; the SDK supplies the sole iOS provider and this package supplies the Android `VoIPConversations` provider. The SDK is currently consumed from the pinned prepack archive described in [package evaluation](sdk-package-evaluation.md).
+The package composes `@relayphone/ios-voip-sdk`: its root re-exports that API and `expo-callkit-telecom/types` exports types only. Install the fork tarball together with the SDK's v0.4.0 release asset as described in [package evaluation](sdk-package-evaluation.md). The SDK supplies the sole iOS provider and this package supplies the Android `VoIPConversations` provider.
 
 Incoming IDs are the exact `serverCallId`. Outgoing calls require an application ID: `startConversation({ id: serverCallId, to: { id: "peer" }, video: false })`. IDs are neither normalized nor converted to UUIDs. Incoming duplicate reports share admission; outgoing duplicates and direction collisions reject with `invalid_arguments`.
 

@@ -8,18 +8,20 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const sdkRevision = "597c39137b51b2537ce60e15e6ecf86d281f5d86";
+export const sdkVersion = "0.4.0";
+export const sdkFilename = "relayphone-ios-voip-sdk-0.4.0.tgz";
+export const sdkAssetUrl = `https://github.com/relayphone/ios-voip-sdk/releases/download/v${sdkVersion}/${sdkFilename}`;
+export const sdkChecksumsUrl = `https://github.com/relayphone/ios-voip-sdk/releases/download/v${sdkVersion}/SHA256SUMS`;
 const sdkName = "@relayphone/ios-voip-sdk";
-const artifactFile = "sdk-artifact.json";
 
 interface SdkArtifact {
-  repository: "relayphone/ios-voip-sdk";
-  revision: string;
   version: string;
   filename: string;
+  url: string;
+  sha256: string;
   integrity: string;
 }
 
@@ -48,126 +50,127 @@ function command(
 function json(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
-
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function integrity(path: string): string {
-  return `sha512-${createHash("sha512")
-    .update(readFileSync(path))
-    .digest("base64")}`;
+function verifySdk(bytes: Uint8Array, checksums: string): SdkArtifact {
+  const matches = checksums
+    .split(/\r?\n/)
+    .map((line) => /^([a-f0-9]{64}) [ *](.+)$/i.exec(line))
+    .filter((match) => match?.[2] === sdkFilename);
+  const expected =
+    matches.length === 1 ? matches[0]?.[1]?.toLowerCase() : undefined;
+  if (!expected)
+    throw new Error("SHA256SUMS must contain exactly one SDK asset checksum");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  if (sha256 !== expected)
+    throw new Error("SDK release asset SHA-256 differs from SHA256SUMS");
+  return {
+    version: sdkVersion,
+    filename: sdkFilename,
+    url: sdkAssetUrl,
+    sha256,
+    integrity: `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+  };
 }
 
-/** Packs the complete SDK checkout, including its normal source-copying prepack hook. */
-export function packSdk(
-  checkout: string,
+async function fetchAsset(url: string): Promise<Uint8Array> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+  if (!response.ok)
+    throw new Error(
+      `SDK release download failed: HTTP ${response.status} (${url})`
+    );
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Downloads the released SDK and verifies its checksum before retaining the archive. */
+export async function downloadSdk(
   destination: string,
-  expectedRevision = sdkRevision
-): SdkArtifact {
-  const revision = command("git", ["rev-parse", "HEAD"], checkout);
-  if (revision !== expectedRevision)
-    throw new Error(`SDK checkout must be at ${expectedRevision}`);
-  if (
-    command("git", ["status", "--porcelain", "--untracked-files=all"], checkout)
-  ) {
-    throw new Error("SDK checkout has local changes");
-  }
-  const expo = join(checkout, "expo");
-  const pkg = json(join(expo, "package.json"));
-  if (!object(pkg) || pkg.name !== sdkName || typeof pkg.version !== "string") {
-    throw new Error("The checkout does not contain the SDK Expo package");
-  }
+  download: (url: string) => Promise<Uint8Array> = fetchAsset
+): Promise<SdkArtifact> {
   mkdirSync(destination, { recursive: true });
   if (readdirSync(destination).length)
     throw new Error("SDK artifact directory must be empty");
-  command("npm", ["ci", "--no-audit", "--no-fund"], expo, 600_000);
-  command(
-    "npm",
-    ["pack", "--pack-destination", resolve(destination)],
-    expo,
-    300_000
-  );
-  const filenames = readdirSync(destination).filter((name) =>
-    name.endsWith(".tgz")
-  );
-  if (filenames.length !== 1 || !filenames[0])
-    throw new Error("Expected exactly one SDK tarball");
-  const artifact: SdkArtifact = {
-    repository: "relayphone/ios-voip-sdk",
-    revision,
-    version: pkg.version,
-    filename: filenames[0],
-    integrity: integrity(join(destination, filenames[0])),
-  };
-  writeFileSync(
-    join(destination, artifactFile),
-    `${JSON.stringify(artifact, null, 2)}\n`
-  );
+  const [bytes, checksumBytes] = await Promise.all([
+    download(sdkAssetUrl),
+    download(sdkChecksumsUrl),
+  ]);
+  const checksums = new TextDecoder().decode(checksumBytes);
+  const artifact = verifySdk(bytes, checksums);
+  writeFileSync(join(destination, sdkFilename), bytes);
+  writeFileSync(join(destination, "SHA256SUMS"), checksums);
   return artifact;
 }
 
-/** Validates the downloaded tarball before a consumer installs it. */
-export function readSdkArtifact(
-  directory: string,
-  expectedRevision = sdkRevision
-): SdkArtifact {
-  const value = json(join(directory, artifactFile));
-  if (
-    !object(value) ||
-    value.repository !== "relayphone/ios-voip-sdk" ||
-    value.revision !== expectedRevision ||
-    typeof value.version !== "string" ||
-    typeof value.filename !== "string" ||
-    basename(value.filename) !== value.filename ||
-    !value.filename.endsWith(".tgz") ||
-    typeof value.integrity !== "string"
-  ) {
-    throw new Error("Invalid SDK evaluation artifact manifest");
-  }
-  if (integrity(join(directory, value.filename)) !== value.integrity)
-    throw new Error("SDK tarball integrity differs");
-  return {
-    repository: "relayphone/ios-voip-sdk",
-    revision: expectedRevision,
-    version: value.version,
-    filename: value.filename,
-    integrity: value.integrity,
-  };
+/** Rechecks the release checksum whenever another job consumes the downloaded archive. */
+export function readSdkArtifact(directory: string): SdkArtifact {
+  return verifySdk(
+    readFileSync(join(directory, sdkFilename)),
+    readFileSync(join(directory, "SHA256SUMS"), "utf8")
+  );
 }
 
-/** Resolves the verified local archive before installation, preserving publishable manifests. */
+/** Binds Bun's URL resolution to the archive already verified against the release. */
+export function verifySdkLock(
+  project: string,
+  expectedIntegrity: string
+): void {
+  const entry: unknown = JSON.parse(
+    command(
+      "bun",
+      [
+        "-e",
+        'console.log(JSON.stringify(Bun.JSONC.parse(await Bun.file("bun.lock").text()).packages["@relayphone/ios-voip-sdk"] ?? null))',
+      ],
+      project
+    )
+  );
+  if (
+    !Array.isArray(entry) ||
+    entry[0] !== `${sdkName}@${sdkAssetUrl}` ||
+    entry.at(-1) !== expectedIntegrity
+  )
+    throw new Error(
+      "Locked SDK URL or integrity differs from the verified release asset"
+    );
+}
+
+type InstallMode = "frozen" | "temporary-fork";
+
+/** Installs the URL dependency from its checked-in lock after release verification. */
 export function installSdk(
   artifactDirectory: string,
   project: string,
-  expectedRevision = sdkRevision
+  mode: InstallMode = "frozen"
 ): SdkArtifact {
-  const artifact = readSdkArtifact(artifactDirectory, expectedRevision);
+  const artifact = readSdkArtifact(artifactDirectory);
   const manifest = join(project, "package.json");
-  const original = readFileSync(manifest, "utf8");
-  const pkg: unknown = JSON.parse(original);
-  if (!object(pkg)) throw new Error("Invalid consumer package manifest");
-  const archive = `file:${resolve(artifactDirectory, artifact.filename)}`;
-  writeFileSync(
-    manifest,
-    JSON.stringify({
-      ...pkg,
-      dependencies: {
-        ...(object(pkg.dependencies) ? pkg.dependencies : {}),
-        [sdkName]: archive,
-      },
-      overrides: {
-        ...(object(pkg.overrides) ? pkg.overrides : {}),
-        [sdkName]: archive,
-      },
-    })
-  );
-  try {
-    // The existing lock seeds dependency versions; the temporary archive adds no registry lookup.
-    command("bun", ["install", "--no-save"], project, 600_000);
-  } finally {
-    writeFileSync(manifest, original);
+  const pkg = json(manifest);
+  if (
+    !object(pkg) ||
+    !object(pkg.dependencies) ||
+    pkg.dependencies[sdkName] !== sdkAssetUrl
+  )
+    throw new Error("Consumer SDK dependency must use the release asset URL");
+  if (mode === "temporary-fork") {
+    const fork = pkg.dependencies["expo-callkit-telecom"];
+    if (
+      typeof fork !== "string" ||
+      !fork.startsWith("file:") ||
+      !fork.endsWith(".tgz")
+    )
+      throw new Error(
+        "Temporary-fork installation requires a local fork tarball"
+      );
   }
+  verifySdkLock(project, artifact.integrity);
+  command(
+    "bun",
+    ["install", mode === "frozen" ? "--frozen-lockfile" : "--no-save"],
+    project,
+    600_000
+  );
   const require = createRequire(resolve(manifest));
   const installed = json(require.resolve(`${sdkName}/package.json`));
   if (
@@ -175,7 +178,7 @@ export function installSdk(
     installed.name !== sdkName ||
     installed.version !== artifact.version
   )
-    throw new Error("Installed SDK version differs from its verified artifact");
+    throw new Error("Installed SDK version differs from its verified release");
   return artifact;
 }
 
@@ -261,7 +264,7 @@ export function inspectInstalledPackages(
   };
 }
 
-/** Installs both packed distributions outside their checkouts and typechecks their public entries. */
+/** Installs the fork tarball with the SDK release URL and checks their public entries. */
 export function checkConsumer(
   artifactDirectory: string,
   forkCheckout: string,
@@ -288,6 +291,8 @@ export function checkConsumer(
           "react-native": "0.86.3",
           "expo-notifications": "57.0.20",
           "expo-build-properties": "57.0.21",
+          [sdkName]: sdkAssetUrl,
+          "expo-callkit-telecom": `file:${join(packed, tarballs[0])}`,
         },
         devDependencies: { typescript: "6.0.3", "@types/react": "19.2.14" },
       },
@@ -295,18 +300,20 @@ export function checkConsumer(
       2
     )}\n`
   );
-  command(
-    "npm",
-    [
-      "install",
-      "--no-audit",
-      "--no-fund",
-      join(artifactDirectory, artifact.filename),
-      join(packed, tarballs[0]),
-    ],
-    consumer,
-    600_000
-  );
+  command("npm", ["install", "--no-audit", "--no-fund"], consumer, 600_000);
+  const lock = json(join(consumer, "package-lock.json"));
+  const sdkLock =
+    object(lock) && object(lock.packages)
+      ? lock.packages[`node_modules/${sdkName}`]
+      : undefined;
+  if (
+    !object(sdkLock) ||
+    sdkLock.resolved !== sdkAssetUrl ||
+    sdkLock.integrity !== artifact.integrity
+  )
+    throw new Error(
+      "Installed URL archive differs from the verified SDK release asset"
+    );
   const installed = inspectInstalledPackages(consumer, artifact.version);
   copyFileSync(
     join(forkCheckout, "test/fixtures/package-consumer/contract.ts"),
@@ -337,7 +344,7 @@ export function checkConsumer(
     consumer
   );
   command(process.execPath, ["--test", "runtime.test.ts"], consumer);
-  return { sdkRevision: artifact.revision, ...installed };
+  return { sdkRelease: artifact.url, sdkSha256: artifact.sha256, ...installed };
 }
 
 /** Prepares the composed plugin consumer with one provider per platform. */
@@ -361,11 +368,19 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const [mode, first, second, third] = process.argv.slice(2);
-  if (mode === "revision") console.log(`revision=${sdkRevision}`);
-  else if (mode === "pack-sdk" && first && second)
-    console.log(JSON.stringify(packSdk(resolve(first), resolve(second))));
-  else if (mode === "install-sdk" && first && second)
-    console.log(JSON.stringify(installSdk(resolve(first), resolve(second))));
+  if (mode === "download-sdk" && first)
+    console.log(JSON.stringify(await downloadSdk(resolve(first))));
+  else if (
+    mode === "install-sdk" &&
+    first &&
+    second &&
+    (third === undefined || third === "frozen" || third === "temporary-fork")
+  )
+    console.log(
+      JSON.stringify(
+        installSdk(resolve(first), resolve(second), third ?? "frozen")
+      )
+    );
   else if (
     (mode === "check-consumer" || mode === "ios-consumer") &&
     first &&
@@ -385,6 +400,6 @@ if (
     console.log(JSON.stringify(result));
   } else
     throw new Error(
-      "Use revision, pack-sdk SDK_CHECKOUT ARTIFACT_DIRECTORY, install-sdk ARTIFACT_DIRECTORY PROJECT, or check-consumer/ios-consumer ARTIFACT_DIRECTORY FORK_CHECKOUT CONSUMER_DIRECTORY"
+      "Use download-sdk ARTIFACT_DIRECTORY, install-sdk ARTIFACT_DIRECTORY PROJECT [frozen|temporary-fork], or check-consumer/ios-consumer ARTIFACT_DIRECTORY FORK_CHECKOUT CONSUMER_DIRECTORY"
     );
 }

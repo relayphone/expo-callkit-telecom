@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -12,222 +13,164 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import {
+  downloadSdk,
   inspectInstalledPackages,
   installSdk,
-  packSdk,
   prepareIosConsumer,
   readSdkArtifact,
+  sdkAssetUrl,
+  sdkChecksumsUrl,
+  sdkFilename,
+  sdkVersion,
+  verifySdkLock,
 } from "./sdk-evaluation.ts";
 
-function consumerProject(root: string, prepare = "") {
+function fixture(t: { after: (cleanup: () => void) => void }) {
+  const root = mkdtempSync(join(tmpdir(), "sdk-release-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return { root, artifacts: join(root, "artifacts") };
+}
+const bytes = new TextEncoder().encode("released SDK archive fixture");
+const checksum = createHash("sha256").update(bytes).digest("hex");
+function releaseDownload(sums = `${checksum}  ${sdkFilename}\n`) {
+  return async (url: string) => {
+    if (url === sdkAssetUrl) return bytes;
+    assert.equal(url, sdkChecksumsUrl);
+    return new TextEncoder().encode(sums);
+  };
+}
+function consumerProject(root: string) {
   const project = join(root, "project");
   mkdirSync(project);
-  mkdirSync(join(project, "fixture-dependency"));
-  writeFileSync(
-    join(project, "fixture-dependency/package.json"),
-    JSON.stringify({ name: "fixture-dependency", version: "1.0.0" })
-  );
-  const dependencies = { "fixture-dependency": "file:./fixture-dependency" };
-  writeFileSync(
-    join(project, "package.json"),
-    JSON.stringify({ name: "sdk-consumer", private: true, dependencies })
-  );
-  execFileSync("bun", ["install", "--lockfile-only"], {
-    cwd: project,
-    stdio: "pipe",
-    timeout: 30_000,
-  });
   writeFileSync(
     join(project, "package.json"),
     JSON.stringify({
       name: "sdk-consumer",
       private: true,
-      dependencies: {
-        ...dependencies,
-        "@relayphone/ios-voip-sdk": "9.9.9-unpublished",
-      },
-      scripts: prepare ? { prepare: "node prepare.cjs" } : {},
+      dependencies: { "@relayphone/ios-voip-sdk": sdkAssetUrl },
     })
   );
-  writeFileSync(join(project, "prepare.cjs"), prepare);
   return project;
 }
 
-test("the verified archive is installed before lifecycle scripts without changing manifests or locks", (t) => {
+test("downloads the release URL and rechecks SHA256SUMS on reuse", async (t) => {
   const f = fixture(t);
-  const artifact = packSdk(f.sdk, f.artifacts, f.revision);
-  const project = consumerProject(
-    f.root,
-    `
-    const assert = require('node:assert/strict');
-    assert.equal(require('@relayphone/ios-voip-sdk/package.json').version, '0.3.0');
-    require('node:fs').writeFileSync('prepared', 'sdk available');
-  `
-  );
-  const manifest = readFileSync(join(project, "package.json"), "utf8");
-  const lock = readFileSync(join(project, "bun.lock"), "utf8");
-  assert.deepEqual(installSdk(f.artifacts, project, f.revision), artifact);
-  assert.equal(
-    readFileSync(join(project, "prepared"), "utf8"),
-    "sdk available"
-  );
-  assert.equal(readFileSync(join(project, "package.json"), "utf8"), manifest);
-  assert.equal(readFileSync(join(project, "bun.lock"), "utf8"), lock);
+  const requested: string[] = [];
+  const artifact = await downloadSdk(f.artifacts, async (url) => {
+    requested.push(url);
+    return releaseDownload()(url);
+  });
+  assert.deepEqual(requested.sort(), [sdkAssetUrl, sdkChecksumsUrl].sort());
+  assert.equal(artifact.version, sdkVersion);
+  assert.equal(artifact.url, sdkAssetUrl);
+  assert.equal(artifact.sha256, checksum);
+  assert.deepEqual(readSdkArtifact(f.artifacts), artifact);
+  writeFileSync(join(f.artifacts, sdkFilename), "damaged");
+  assert.throws(() => readSdkArtifact(f.artifacts), /SHA-256 differs/);
 });
 
-test("a failed consumer install restores its original manifest and lock", (t) => {
-  const f = fixture(t);
-  packSdk(f.sdk, f.artifacts, f.revision);
-  const project = consumerProject(
-    f.root,
-    "throw new Error('intentional install failure');"
-  );
-  const manifest = readFileSync(join(project, "package.json"), "utf8");
-  const lock = readFileSync(join(project, "bun.lock"), "utf8");
-  assert.throws(
-    () => installSdk(f.artifacts, project, f.revision),
-    /intentional install failure/
-  );
-  assert.equal(readFileSync(join(project, "package.json"), "utf8"), manifest);
-  assert.equal(readFileSync(join(project, "bun.lock"), "utf8"), lock);
+test("wrong, missing, malformed and duplicate release checksums fail before retaining the archive", async (t) => {
+  for (const sums of [
+    `${"0".repeat(64)}  ${sdkFilename}\n`,
+    `${checksum}  other.tgz\n`,
+    `bad-hash  ${sdkFilename}\n`,
+    `${checksum}  ${sdkFilename}\n${checksum}  ${sdkFilename}\n`,
+  ]) {
+    const f = fixture(t);
+    await assert.rejects(
+      downloadSdk(f.artifacts, releaseDownload(sums)),
+      /SHA-256 differs|exactly one SDK/
+    );
+    assert.deepEqual(readdirSync(f.artifacts), []);
+  }
 });
 
-test("wrong revision, damaged archive and wrong installed version are rejected", (t) => {
+test("network failure and a nonempty destination do not produce a reusable artifact", async (t) => {
   const f = fixture(t);
-  const artifact = packSdk(f.sdk, f.artifacts, f.revision);
+  await assert.rejects(
+    downloadSdk(f.artifacts, async () => {
+      throw Error("download failed");
+    }),
+    /download failed/
+  );
+  assert.deepEqual(readdirSync(f.artifacts), []);
+  writeFileSync(join(f.artifacts, "existing"), "keep");
+  let requested = false;
+  await assert.rejects(
+    downloadSdk(f.artifacts, async () => {
+      requested = true;
+      return bytes;
+    }),
+    /must be empty/
+  );
+  assert.equal(requested, false);
+});
+
+test("installation requires a verified archive and the public URL manifest without rewriting it", async (t) => {
+  const f = fixture(t);
+  await downloadSdk(f.artifacts, releaseDownload());
   const project = consumerProject(f.root);
-  const manifest = readFileSync(join(project, "package.json"), "utf8");
-  assert.throws(
-    () => installSdk(f.artifacts, project, "0".repeat(40)),
-    /Invalid SDK evaluation artifact/
-  );
-  const archive = readFileSync(join(f.artifacts, artifact.filename));
-  writeFileSync(join(f.artifacts, artifact.filename), "damaged");
-  assert.throws(
-    () => installSdk(f.artifacts, project, f.revision),
-    /SDK tarball integrity differs/
-  );
-  assert.equal(readFileSync(join(project, "package.json"), "utf8"), manifest);
-  writeFileSync(join(f.artifacts, artifact.filename), archive);
+  const manifest = join(project, "package.json");
+  const original = readFileSync(manifest, "utf8");
+  writeFileSync(join(f.artifacts, sdkFilename), "damaged");
+  assert.throws(() => installSdk(f.artifacts, project), /SHA-256 differs/);
+  assert.equal(readFileSync(manifest, "utf8"), original);
+  writeFileSync(join(f.artifacts, sdkFilename), bytes);
   writeFileSync(
-    join(f.artifacts, "sdk-artifact.json"),
-    JSON.stringify({ ...artifact, version: "99.0.0" })
+    manifest,
+    JSON.stringify({ dependencies: { "@relayphone/ios-voip-sdk": "0.4.0" } })
   );
   assert.throws(
-    () => installSdk(f.artifacts, project, f.revision),
-    /Installed SDK version differs/
+    () => installSdk(f.artifacts, project),
+    /must use the release asset URL/
   );
-});
-
-function fixture(t: { after: (cleanup: () => void) => void }) {
-  const root = mkdtempSync(join(tmpdir(), "sdk-evaluation-test-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const sdk = join(root, "sdk");
-  const expo = join(sdk, "expo");
-  mkdirSync(expo, { recursive: true });
-  writeFileSync(
-    join(expo, "package.json"),
-    JSON.stringify({
-      name: "@relayphone/ios-voip-sdk",
-      version: "0.3.0",
-      private: true,
-      scripts: { prepack: "node prepare.ts" },
-      files: ["ios"],
-    })
-  );
-  writeFileSync(
-    join(expo, "package-lock.json"),
-    JSON.stringify({
-      name: "@relayphone/ios-voip-sdk",
-      version: "0.3.0",
-      lockfileVersion: 3,
-      packages: { "": { name: "@relayphone/ios-voip-sdk", version: "0.3.0" } },
-    })
-  );
-  writeFileSync(
-    join(expo, "prepare.ts"),
-    `
-    import { mkdirSync, writeFileSync } from 'node:fs';
-    mkdirSync('ios/Vendor', { recursive: true });
-    writeFileSync('ios/Vendor/Prepared.swift', '// prepared during npm pack');
-  `
-  );
-  const git = (...args: string[]) =>
-    execFileSync("git", args, {
-      cwd: sdk,
-      encoding: "utf8",
-      timeout: 10_000,
-    }).trim();
-  git("init", "--quiet");
-  git("add", ".");
-  git(
-    "-c",
-    "user.name=Package Test",
-    "-c",
-    "user.email=package@example.invalid",
-    "commit",
-    "--quiet",
-    "-m",
-    "Package fixture"
-  );
-  return {
-    root,
-    sdk,
-    expo,
-    revision: git("rev-parse", "HEAD"),
-    artifacts: join(root, "artifacts"),
-  };
-}
-
-test("packing a full checkout runs prepack and creates a verified reusable artifact", (t) => {
-  const f = fixture(t);
-  const artifact = packSdk(f.sdk, f.artifacts, f.revision);
-  assert.equal(artifact.revision, f.revision);
-  assert.equal(artifact.version, "0.3.0");
   assert.equal(
-    readFileSync(join(f.expo, "ios/Vendor/Prepared.swift"), "utf8"),
-    "// prepared during npm pack"
-  );
-  assert.deepEqual(readSdkArtifact(f.artifacts, f.revision), artifact);
-  const contents = execFileSync(
-    "tar",
-    ["-tzf", join(f.artifacts, artifact.filename)],
-    { encoding: "utf8", timeout: 10_000 }
-  );
-  assert.match(contents, /package\/ios\/Vendor\/Prepared.swift/);
-});
-
-test("a matching HEAD cannot hide modified SDK sources", (t) => {
-  const f = fixture(t);
-  writeFileSync(
-    join(f.expo, "prepare.ts"),
-    "throw new Error('modified checkout');"
-  );
-  assert.throws(
-    () => packSdk(f.sdk, f.artifacts, f.revision),
-    /SDK checkout has local changes/
+    readFileSync(manifest, "utf8"),
+    JSON.stringify({ dependencies: { "@relayphone/ios-voip-sdk": "0.4.0" } })
   );
 });
 
-test("packing rejects a checkout at a different revision before installing", (t) => {
+test("the locked URL and integrity must match the verified release bytes", async (t) => {
   const f = fixture(t);
+  const artifact = await downloadSdk(f.artifacts, releaseDownload());
+  const project = consumerProject(f.root);
+  const lock = join(project, "bun.lock");
+  const writeLock = (url: string, integrity: string) =>
+    writeFileSync(
+      lock,
+      `{"packages":{"@relayphone/ios-voip-sdk":[${JSON.stringify(
+        `@relayphone/ios-voip-sdk@${url}`
+      )},{},${JSON.stringify(integrity)},],},}`
+    );
+  writeLock(sdkAssetUrl, artifact.integrity);
+  assert.doesNotThrow(() => verifySdkLock(project, artifact.integrity));
+  writeLock(sdkAssetUrl, "sha512-wrong");
   assert.throws(
-    () => packSdk(f.sdk, f.artifacts, "0".repeat(40)),
-    /SDK checkout must be at 0000000000000000000000000000000000000000/
+    () => verifySdkLock(project, artifact.integrity),
+    /URL or integrity differs/
+  );
+  writeLock("https://example.invalid/other-sdk.tgz", artifact.integrity);
+  assert.throws(
+    () => verifySdkLock(project, artifact.integrity),
+    /URL or integrity differs/
   );
 });
 
-test("an artifact cannot be reused with a different revision or altered tarball", (t) => {
+test("temporary-fork mode cannot relax installation without a local fork tarball", async (t) => {
   const f = fixture(t);
-  const artifact = packSdk(f.sdk, f.artifacts, f.revision);
+  await downloadSdk(f.artifacts, releaseDownload());
+  const project = consumerProject(f.root);
   assert.throws(
-    () => readSdkArtifact(f.artifacts, "0".repeat(40)),
-    /Invalid SDK evaluation artifact/
+    () => installSdk(f.artifacts, project, "temporary-fork"),
+    /requires a local fork tarball/
   );
-  writeFileSync(join(f.artifacts, artifact.filename), "tampered");
+  const path = join(project, "package.json");
+  const pkg = JSON.parse(readFileSync(path, "utf8"));
+  pkg.dependencies["expo-callkit-telecom"] = "0.5.0";
+  writeFileSync(path, JSON.stringify(pkg));
   assert.throws(
-    () => readSdkArtifact(f.artifacts, f.revision),
-    /integrity differs/
+    () => installSdk(f.artifacts, project, "temporary-fork"),
+    /requires a local fork tarball/
   );
 });
 
@@ -245,7 +188,7 @@ function installedConsumer(
       join(root, "package.json"),
       JSON.stringify({
         name,
-        version: "0.3.0",
+        version: "0.4.0",
         exports: {
           ".": "./index.js",
           "./package.json": "./package.json",
@@ -273,8 +216,8 @@ function installedConsumer(
     JSON.stringify({
       private: true,
       dependencies: {
-        "@relayphone/ios-voip-sdk": "0.3.0",
-        "expo-callkit-telecom": "0.3.0",
+        "@relayphone/ios-voip-sdk": "0.4.0",
+        "expo-callkit-telecom": "0.4.0",
       },
     })
   );
@@ -292,17 +235,17 @@ function installedConsumer(
 
 test("installed packages must expose working plugins and their native registration payload", (t) => {
   const { consumer, sdk } = installedConsumer(t);
-  assert.equal(inspectInstalledPackages(consumer, "0.3.0").sdkInstallations, 1);
+  assert.equal(inspectInstalledPackages(consumer, "0.4.0").sdkInstallations, 1);
   writeFileSync(
     join(sdk, "expo-module.config.json"),
     JSON.stringify({ apple: { modules: [] } })
   );
   assert.throws(
-    () => inspectInstalledPackages(consumer, "0.3.0"),
+    () => inspectInstalledPackages(consumer, "0.4.0"),
     /SDK Apple module registration is missing/
   );
   rmSync(join(sdk, "expo-module.config.json"));
-  assert.throws(() => inspectInstalledPackages(consumer, "0.3.0"), /ENOENT/);
+  assert.throws(() => inspectInstalledPackages(consumer, "0.4.0"), /ENOENT/);
 });
 
 test("a no-op plugin cannot borrow mods from another valid plugin", (t) => {
@@ -311,7 +254,7 @@ test("a no-op plugin cannot borrow mods from another valid plugin", (t) => {
     "module.exports = config => config;"
   );
   assert.throws(
-    () => inspectInstalledPackages(consumer, "0.3.0"),
+    () => inspectInstalledPackages(consumer, "0.4.0"),
     /expo-callkit-telecom plugin did not configure project mods/
   );
 });
@@ -344,12 +287,21 @@ test("the composed package rejects a second Apple provider and a runtime types e
   const root = join(consumer, "node_modules/expo-callkit-telecom");
   const nativePath = join(root, "expo-module.config.json");
   const native = JSON.parse(readFileSync(nativePath, "utf8"));
-  writeFileSync(nativePath, JSON.stringify({ ...native, apple: { modules: ["LegacyProvider"] } }));
-  assert.throws(() => inspectInstalledPackages(consumer, "0.3.0"), /Android module registration is missing/);
+  writeFileSync(
+    nativePath,
+    JSON.stringify({ ...native, apple: { modules: ["LegacyProvider"] } })
+  );
+  assert.throws(
+    () => inspectInstalledPackages(consumer, "0.4.0"),
+    /Android module registration is missing/
+  );
   writeFileSync(nativePath, JSON.stringify(native));
   const path = join(root, "package.json");
   const pkg = JSON.parse(readFileSync(path, "utf8"));
   pkg.exports["./types"].default = "./index.js";
   writeFileSync(path, JSON.stringify(pkg));
-  assert.throws(() => inspectInstalledPackages(consumer, "0.3.0"), /types entry must be type-only/);
+  assert.throws(
+    () => inspectInstalledPackages(consumer, "0.4.0"),
+    /types entry must be type-only/
+  );
 });

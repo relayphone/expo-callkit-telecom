@@ -5,9 +5,13 @@ and this package's Android provider. The former upstream device matrix does not
 qualify this implementation. Its historical copy is preserved on
 [archive/android-telecom-research](https://github.com/relayphone/expo-callkit-telecom/blob/archive/android-telecom-research/docs/verified-against.md).
 
+The SDK dependency is the [v0.4.0 release](https://github.com/relayphone/ios-voip-sdk/releases/tag/v0.4.0),
+consumed from its `relayphone-ios-voip-sdk-0.4.0.tgz` asset and checked against the
+release's `SHA256SUMS`. [Install the fork and SDK asset together](./sdk-package-evaluation.md).
+
 Current automated checks cover:
 
-- [Packed SDK/fork consumers](../.github/workflows/v2-sdk-evaluation.yml), public
+- [Fork tarball with the SDK release URL](../.github/workflows/v2-sdk-evaluation.yml), public
   types, plugin composition, errors and route updates.
 - [Android native behavior](../.github/workflows/v2-android.yml), including media
   readiness, hold/resume, filtering and cleanup on an API 35 emulator.
