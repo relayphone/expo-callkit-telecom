@@ -48,6 +48,9 @@ export async function runAndroidJourney(runID: string): Promise<void> {
           result.terminals.push({
             id: call.id,
             reason: call.ended?.reason ?? "missing",
+            ...(call.ended?.reason === "failed" && call.ended.failure
+              ? { failure: call.ended.failure }
+              : {}),
           });
           result.lifecycle.push({ id: call.id, kind: "ended" });
         }

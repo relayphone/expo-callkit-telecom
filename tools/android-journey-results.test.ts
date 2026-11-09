@@ -62,7 +62,15 @@ function fixture() {
       terminals: ["incoming", "outgoing", "elsewhere", "filtered"].map(
         (name) => ({
           id: `run-${name}`,
-          reason: name === "elsewhere" ? "answeredElsewhere" : "local",
+          reason:
+            name === "filtered"
+              ? "failed"
+              : name === "elsewhere"
+              ? "answeredElsewhere"
+              : "local",
+          ...(name === "filtered"
+            ? { failure: { kind: "filtered", cause: "doNotDisturb" } }
+            : {}),
         })
       ),
       lifecycle: ["incoming", "outgoing", "elsewhere"]
@@ -168,6 +176,25 @@ test("rejects missing, stale, reordered, failed and uncorrelated evidence", () =
     },
     (value) => {
       value.app.terminals.length = 0;
+    },
+    (value) => {
+      value.app.terminals[3]!.reason = "local";
+    },
+    (value) => {
+      delete value.app.terminals[3]!.failure;
+    },
+    (value) => {
+      value.app.terminals[3]!.failure!.kind = "server";
+    },
+    (value) => {
+      value.app.terminals[3]!.failure!.cause = "blockList";
+    },
+    (value) => {
+      value.app.actions.push({
+        id: "run-filtered",
+        kind: "end",
+        origin: "app",
+      });
     },
     (value) => {
       value.app.lifecycle.reverse();

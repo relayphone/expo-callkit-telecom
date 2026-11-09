@@ -1,6 +1,8 @@
 package expo.modules.callkittelecom.conversations
 
 import android.Manifest
+import android.app.Notification
+import android.app.NotificationManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
@@ -25,7 +27,58 @@ class EndedFailureTest {
     }
 
     @Test fun kindsUseTheTypeScriptNames() {
-        assertEquals(listOf("notPlaced", "media", "connectTimedOut", "server"), EndedFailure.values().map { it.kind })
+        assertEquals(listOf("notPlaced", "media", "connectTimedOut", "server", "filtered", "filtered", "filtered"),
+            EndedFailure.entries.map { it.kind })
+    }
+
+    @Test fun filteredFailuresEncodeThePackageCause() {
+        for ((reason, cause) in listOf(NativeIncomingFilterReason.DO_NOT_DISTURB to "doNotDisturb",
+            NativeIncomingFilterReason.BLOCK_LIST to "blockList", NativeIncomingFilterReason.OTHER to "other")) {
+            val failure = EndedFailure.filtered(reason)
+            assertEquals(mapOf("at" to "now", "reason" to "failed",
+                "failure" to mapOf("kind" to "filtered", "cause" to cause)), conversationEnd("now", "failed", failure))
+            assertEquals(mapOf("at" to "now", "reason" to "local"), conversationEnd("now", "local", failure))
+        }
+    }
+
+    @Test fun filteredIncomingEndsWithoutAUserActionOrWarmup() = journey(settles = true) { engine, snapshots ->
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val previousFilter = NativeIncomingFilters.evaluate
+        val previousEmitter = engine.emit
+        val events = mutableListOf<Map<String, Any?>>()
+        var warmups = 0
+        engine.emit = { name, event ->
+            previousEmitter(name, event)
+            if (name == "conversationEvent") events += event
+        }
+        try {
+            for ((reason, cause) in listOf(NativeIncomingFilterReason.DO_NOT_DISTURB to "doNotDisturb",
+                NativeIncomingFilterReason.BLOCK_LIST to "blockList", NativeIncomingFilterReason.OTHER to "other")) {
+                NativeIncomingFilters.evaluate = { NativeIncomingFilter(reason) }
+                val payload = invitation("filtered-$cause-${System.nanoTime()}")
+                val id = payload["serverCallId"] as String
+                val result = NativeCallPush(engine) { warmups++ }.handle(mapOf("messageType" to "incomingCall",
+                    "incomingCall" to JSONObject(payload).toString()), true)!!
+                assertEquals(mapOf("status" to "filtered", "reason" to cause), result)
+                val end = ended(snapshots) { it["id"] == id }
+                assertEquals("failed", end?.get("reason"))
+                assertEquals(mapOf("kind" to "filtered", "cause" to cause), end?.get("failure"))
+                val outcomes = events.filter { it["type"] == "incomingConversationOutcome" &&
+                    (it["payload"] as? Map<*, *>)?.get("serverCallId") == id }
+                assertEquals(1, outcomes.size)
+                assertEquals(result, (outcomes.single()["payload"] as Map<*, *>)["outcome"])
+                assertFalse(events.any { it["type"] == "actionPerformed" &&
+                    (it["payload"] as? Map<*, *>)?.get("conversationId") == id })
+                assertFalse((engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id })
+                withTimeout(5000) { while (TelecomEvidence.calls().isNotEmpty()) delay(25) }
+                assertFalse(context.getSystemService(NotificationManager::class.java).activeNotifications.any {
+                    it.notification.category == Notification.CATEGORY_CALL })
+            }
+            assertEquals(0, warmups)
+        } finally {
+            engine.emit = previousEmitter
+            NativeIncomingFilters.evaluate = previousFilter
+        }
     }
 
     @Test fun onlyAHandlerThatDidNotPlaceTheCallIsNotPlaced() {

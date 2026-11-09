@@ -4,8 +4,12 @@ Android can accept a Core-Telecom call while suppressing its CATEGORY_CALL
 notification. Core admission and notification presentation are separate facts.
 The library reports to Core first, checks native policy, then prepares media/JS
 only for accepted invitations. A filtered report returns the existing shared
-`{ status: "filtered", reason, nativeReason? }` shape, without a conversation ID
-or a fabricated snapshot entry. Duplicate reports retain their original outcome.
+`{ status: "filtered", reason, nativeReason? }` shape, without a conversation ID.
+The admitted call publishes a terminal snapshot with `reason: "failed"` and
+`failure: { kind: "filtered", cause }`, where `cause` is the existing filter reason:
+`doNotDisturb`, `blockList` or `other`. Filtering emits no `actionPerformed` event.
+The call and its notification are removed without warming media or JavaScript.
+Duplicate reports retain their original outcome.
 Native Answer also waits for this native policy decision. Application block-list
 and other custom rejections are resolved before presenting a notification or
 Answer action. A DND-suppressed call notification is enqueued and cancelled to
@@ -44,6 +48,8 @@ Policy broadcasts recheck ringing calls. If a previously reported/prewarmed call
 becomes filtered, native closes its media and Core call, updates dedupe state and
 emits the filtered outcome through both hooks. Active calls are not reclassified
 as incoming invitations.
+The terminal snapshot uses the same filtered failure and cause as initial filtering;
+closing an already prewarmed call does not count as a user or app end action.
 
 ## Emulator evidence
 

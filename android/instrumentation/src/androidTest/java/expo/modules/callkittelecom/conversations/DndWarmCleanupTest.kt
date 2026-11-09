@@ -39,6 +39,8 @@ class DndWarmCleanupTest {
             val signals = CopyOnWriteArrayList<NativeMediaSignal>()
             val native = CopyOnWriteArrayList<NativeIncomingOutcome>()
             val js = mutableListOf<Map<String, Any?>>()
+            val terminals = mutableMapOf<String, Map<*, *>>()
+            val performed = mutableListOf<String>()
             val mediaObserver = NativeMediaObserver { signals += it }
             val outcomeObserver = NativeIncomingObserver { native += it }
             NativeMediaSignals.observers += mediaObserver
@@ -48,7 +50,15 @@ class DndWarmCleanupTest {
             NativeMediaAuthenticationProviders.providers["dnd-fixture"] = {
                 NativeMediaAuthentication(settings.getString("authentication"), "fixture-device")
             }
-            engine.emit = { name, body -> if (name == "conversationEvent" && body["type"] == "incomingConversationOutcome") js += body }
+            engine.emit = { name, body ->
+                if (name == "conversationsChanged") for (call in (body["conversations"] as List<*>).filterIsInstance<Map<*, *>>()) {
+                    if (call["status"] == "ended") terminals[call["id"] as String] = call["ended"] as Map<*, *>
+                }
+                if (name == "conversationEvent") {
+                    if (body["type"] == "incomingConversationOutcome") js += body
+                    if (body["type"] == "actionPerformed") performed += (body["payload"] as Map<*, *>)["conversationId"] as String
+                }
+            }
             engine.nativeMedia = AndroidNativeMedia.LIVEKIT
             engine.policy = JSONObject(mapOf("type" to "native", "media" to "livekit", "credentials" to "fromPush",
                 "fallback" to mapOf("type" to "http", "baseUrl" to settings.getString("baseUrl"), "authentication" to "dnd-fixture")))
@@ -67,8 +77,13 @@ class DndWarmCleanupTest {
                     signals.none { it.serverCallId == serverId && it.stage == NativeMediaStage.CLOSED }) delay(20) }
                 val result = (native.last { it.serverCallId == serverId }.result as NativeIncomingResult.Filtered).filter
                 assertEquals(NativeIncomingFilterReason.DO_NOT_DISTURB, result.reason)
+                assertEquals("failed", terminals[serverId]?.get("reason"))
+                assertEquals(mapOf("kind" to "filtered", "cause" to "doNotDisturb"), terminals[serverId]?.get("failure"))
+                assertFalse(performed.contains(id))
                 assertFalse((engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id })
                 withTimeout(5000) { while (TelecomEvidence.calls().isNotEmpty()) delay(25) }
+                assertFalse(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.any {
+                    it.notification.category == android.app.Notification.CATEGORY_CALL })
                 assertTrue(js.any { ((it["payload"] as? Map<*, *>)?.get("outcome") as? Map<*, *>)?.get("reason") == "doNotDisturb" })
                 val state = withTimeout(7000) {
                     var value = fixture("/fixture/observations/$serverId")
@@ -95,6 +110,9 @@ class DndWarmCleanupTest {
                     val filtered = reporting.await()
                     assertTrue(earlyAnswer.await().isFailure)
                     assertEquals("filtered", filtered["status"]); assertEquals(reason.value, filtered["reason"])
+                    assertEquals("failed", terminals[key]?.get("reason"))
+                    assertEquals(mapOf("kind" to "filtered", "cause" to reason.value), terminals[key]?.get("failure"))
+                    assertFalse(performed.contains(key))
                     assertFalse(filtered.containsKey("id"))
                     assertEquals(filtered, engine.incoming(request))
                     assertEquals(1, native.count { it.serverCallId == key })

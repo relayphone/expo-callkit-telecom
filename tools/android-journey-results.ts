@@ -102,7 +102,15 @@ export function assertAndroidJourney(
     js.terminals,
     ["incoming", "outgoing", "elsewhere", "filtered"].map((name) => ({
       id: `${runID}-${name}`,
-      reason: name === "elsewhere" ? "answeredElsewhere" : "local",
+      reason:
+        name === "filtered"
+          ? "failed"
+          : name === "elsewhere"
+          ? "answeredElsewhere"
+          : "local",
+      ...(name === "filtered"
+        ? { failure: { kind: "filtered", cause: "doNotDisturb" } }
+        : {}),
     }))
   );
   assert.deepEqual(

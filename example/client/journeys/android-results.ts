@@ -1,4 +1,8 @@
-import type { Conversation, ConversationsApi } from "expo-callkit-telecom";
+import type {
+  Conversation,
+  ConversationsApi,
+  EndedFailure,
+} from "expo-callkit-telecom";
 
 export const androidStages = [
   ["incoming:ringing", "ringing", "RINGING"],
@@ -57,7 +61,7 @@ export interface AndroidResults {
     eventId: string;
   }[];
   cancelled: string[];
-  terminals: { id: string; reason: string }[];
+  terminals: { id: string; reason: string; failure?: EndedFailure }[];
   lifecycle: {
     id: string;
     kind: "ended" | "performedEnd" | "elsewhere" | "removed";
