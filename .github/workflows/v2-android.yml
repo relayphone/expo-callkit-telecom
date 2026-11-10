@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
-      - run: node --test tools/run-native-media-journey.test.ts
+      - run: node --test tools/run-native-media-journey.test.ts tools/native-media-fixture-log.test.ts
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.0'
@@ -68,6 +68,9 @@ jobs:
         run: |
           if [ -f "$RUNNER_TEMP/native-media-fixture/pid" ]; then kill "$(cat "$RUNNER_TEMP/native-media-fixture/pid")" || true; fi
           docker rm -f native-media-fixture || true
+      - name: Retain sanitized native media fixture log
+        if: always()
+        run: node tools/native-media-fixture-log.ts "$RUNNER_TEMP/native-media-fixture" android/instrumentation/build/native-media-fixture.log
       - uses: actions/upload-artifact@v6
         if: always()
         with:
@@ -78,6 +81,7 @@ jobs:
             android/instrumentation/build/answered-elsewhere-results.json
             android/instrumentation/build/native-media-results.json
             android/instrumentation/build/native-webrtc-results.json
+            android/instrumentation/build/native-media-fixture.log
             android/instrumentation/build/dnd-results
           if-no-files-found: error
 
