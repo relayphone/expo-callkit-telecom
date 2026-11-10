@@ -301,23 +301,65 @@ test("WebRTC transport closure never substitutes for independently acknowledged 
   }
 });
 
-test("CLI checks real files and reports malformed evidence without exposing its contents", (t) => {
+test("CLI prints the failed rule and assertion details, keeping parse errors brief", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "native-media-check-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const file = join(directory, "result.json");
   const checker = fileURLToPath(
     new URL("./check-native-media.ts", import.meta.url)
   );
-  for (const contents of [JSON.stringify(fixture()), "invalid private-token"]) {
+  const budget = fixture();
+  budget.budgetMs = 3001;
+  const order = fixture();
+  order.samples[0].pushNanos = order.samples[0].reportedNanos + 1;
+  const transport = fixture();
+  transport.samples[0].events = transport.samples[0].events.filter(
+    (event) => event.measurements.role !== 2
+  );
+  const measurement = fixture();
+  const malformed = {
+    ...measurement,
+    samples: [
+      { ...measurement.samples[0], firstAudioNanos: "invalid" },
+      measurement.samples[1],
+    ],
+  };
+  for (const [contents, rule] of [
+    [JSON.stringify(fixture()), undefined],
+    [JSON.stringify(budget), /budgetMs must equal 3000/],
+    [
+      JSON.stringify(order),
+      /livekit sample\[0\]: pushNanos must not exceed reportedNanos/,
+    ],
+    [
+      JSON.stringify(transport),
+      /livekit sample\[0\]: DTLS role 2 must be ready by prejoinedNanos/,
+    ],
+    [
+      JSON.stringify(malformed),
+      /livekit sample\[0\]\.firstAudioNanos must be a finite number/,
+    ],
+    ["invalid JSON", /Native media evidence is not valid JSON\.\n/],
+  ] as const) {
     writeFileSync(file, contents);
     const result = spawnSync(process.execPath, [checker, file], {
       encoding: "utf8",
       timeout: 15_000,
     });
-    assert.equal(result.status, contents.startsWith("invalid") ? 1 : 0);
-    if (result.status !== 0) {
+    assert.equal(result.status, rule ? 1 : 0);
+    if (rule) {
       assert.equal(result.stdout, "");
-      assert.equal(result.stderr, "Native media evidence failed validation.\n");
+      assert.match(result.stderr, rule);
+      if (contents.startsWith("invalid"))
+        assert.equal(
+          result.stderr,
+          "Native media evidence is not valid JSON.\n"
+        );
+      else assert.match(result.stderr, /AssertionError/);
+      if (contents === JSON.stringify(budget)) {
+        assert.match(result.stderr, /actual: 3001/);
+        assert.match(result.stderr, /expected: 3000/);
+      }
     }
   }
 });
