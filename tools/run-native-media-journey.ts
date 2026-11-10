@@ -3,7 +3,7 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface Command {
-  program: "gradle" | "adb" | "python3" | "node";
+  program: "gradle" | "adb" | "node";
   args: readonly string[];
   timeout: number;
   capture?: boolean;
@@ -22,7 +22,7 @@ const execute: Execute = ({ program, args, timeout, capture }) =>
 const app = "expo.modules.callkittelecom.instrumentation";
 const checks = [
   ["journey-results", "node", "check-android-journey.ts"],
-  ["answered-elsewhere-results", "python3", "check-answered-elsewhere.py"],
+  ["answered-elsewhere-results", "node", "check-answered-elsewhere.ts"],
   ["native-media-results", "node", "check-native-media.ts"],
   ["native-webrtc-results", "node", "check-native-media.ts"],
 ] as const;
