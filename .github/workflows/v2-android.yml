@@ -26,11 +26,12 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
-      - run: node --test tools/run-native-media-journey.test.ts tools/native-media-fixture-log.test.ts
+      - run: node --test tools/run-native-media-journey.test.ts tools/native-media-fixture-log.test.ts tools/check-native-media.test.ts
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.0'
       - uses: ./.github/actions/sdk-consumer
+      - run: node node_modules/typescript/bin/tsc -p tsconfig.executor.json
       - uses: actions/setup-java@v5
         with:
           distribution: temurin

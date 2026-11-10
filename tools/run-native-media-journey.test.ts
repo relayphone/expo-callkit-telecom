@@ -79,9 +79,9 @@ test("runs the complete functional suite once and checks all four results", () =
           ? "check-android-journey.py"
           : index === 1
           ? "check-answered-elsewhere.py"
-          : "check-native-media.py";
+          : "check-native-media.ts";
       assert.deepEqual(f.calls[index * 2 + 2], {
-        program: "python3",
+        program: index < 2 ? "python3" : "node",
         args: [join("tools", checker), join(f.output, `${name}.json`)],
         timeout: 15_000,
       });
@@ -115,7 +115,9 @@ test("retains available media diagnostics after a failed suite and propagates it
       "native-media-results.json",
     ]);
     assert.equal(
-      f.calls.filter((command) => command.program === "python3").length,
+      f.calls.filter(
+        (command) => command.program === "python3" || command.program === "node"
+      ).length,
       0
     );
   } finally {
@@ -123,32 +125,36 @@ test("retains available media diagnostics after a failed suite and propagates it
   }
 });
 
-test("a checker failure stays fatal while remaining evidence is collected", () => {
-  const f = fixture();
-  const failure = new Error("invalid journey evidence");
-  try {
-    assert.throws(
-      () =>
-        runNativeMediaJourney(f.output, (command) => {
-          const result = f.run(command);
-          if (command.program === "python3") throw failure;
-          return result;
-        }),
-      (error) => error === failure
-    );
-    assert.equal(readdirSync(f.output).length, 4);
-    assert.equal(
-      f.calls.filter((command) => command.program === "python3").length,
-      1
-    );
-    assert.equal(
-      f.calls.filter((command) => command.program === "gradle").length,
-      1
-    );
-  } finally {
-    f.close();
-  }
-});
+for (const checker of ["python3", "node"] as const)
+  test(`a ${checker} checker failure stays fatal while remaining evidence is collected`, () => {
+    const f = fixture();
+    const failure = new Error("invalid journey evidence");
+    try {
+      assert.throws(
+        () =>
+          runNativeMediaJourney(f.output, (command) => {
+            const result = f.run(command);
+            if (command.program === checker) throw failure;
+            return result;
+          }),
+        (error) => error === failure
+      );
+      assert.equal(readdirSync(f.output).length, 4);
+      assert.equal(
+        f.calls.filter(
+          (command) =>
+            command.program === "python3" || command.program === "node"
+        ).length,
+        checker === "python3" ? 1 : 3
+      );
+      assert.equal(
+        f.calls.filter((command) => command.program === "gradle").length,
+        1
+      );
+    } finally {
+      f.close();
+    }
+  });
 
 interface TelecomPoll {
   requestedNanos: number;
