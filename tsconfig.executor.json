@@ -17,6 +17,7 @@
     "tools/android-emulator-executor*.ts",
     "tools/gradle-wrapper-timeout*.ts",
     "tools/run-native-media-journey*.ts",
+    "tools/prepare-native-media-fixture*.ts",
     "tools/run-android-dnd*.ts",
     "tools/check-native-media*.ts",
     "tools/check-android-journey*.ts",
