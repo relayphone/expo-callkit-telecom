@@ -2,7 +2,7 @@
 
 The fork's `v2` branch composes `@relayphone/ios-voip-sdk` for the shared API
 and Apple native provider, with Core-Telecom on Android. See the
-[SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/react-native.md)
+[SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md)
 for its iOS requirements and the [platform notes](./platform-notes.md) for Android
 behavior. The [react-native-callkeep project](https://github.com/react-native-webrtc/react-native-callkeep)
 documents its own API and supported platforms.

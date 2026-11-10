@@ -16,7 +16,7 @@ Android audio events come from native lifecycle ownership. `audioActivated` foll
 
 Android advertises `capabilities.tones = false`; `playTones` rejects `unsupported` without a performed event. Preview joining is unsupported on Android; filtered and answered-elsewhere calls terminate and remove their notification. Previews and notification-based preview joins remain iOS-only. Audio routes use canonical `bluetooth` and `other` values.
 
-See the SDK's [iOS and React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/react-native.md) for the shared API and iOS setup.
+See the SDK's [iOS and React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md) for the shared API and iOS setup.
 
 ## Plugin composition and native project upgrades
 

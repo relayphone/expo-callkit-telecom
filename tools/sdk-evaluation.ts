@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -16,6 +17,51 @@ export const sdkFilename = "relayphone-ios-voip-sdk-0.4.0.tgz";
 export const sdkAssetUrl = `https://github.com/relayphone/ios-voip-sdk/releases/download/v${sdkVersion}/${sdkFilename}`;
 export const sdkChecksumsUrl = `https://github.com/relayphone/ios-voip-sdk/releases/download/v${sdkVersion}/SHA256SUMS`;
 const sdkName = "@relayphone/ios-voip-sdk";
+
+const packageEntries = [
+  "package.json",
+  "README.md",
+  "CHANGELOG.md",
+  "build/index.js",
+  "build/index.d.ts",
+  "build/types.d.ts",
+  "app.plugin.js",
+  "expo-module.config.json",
+  "android/build.gradle",
+  "android/src/main/AndroidManifest.xml",
+  "android/src/main/java/expo/modules/callkittelecom/ExpoCallKitTelecomModule.kt",
+  "android/src/livekit/java/expo/modules/callkittelecom/conversations/BuiltInMedia.kt",
+  "android/src/withoutLivekit/java/expo/modules/callkittelecom/conversations/BuiltInMedia.kt",
+  ...[
+    "withConversations",
+    "composedPlugin",
+    "androidNativeMedia",
+    "androidOptions",
+  ].flatMap((name) => [`plugin/build/${name}.js`, `plugin/build/${name}.d.ts`]),
+];
+
+/** Validate the actual npm archive's runtime boundary and required public entries. */
+export function assertPackageFiles(files: readonly string[]): void {
+  const fixed = new Set([
+    "LICENSE",
+    ...packageEntries,
+    ...packageEntries
+      .filter((path) => path.startsWith("plugin/"))
+      .map((path) => `${path}.map`),
+  ]);
+  for (const path of files) {
+    const native =
+      /^android\/src\/(main|livekit|withoutLivekit)\/.+\.(kt|xml)$/.test(
+        path
+      ) &&
+      !/(^|\/)(test|androidTest|__tests__|instrumentation|research)(\/|$)/.test(
+        path
+      );
+    assert.ok(fixed.has(path) || native, `Unexpected packed file: ${path}`);
+  }
+  for (const path of packageEntries)
+    assert.ok(files.includes(path), `Missing packed file: ${path}`);
+}
 
 interface SdkArtifact {
   version: string;
@@ -205,6 +251,21 @@ export function inspectInstalledPackages(
     );
   }
   require.resolve(sdkName);
+  assert.equal(
+    object(fork.repository) && fork.repository.url,
+    "git+https://github.com/relayphone/expo-callkit-telecom.git",
+    "Published repository must identify the fork"
+  );
+  assert.equal(
+    object(fork.bugs) && fork.bugs.url,
+    "https://github.com/relayphone/expo-callkit-telecom/issues",
+    "Published bugs URL must identify the fork"
+  );
+  assert.equal(
+    fork.homepage,
+    "https://github.com/relayphone/expo-callkit-telecom/tree/v2#readme",
+    "Published homepage must identify the fork guide"
+  );
   require.resolve(`${sdkName}/plugin`);
   require.resolve("expo-callkit-telecom");
   for (const name of [sdkName, "expo-callkit-telecom"]) {
@@ -274,7 +335,32 @@ export function checkConsumer(
   mkdirSync(consumer);
   const packed = join(consumer, "packages");
   mkdirSync(packed);
-  command("npm", ["pack", "--pack-destination", packed], forkCheckout, 300_000);
+  const archive: unknown = JSON.parse(
+    command(
+      "npm",
+      ["pack", "--json", "--pack-destination", packed],
+      forkCheckout,
+      300_000
+    )
+  );
+  assert.ok(
+    Array.isArray(archive) && archive.length === 1 && object(archive[0]),
+    "Expected one npm pack result"
+  );
+  const entry = archive[0];
+  assert.ok(Array.isArray(entry.files), "npm pack must list archive files");
+  const files = entry.files.map((file: unknown) => {
+    assert.ok(
+      object(file) && typeof file.path === "string",
+      "Invalid npm pack file entry"
+    );
+    return file.path;
+  });
+  assertPackageFiles(files);
+  writeFileSync(
+    join(consumer, "package-files.txt"),
+    files.toSorted().join("\n") + "\n"
+  );
   const tarballs = readdirSync(packed).filter((name) => name.endsWith(".tgz"));
   if (tarballs.length !== 1 || !tarballs[0])
     throw new Error("Expected exactly one Android package tarball");
@@ -348,7 +434,7 @@ export function checkConsumer(
 }
 
 /** Prepares the composed plugin consumer with one provider per platform. */
-export function prepareIosConsumer(consumer: string, fixtures: string) {
+export function prepareConsumer(consumer: string, fixtures: string) {
   const path = join(consumer, "package.json");
   const pkg = json(path);
   if (!object(pkg)) throw new Error("Invalid consumer package manifest");
@@ -392,11 +478,10 @@ if (
       resolve(second),
       resolve(third)
     );
-    if (mode === "ios-consumer")
-      prepareIosConsumer(
-        resolve(third),
-        resolve(second, "test/fixtures/ios-consumer")
-      );
+    prepareConsumer(
+      resolve(third),
+      resolve(second, "test/fixtures/package-consumer")
+    );
     console.log(JSON.stringify(result));
   } else
     throw new Error(

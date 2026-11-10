@@ -9,7 +9,7 @@ Core-Telecom provider. The `v2` fork tarball is evaluated with the SDK's v0.4.0 
 - [Android integration](./android-quick-start.md)
 - [VoIP push payloads](./voip-push.md)
 - [Migration from v1](./migrating-v1-to-v2.md)
-- [SDK-owned API and iOS guide](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/react-native.md)
+- [SDK-owned API and iOS guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md)
 - [Public example client](../example/client/README.md)
 - [Public example push sender](../example/server/README.md)
 
