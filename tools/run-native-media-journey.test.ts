@@ -76,12 +76,12 @@ test("runs the complete functional suite once and checks all four results", () =
       );
       const checker =
         index === 0
-          ? "check-android-journey.py"
+          ? "check-android-journey.ts"
           : index === 1
           ? "check-answered-elsewhere.py"
           : "check-native-media.ts";
       assert.deepEqual(f.calls[index * 2 + 2], {
-        program: index < 2 ? "python3" : "node",
+        program: index === 1 ? "python3" : "node",
         args: [join("tools", checker), join(f.output, `${name}.json`)],
         timeout: 15_000,
       });
@@ -125,8 +125,13 @@ test("retains available media diagnostics after a failed suite and propagates it
   }
 });
 
-for (const checker of ["python3", "node"] as const)
-  test(`a ${checker} checker failure stays fatal while remaining evidence is collected`, () => {
+for (const [index, name] of [
+  "journey-results",
+  "answered-elsewhere-results",
+  "native-media-results",
+  "native-webrtc-results",
+].entries())
+  test(`a failed ${name} check stays fatal while remaining evidence is collected`, () => {
     const f = fixture();
     const failure = new Error("invalid journey evidence");
     try {
@@ -134,7 +139,8 @@ for (const checker of ["python3", "node"] as const)
         () =>
           runNativeMediaJourney(f.output, (command) => {
             const result = f.run(command);
-            if (command.program === checker) throw failure;
+            if (command.args.at(-1) === join(f.output, `${name}.json`))
+              throw failure;
             return result;
           }),
         (error) => error === failure
@@ -145,7 +151,7 @@ for (const checker of ["python3", "node"] as const)
           (command) =>
             command.program === "python3" || command.program === "node"
         ).length,
-        checker === "python3" ? 1 : 3
+        index + 1
       );
       assert.equal(
         f.calls.filter((command) => command.program === "gradle").length,
