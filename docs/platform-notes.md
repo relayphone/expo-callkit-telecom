@@ -3,7 +3,7 @@
 ## iOS
 
 The SDK supplies LiveCommunicationKit and PushKit through its sole Apple native
-provider. Follow its [React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/react-native.md)
+provider. Follow its [React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md)
 for current iOS/Expo requirements, entitlements, notifications, previews and Focus
 configuration. Its package includes the native sources; do not add a separate SDK
 pod or Swift package. The composed fork plugin invokes the SDK plugin.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdtempSync,
@@ -6,17 +7,20 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
+  assertPackageFiles,
   downloadSdk,
   inspectInstalledPackages,
   installSdk,
-  prepareIosConsumer,
+  prepareConsumer,
   readSdkArtifact,
   sdkAssetUrl,
   sdkChecksumsUrl,
@@ -24,6 +28,99 @@ import {
   sdkVersion,
   verifySdkLock,
 } from "./sdk-evaluation.ts";
+
+test("the packed package rejects tooling outside its runtime boundary", () => {
+  for (const path of [
+    "ios/Module.swift",
+    "android/instrumentation/build.gradle",
+    "tools/native-media-fixture.py",
+    "site/index.html",
+    "docs/index.md",
+    "example/server/index.ts",
+    "example/client/index.ts",
+    "test/contract.ts",
+    "research/results.json",
+    "android/src/main/__tests__/Example.kt",
+  ])
+    assert.throws(() => assertPackageFiles([path]), {
+      message: `Unexpected packed file: ${path}`,
+    });
+});
+
+test("packed public entries and both Android media flavors must be present", () => {
+  const files = [
+    "package.json",
+    "README.md",
+    "CHANGELOG.md",
+    "build/index.js",
+    "build/index.d.ts",
+    "build/types.d.ts",
+    "app.plugin.js",
+    "expo-module.config.json",
+    "android/build.gradle",
+    "android/src/main/AndroidManifest.xml",
+    "android/src/main/java/expo/modules/callkittelecom/ExpoCallKitTelecomModule.kt",
+    "android/src/livekit/java/expo/modules/callkittelecom/conversations/BuiltInMedia.kt",
+    "android/src/withoutLivekit/java/expo/modules/callkittelecom/conversations/BuiltInMedia.kt",
+    "plugin/build/withConversations.js",
+    "plugin/build/withConversations.d.ts",
+    "plugin/build/composedPlugin.js",
+    "plugin/build/composedPlugin.d.ts",
+    "plugin/build/androidNativeMedia.js",
+    "plugin/build/androidNativeMedia.d.ts",
+    "plugin/build/androidOptions.js",
+    "plugin/build/androidOptions.d.ts",
+  ];
+  assertPackageFiles(files);
+  assertPackageFiles([...files, "LICENSE"]);
+  for (const missing of [
+    "build/index.js",
+    "build/types.d.ts",
+    "plugin/build/withConversations.js",
+    "android/src/main/AndroidManifest.xml",
+    "android/src/livekit/java/expo/modules/callkittelecom/conversations/BuiltInMedia.kt",
+  ])
+    assert.throws(
+      () => assertPackageFiles(files.filter((path) => path !== missing)),
+      { message: `Missing packed file: ${missing}` }
+    );
+});
+
+test("the actual consumer CLI names forbidden packed files and exits 1 before installation", async (t) => {
+  const f = fixture(t);
+  await downloadSdk(f.artifacts, releaseDownload());
+  const npm = join(f.root, "npm.ts");
+  writeFileSync(
+    npm,
+    `#!${process.execPath}\nconsole.log(JSON.stringify([{files:[{path:"tools/native-media-fixture.py"}]}]));\n`,
+    { mode: 0o755 }
+  );
+  symlinkSync(npm, join(f.root, "npm"));
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL("./sdk-evaluation.ts", import.meta.url)),
+      "check-consumer",
+      f.artifacts,
+      f.root,
+      join(f.root, "consumer"),
+    ],
+    {
+      encoding: "utf8",
+      timeout: 15_000,
+      env: { ...process.env, PATH: `${f.root}:${process.env.PATH ?? ""}` },
+    }
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /AssertionError/);
+  assert.match(
+    result.stderr,
+    /Unexpected packed file: tools\/native-media-fixture.py/
+  );
+  assert.match(result.stderr, /actual:/);
+  assert.match(result.stderr, /expected:/);
+});
 
 function fixture(t: { after: (cleanup: () => void) => void }) {
   const root = mkdtempSync(join(tmpdir(), "sdk-release-test-"));
@@ -189,6 +286,14 @@ function installedConsumer(
       JSON.stringify({
         name,
         version: "0.4.0",
+        repository: {
+          url: "git+https://github.com/relayphone/expo-callkit-telecom.git",
+        },
+        bugs: {
+          url: "https://github.com/relayphone/expo-callkit-telecom/issues",
+        },
+        homepage:
+          "https://github.com/relayphone/expo-callkit-telecom/tree/v2#readme",
         exports: {
           ".": "./index.js",
           "./package.json": "./package.json",
@@ -259,7 +364,39 @@ test("a no-op plugin cannot borrow mods from another valid plugin", (t) => {
   );
 });
 
-test("the thin iOS fixture retains installed dependencies and chooses one Apple provider", (t) => {
+test("installed package metadata must direct consumers to the fork", (t) => {
+  for (const [field, value, rule] of [
+    [
+      "repository",
+      { url: "git+https://github.com/other/project.git" },
+      /repository must identify the fork/,
+    ],
+    [
+      "bugs",
+      { url: "https://example.com/issues" },
+      /bugs URL must identify the fork/,
+    ],
+    [
+      "homepage",
+      "https://example.com",
+      /homepage must identify the fork guide/,
+    ],
+  ] as const) {
+    const { consumer } = installedConsumer(t);
+    const path = join(
+      consumer,
+      "node_modules/expo-callkit-telecom/package.json"
+    );
+    const manifest: Record<string, unknown> = JSON.parse(
+      readFileSync(path, "utf8")
+    );
+    manifest[field] = value;
+    writeFileSync(path, JSON.stringify(manifest));
+    assert.throws(() => inspectInstalledPackages(consumer, "0.4.0"), rule);
+  }
+});
+
+test("the packed consumer fixture retains installed dependencies", (t) => {
   const f = fixture(t);
   const project = consumerProject(f.root);
   const original = JSON.parse(
@@ -272,7 +409,7 @@ test("the thin iOS fixture retains installed dependencies and chooses one Apple 
     "export default { name: 'SDKComposition' };\n"
   );
   writeFileSync(join(fixtures, "index.ts"), "export {};\n");
-  prepareIosConsumer(project, fixtures);
+  prepareConsumer(project, fixtures);
   const prepared = JSON.parse(
     readFileSync(join(project, "package.json"), "utf8")
   );

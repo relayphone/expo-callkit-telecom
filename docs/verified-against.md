@@ -24,5 +24,5 @@ Current automated checks cover:
 Emulator/simulator results do not establish physical-device audio, cloud push
 transport delivery or production latency percentiles. See
 [Getting started](./getting-started.md) and the
-[SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/main/docs/react-native.md)
+[SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md)
 for current integration requirements.

@@ -70,12 +70,14 @@
     "react-native": "0.86.3"
   },
   "peerDependencies": {
-    "expo": ">=55.0.0",
+    "expo": ">=57.0.0",
     "react": "*",
     "react-native": "*",
     "expo-notifications": "*"
   },
   "files": [
+    "README.md",
+    "CHANGELOG.md",
     "build/index.js",
     "build/index.d.ts",
     "build/types.d.ts",

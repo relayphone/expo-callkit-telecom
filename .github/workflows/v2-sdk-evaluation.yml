@@ -58,9 +58,18 @@ jobs:
       - run: npm run build
       - name: Install the fork tarball with the SDK release URL in an isolated consumer
         run: node tools/sdk-evaluation.ts check-consumer "$RUNNER_TEMP/sdk-package" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/package-consumer"
+      - name: Prebuild Android from the installed tarball
+        working-directory: ${{ runner.temp }}/package-consumer
+        env:
+          CI: '1'
+        run: npx expo prebuild --platform android --no-install
       - name: Record evaluation provenance
         if: always()
         run: |
+          if [ -f "$RUNNER_TEMP/package-consumer/package-files.txt" ]; then
+            echo '### Packed fork files' >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUNNER_TEMP/package-consumer/package-files.txt" >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f "$RUNNER_TEMP/sdk-package/SHA256SUMS" ]; then
             cat "$RUNNER_TEMP/sdk-package/SHA256SUMS" >> "$GITHUB_STEP_SUMMARY"
           fi

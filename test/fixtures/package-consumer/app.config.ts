@@ -4,6 +4,7 @@ const config: ExpoConfig = {
   name: "SDKComposition",
   slug: "sdk-composition",
   ios: { bundleIdentifier: "com.example.sdkcomposition" },
+  android: { package: "com.example.sdkcomposition" },
   plugins: [
     ["expo-build-properties", { ios: { deploymentTarget: "26.0" } }],
     [

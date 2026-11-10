@@ -33,9 +33,27 @@ together with the SDK asset, using the actual fork tarball filename:
 
 ```sh
 npm install /path/to/expo-callkit-telecom-0.5.0.tgz https://github.com/relayphone/ios-voip-sdk/releases/download/v0.4.0/relayphone-ios-voip-sdk-0.4.0.tgz
+npx expo install expo-notifications expo-build-properties
 ```
 
 The fork's inherited version still does not identify a published v2 release.
+Build the checkout before packing it (`npm run build`); `npm pack` does not build
+the fork. Use Expo 57 or later. Configure one fork plugin entry, commit native
+customizations, and run `npx expo prebuild --clean` when replacing the old native
+provider. Reapply intentional native customizations and rebuild the application.
+See [the regeneration contract](./canonical-contract.md#plugin-composition-and-native-project-upgrades).
+
+The package allowlist contains the runtime/declaration entries, composed plugin,
+Android library sources and required metadata. README, changelog and the existing license accompany
+the archive. The duplicate iOS provider, instrumentation, tools, site, example
+client/server, tests and research directories are excluded. Only the SDK asset
+provides Apple's native sources. Inspect a real archive with:
+
+```sh
+mkdir -p /tmp/fork-package
+npm pack --pack-destination /tmp/fork-package
+tar -tzf /tmp/fork-package/expo-callkit-telecom-0.5.0.tgz
+```
 
 The consumer resolves both installed package entries, invokes both supported config plugin entries,
 checks their native module registration metadata, requires a single installed SDK version, and
@@ -45,9 +63,14 @@ shared SDK function identity, raw IDs, sanitized canonical errors, Bluetooth/oth
 and Android's absent preview/Focus state. Route and untyped-error fault controls must fail this
 fixture. It uses
 pinned Expo 57, React 19.2.3 and React Native 0.86.3 dependencies. Host checks do not execute React
-Native modules in Node. CI also builds a thin iOS consumer from both installed tarballs, using only
-the SDK's Apple module and plugin; the legacy package is excluded from that fixture's autolinking.
-The example uses the same composed provider and canonical interface.
+Native modules in Node. CI also builds a thin iOS consumer from both installed tarballs.
+The SDK registers the sole Apple provider; the fork registers Android only.
+The fresh consumer job also prebuilds Android from the installed fork tarball;
+the iOS consumer prebuilds and builds the same composition. Both start with a
+new consumer directory and the released SDK URL, without a link to checkout
+sources. CI validates the real `npm pack --json` file list and records it in the
+job summary before installing the archive. The example uses the same composed
+provider and canonical interface.
 
 Keep temporary consumer tarballs outside publishable manifests. The fork declares the SDK's
 release URL directly; it does not rely on an unpublished registry version or a local override.
