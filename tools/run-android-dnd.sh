@@ -22,7 +22,7 @@ run_case() {
   adb shell am instrument --no-restart -w -e class expo.modules.callkittelecom.conversations.DndMatrixTest \
     -e dndCase "$name" -e allowed "$allowed" -e caller "$caller" -e mode "$filter" "$runner"
   adb exec-out run-as "$app" cat "files/dnd-$name.json" > "$results/$name.json"
-  python3 -c 'import json,sys; result=json.load(open(sys.argv[1])); assert result["passed"], result' "$results/$name.json"
+  node tools/check-android-dnd-case.ts "$results/$name.json"
 }
 run_case off-any off any true false unknown true 1
 run_case on-any on any true false unknown false 3

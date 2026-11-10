@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
-      - run: node --test tools/run-native-media-journey.test.ts tools/native-media-fixture-log.test.ts tools/check-native-media.test.ts tools/check-android-journey.test.ts tools/check-answered-elsewhere.test.ts tools/check-android-dnd.test.ts
+      - run: node --test tools/run-native-media-journey.test.ts tools/native-media-fixture-log.test.ts tools/check-native-media.test.ts tools/check-android-journey.test.ts tools/check-answered-elsewhere.test.ts tools/check-android-dnd*.test.ts
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.0'
