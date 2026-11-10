@@ -16,6 +16,7 @@
   "include": [
     "tools/android-emulator-executor*.ts",
     "tools/gradle-wrapper-timeout*.ts",
-    "tools/run-native-media-journey*.ts"
+    "tools/run-native-media-journey*.ts",
+    "tools/check-native-media*.ts"
   ]
 }

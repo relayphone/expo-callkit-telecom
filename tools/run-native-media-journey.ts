@@ -3,7 +3,7 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface Command {
-  program: "gradle" | "adb" | "python3";
+  program: "gradle" | "adb" | "python3" | "node";
   args: readonly string[];
   timeout: number;
   capture?: boolean;
@@ -21,10 +21,10 @@ const execute: Execute = ({ program, args, timeout, capture }) =>
 
 const app = "expo.modules.callkittelecom.instrumentation";
 const checks = [
-  ["journey-results", "check-android-journey.py"],
-  ["answered-elsewhere-results", "check-answered-elsewhere.py"],
-  ["native-media-results", "check-native-media.py"],
-  ["native-webrtc-results", "check-native-media.py"],
+  ["journey-results", "python3", "check-android-journey.py"],
+  ["answered-elsewhere-results", "python3", "check-answered-elsewhere.py"],
+  ["native-media-results", "node", "check-native-media.ts"],
+  ["native-webrtc-results", "node", "check-native-media.ts"],
 ] as const;
 
 /** Runs the functional suite once and retains available media evidence on failure. */
@@ -65,10 +65,10 @@ export function runNativeMediaJourney(
       ],
       timeout: 25 * 60_000,
     });
-    for (const [name, checker] of checks) {
+    for (const [name, program, checker] of checks) {
       const destination = pull(name);
       run({
-        program: "python3",
+        program,
         args: [join("tools", checker), destination],
         timeout: 15_000,
       });
