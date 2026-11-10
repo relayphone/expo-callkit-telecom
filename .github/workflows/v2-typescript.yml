@@ -5,8 +5,6 @@ on:
     branches: [v2]
     paths:
       - 'test/**'
-      - 'tools/check-call-identity.mjs'
-      - 'android/src/androidTest/assets/call-identity.json'
       - 'src/**'
       - 'plugin/**'
       - 'rfcs/**'
@@ -22,8 +20,6 @@ on:
     branches: [v2]
     paths:
       - 'test/**'
-      - 'tools/check-call-identity.mjs'
-      - 'android/src/androidTest/assets/call-identity.json'
       - 'src/**'
       - 'plugin/**'
       - 'rfcs/**'
