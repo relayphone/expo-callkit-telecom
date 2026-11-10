@@ -3,10 +3,10 @@ name: v2 Android
 on:
   pull_request:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
   push:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-call-identity.mjs', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
 
 permissions:
   contents: read
