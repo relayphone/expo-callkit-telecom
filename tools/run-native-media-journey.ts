@@ -21,7 +21,7 @@ const execute: Execute = ({ program, args, timeout, capture }) =>
 
 const app = "expo.modules.callkittelecom.instrumentation";
 const checks = [
-  ["journey-results", "python3", "check-android-journey.py"],
+  ["journey-results", "node", "check-android-journey.ts"],
   ["answered-elsewhere-results", "python3", "check-answered-elsewhere.py"],
   ["native-media-results", "node", "check-native-media.ts"],
   ["native-webrtc-results", "node", "check-native-media.ts"],
