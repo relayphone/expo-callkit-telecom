@@ -36,7 +36,6 @@ if (nativeMediaEngine) {
 dependencies {
   if (nativeMediaEngine) {
     implementation "io.livekit:livekit-android:2.29.2"
-    implementation "com.squareup.okhttp3:okhttp:4.12.0"
   }
   compileOnly "com.facebook.react:react-android"
   implementation "androidx.core:core-telecom:1.0.1"
