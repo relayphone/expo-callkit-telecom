@@ -18,7 +18,7 @@ adb shell am start -W -a android.intent.action.VIEW -d conversations-example://j
 for attempt in {1..60}; do
   if adb shell test -s "$result_path"; then
     adb exec-out cat "$result_path" > example-journey.json
-    python3 tools/check-example-journey.py example-journey.json
+    node tools/check-example-journey.ts example-journey.json
     adb shell am force-stop "$app_id"
     exit 0
   fi

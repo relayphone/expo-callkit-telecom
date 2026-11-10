@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
-      - run: node --test tools/android-emulator-executor.test.ts tools/gradle-wrapper-timeout.test.ts tools/android-journey*.test.ts
+      - run: node --test tools/android-emulator-executor.test.ts tools/gradle-wrapper-timeout.test.ts tools/android-journey*.test.ts tools/check-example-journey.test.ts
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
