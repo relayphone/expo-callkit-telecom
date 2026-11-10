@@ -38,4 +38,4 @@ run_case priority-repeat-second priority any false true repeat true 2
 run_case off-restored off any true false unknown true 1
 adb shell am instrument --no-restart -w -e class expo.modules.callkittelecom.conversations.DndWarmCleanupTest -e dndWarm true "$runner"
 adb exec-out run-as "$app" cat files/dnd-warm-cleanup.json > "$results/warm-cleanup.json"
-python3 tools/check-android-dnd.py "$results"
+node tools/check-android-dnd.ts "$results"
