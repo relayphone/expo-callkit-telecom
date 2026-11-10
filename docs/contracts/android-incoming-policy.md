@@ -53,7 +53,7 @@ closing an already prewarmed call does not count as a user or app end action.
 
 ## Emulator evidence
 
-`tools/run-android-dnd.sh` drives actual `adb shell cmd notification set_dnd
+`tools/run-android-dnd.ts` drives actual `adb shell cmd notification set_dnd
 on|priority|off`. A CI-only APK targeting34 sets global sender/repeat-caller
 policy through the public API; Android15 restricts global writes by target35
 apps. The application under test continues to target35. The helper is never
