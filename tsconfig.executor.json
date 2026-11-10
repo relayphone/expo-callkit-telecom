@@ -21,6 +21,7 @@
     "tools/check-android-journey*.ts",
     "tools/check-answered-elsewhere*.ts",
     "tools/check-android-dnd*.ts",
-    "tools/check-example-journey*.ts"
+    "tools/check-example-journey*.ts",
+    "tools/run-example-journey*.ts"
   ]
 }
