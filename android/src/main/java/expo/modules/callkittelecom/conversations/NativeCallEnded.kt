@@ -18,6 +18,11 @@ internal data class NativeCallEnded(val eventId: String, val serverCallId: Strin
 
     companion object {
         private val remoteReasons = setOf("remoteEnded", "failed", "unanswered", "answeredElsewhere", "declinedElsewhere")
+        fun reported(serverCallId: String, reason: String): Map<String, Any?> = mapOf(
+            "eventId" to "app-ended:$serverCallId", "serverCallId" to serverCallId,
+            "reason" to (reason.takeIf { it in remoteReasons } ?: "failed"),
+        )
+
         fun typed(raw: Map<String, Any?>): NativeCallEnded? {
             val event = raw["eventId"] as? String ?: error("invalid_arguments")
             val server = raw["serverCallId"] as? String ?: error("invalid_arguments")
