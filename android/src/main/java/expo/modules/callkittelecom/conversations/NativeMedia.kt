@@ -34,9 +34,10 @@ internal class NativeMediaController(private val context: Context, private val p
     private val operations = CoroutineScope(lifetime + dispatcher)
     private val serial = Mutex()
     private var session: NativeMediaSession? = null
-    private var preparation: Deferred<Unit>? = null
+    @Volatile private var preparation: Deferred<Unit>? = null
     internal val isPrewarmed: Boolean get() = preparation?.let { it.isCompleted && !it.isCancelled } == true && session?.isPrepared != false
-    private var answerJob: Job? = null
+    internal val hasSession: Boolean get() = preparation != null || answerJob != null
+    @Volatile private var answerJob: Job? = null
     private var unmuteJob: Job? = null
     private var resumeJob: Job? = null
     @Volatile private var closed = false
@@ -135,12 +136,13 @@ internal class NativeMediaController(private val context: Context, private val p
     }
     suspend fun mute() {
         check(!closed)
-        desiredMuted = true; unmuteJob?.cancel()
+        setDesiredMuted(true)
         if (!activated) return
         val work = operations.async { withTimeout(1000) { serial.withLock { check(!closed); session?.setMuted(true) } } }
         try { work.await() } finally { work.cancel() }
     }
-    fun clearMute() { check(!closed); desiredMuted = false; unmuteJob?.cancel() }
+    internal fun setDesiredMuted(muted: Boolean) { check(!closed); desiredMuted = muted; unmuteJob?.cancel() }
+    fun clearMute() { setDesiredMuted(false) }
     suspend fun pause() {
         check(!closed)
         held = true; answerJob?.cancel(); answerJob = null; unmuteJob?.cancel(); resumeJob?.cancel()

@@ -11,6 +11,7 @@ import io.livekit.android.room.track.LocalTrackPublication
 import io.livekit.android.room.track.RemoteAudioTrack
 import io.livekit.android.room.track.RemoteTrackPublication
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.mapNotNull
 import livekit.org.webrtc.audio.JavaAudioDeviceModule
 
 /** Connected transports and decoded receive audio stay warm; Core alone authorizes audible output/capture. */
@@ -28,6 +29,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     @Volatile private var muted = false
     @Volatile private var closed = false
     private var failed: () -> Unit = {}
+    private var connection: NativeRoomConnection? = null
     override fun setFailureListener(listener: () -> Unit) { failed = listener }
     private var pcm = NativePcmProbe(invitationId)
     private var decoded = NativeDecodedAudioReadiness()
@@ -84,15 +86,24 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
                     NativeMediaSignals.emit(serverId, NativeMediaStage.REMOTE_UNSUBSCRIBED)
                     tracks.remove(track); runCatching { track.removeSink(probe.decoderSink); track.removeSink(probe.answerSink); track.removeSink(decode) }
                 }
-                is RoomEvent.Disconnected -> if (!closed && room === candidate) {
-                    room = null; transportJobs.forEach { it.cancel() }
-                    probe.close(); decode.close(); heat.close(); runCatching { candidate.release() }
-                    if (active) failed()
-                    currentCoroutineContext().cancel()
-                }
                 else -> Unit
             }
         } }
+        connection?.close()
+        val observation = NativeRoomConnection(scope, { NativeMediaSignals.emit(serverId, it) }, {
+            if (!closed && room === candidate) {
+                room = null; transportJobs.forEach { it.cancel() }; collector.cancel()
+                probe.close(); decode.close(); heat.close(); runCatching { candidate.release() }
+                failed()
+            }
+        })
+        connection = observation
+        observation.observe(candidate.events.events.mapNotNull { event -> when (event) {
+            is RoomEvent.Reconnecting -> NativeRoomState.RECONNECTING
+            is RoomEvent.Reconnected -> NativeRoomState.RECONNECTED
+            is RoomEvent.Disconnected -> NativeRoomState.DISCONNECTED
+            else -> null
+        } })
         NativeMediaSignals.emit(serverId, NativeMediaStage.MEDIA_CONNECT_STARTED)
         NativeMediaSignals.emit(serverId, NativeMediaStage.SUBSCRIPTION_REQUESTED)
         NativeTransportReadiness(CoroutineScope(scope.coroutineContext + Dispatchers.IO)).apply {
@@ -122,6 +133,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             check(!closed && room === candidate)
             NativeMediaSignals.emit(serverId, NativeMediaStage.PREJOINED)
         } catch (error: Throwable) {
+            observation.close()
             collector.cancel(); transportJobs.forEach { it.cancel() }
             probe.close(); decode.close(); heat.close(); room = null
             tracks.forEach { runCatching { it.removeSink(probe.decoderSink); it.removeSink(probe.answerSink); it.removeSink(decode) } }; tracks.clear()
@@ -198,6 +210,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     override suspend fun close(reason: String): Unit = withContext(Dispatchers.Main.immediate) {
         if (closed) return@withContext
         closed = true; active = false; pcm.close(); decoded.close(); warmth.close()
+        connection?.close(); connection = null
         scope.cancel(); tracks.forEach { runCatching { it.removeSink(pcm.decoderSink); it.removeSink(pcm.answerSink); it.removeSink(decoded) } }; tracks.clear()
         microphone?.let { track ->
             runCatching { room?.localParticipant?.unpublishTrack(track) }
