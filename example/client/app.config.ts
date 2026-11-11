@@ -47,13 +47,17 @@ const config: ExpoConfig = {
       },
     ],
     [
-      require(process.env.ANDROID_JOURNEY_PACKED === "1" ? "expo-callkit-telecom/app.plugin.js" : "../../app.plugin.js").default,
+      require(process.env.ANDROID_JOURNEY_PACKED === "1"
+        ? "expo-callkit-telecom/app.plugin.js"
+        : "../../app.plugin.js").default,
       {
         sounds: ["./assets/sounds/ringtone.wav"],
         defaultRingtoneIos: "ringtone.wav",
         defaultRingtoneAndroid: "ringtone.wav",
         iconTemplateIos: "./assets/callkit-icon.png",
         androidNativeMedia: "none",
+        androidFcmService:
+          process.env.ANDROID_FCM_SERVICE === "app" ? "app" : "library",
         // Debug builds present calls in the iOS Simulator.
         simulator: true,
         // A call that a Focus filters becomes a call preview with a call notification, shown as a

@@ -48,6 +48,8 @@ jobs:
         run: |
           timeout 180s pip install --disable-pip-version-check -r tools/native-media-requirements.txt
           timeout 180s node tools/prepare-native-media-fixture.ts
+      - name: Test push decoding and admission on the JVM
+        run: gradle -p android/instrumentation testDebugUnitTest --no-daemon --max-workers=2
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -118,3 +120,14 @@ jobs:
       # The example leaves out the LiveKit media engine; compile the module with it as well.
       - run: ./gradlew :expo-callkit-telecom:compileDebugKotlin -Pexpo-callkit-telecom.androidNativeMedia=livekit --no-daemon --max-workers=2 --stacktrace
         working-directory: example/client/android
+      - name: Compile app-owned FCM without expo-notifications
+        working-directory: example/client
+        env:
+          ANDROID_FCM_SERVICE: app
+          CI: '1'
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const p = JSON.parse(fs.readFileSync("package.json", "utf8")); p.expo.autolinking.android = { exclude: ["expo-notifications"] }; fs.writeFileSync("package.json", JSON.stringify(p));'
+          bunx expo prebuild --clean --platform android --no-install
+          node ../../tools/gradle-wrapper-timeout.ts android
+          cd android
+          ./gradlew :expo-callkit-telecom:compileDebugKotlin :app:processDebugMainManifest --no-daemon --max-workers=2 --stacktrace

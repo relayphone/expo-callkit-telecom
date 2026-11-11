@@ -75,6 +75,9 @@
     "react-native": "*",
     "expo-notifications": "*"
   },
+  "peerDependenciesMeta": {
+    "expo-notifications": { "optional": true }
+  },
   "files": [
     "README.md",
     "CHANGELOG.md",

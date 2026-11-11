@@ -50,6 +50,83 @@ media credentials. Running it against the unmodified signaling example therefore
 does not test native pre-warm or audio. Cloud FCM delivery requires your Firebase
 setup and is not part of the emulator latency measurements.
 
+## Your own FCM service
+
+Set `androidFcmService: "app"` in the `expo-callkit-telecom` plugin options and
+rebuild. The plugin registers no library messaging service and leaves
+expo-notifications' service alone. Keep one service handling `MESSAGING_EVENT`
+in your app's manifest; resolve any other installed messaging services there.
+expo-notifications is optional in this mode. The default `"library"` retains
+the library service and its forwarding of other messages to expo-notifications,
+which must be installed for that mode.
+
+Configure the decoder and admission once from your `Application.onCreate`.
+This example adapts an app-defined data envelope; the default decoder accepts
+the `messageType` envelope shown below.
+
+```kotlin
+import android.app.Application
+import android.util.Log
+import expo.modules.callkittelecom.conversations.*
+
+class CallingApplication : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        CallPushIntake.configure(
+            decoder = CallPushDecoder { data ->
+                if (data["type"] != "call.invite") return@CallPushDecoder null
+                val id = data["id"] ?: return@CallPushDecoder null
+                val event = data["event"] ?: return@CallPushDecoder null
+                DecodedCallPush.Incoming(IncomingCallPush(
+                    serverCallId = id, eventId = event,
+                    caller = mapOf("handleType" to "generic", "value" to id,
+                        "displayName" to (data["name"] ?: "Caller")),
+                    metadata = mapOf("accountId" to data["accountId"]),
+                ))
+            },
+            admission = CallPushAdmission { push ->
+                val account = getSharedPreferences("account", MODE_PRIVATE).getString("id", null)
+                if (account != null && push.metadata["accountId"] == account) CallPushDecision.Admit
+                else CallPushDecision.Refuse("accountMismatch")
+            },
+        )
+        NativeMediaSignals.observers += NativeMediaObserver { signal ->
+            if (signal.stage == NativeMediaStage.PUSH_REFUSED)
+                Log.i("Calls", "Push refused: ${signal.reason}")
+        }
+    }
+}
+```
+
+Forward your service's messages and token changes to the intake:
+
+```kotlin
+import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
+import expo.modules.callkittelecom.conversations.CallPushIntake
+
+class AppMessagingService : FirebaseMessagingService() {
+    override fun onMessageReceived(message: RemoteMessage) {
+        if (CallPushIntake.handle(applicationContext, message)) return
+        super.onMessageReceived(message) // Handle your other push types here.
+    }
+    override fun onNewToken(token: String) {
+        CallPushIntake.newToken(applicationContext, token)
+        super.onNewToken(token)
+    }
+}
+```
+
+`handle` returns true when decoding recognizes a call, including a refused call;
+false leaves the push to your other handlers. Admission suspends on the engine's
+main scope before any Telecom report; move blocking work to an appropriate
+dispatcher. The default admits every incoming push. Refusal starts neither
+Telecom reporting nor media/JS warmup. Refusal reasons are app-defined telemetry:
+use short reason codes without credentials or personal data. End notifications
+use `DecodedCallPush.Ended(EndedCallPush(serverCallId, eventId, reason))` and
+bypass incoming admission. Both service paths retain the engine's dedupe and
+report-before-warmup behavior.
+
 ## Configure a host for native answer and audio
 
 Select the Android native LiveKit engine independently of the SDK's Apple audio

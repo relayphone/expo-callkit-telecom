@@ -16,6 +16,8 @@ import pkg from "../../package.json";
 export type ComposedPluginProps = VoIPConversationsPluginProps & {
   /** Android native provider, independent of iOS audio integration. Defaults to none. */
   androidNativeMedia?: AndroidNativeMedia;
+  /** FCM service owner. App services forward call messages to CallPushIntake. Defaults to library. */
+  androidFcmService?: "library" | "app";
   outgoingCallTimeout?: number;
   defaultRingtoneAndroid?: string;
 };

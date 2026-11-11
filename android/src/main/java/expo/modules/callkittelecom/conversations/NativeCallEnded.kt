@@ -62,11 +62,12 @@ internal class NativeEndedIntake(private val now: () -> Long = SystemClock::elap
             it.retainedUntil = maxOf(it.retainedUntil, time + 120_000)
         }
     }
-    fun accept(payload: NativeCallEnded): Entry? {
+    fun accept(payload: NativeCallEnded, onConsumed: () -> Unit = {}): Entry? {
         val time = now(); prune(time)
         if (events.containsKey(payload.eventId)) return null
         // Unknown notifications consume only their event ID, never a future invitation.
         events[payload.eventId] = time
+        onConsumed()
         return entries[payload.serverCallId]?.also { it.intent = Intent(payload) }
     }
     fun admitted(entry: Entry) { entry.admitted = true }

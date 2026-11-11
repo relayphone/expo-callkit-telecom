@@ -119,3 +119,142 @@ test("unknown native providers fail configuration before mods are installed", ()
     /androidNativeMedia must be livekit or none/
   );
 });
+
+test("FCM ownership defaults to library and app ownership preserves other services", async () => {
+  const { withAndroidOptions } = await import(
+    "../../plugin/build/androidOptions.js"
+  );
+  const notifications =
+    "expo.modules.notifications.service.ExpoFirebaseMessagingService";
+  const library =
+    "expo.modules.callkittelecom.services.ExpoCallKitTelecomMessagingService";
+  const existing: AndroidManifest = {
+    manifest: {
+      $: { "xmlns:android": "http://schemas.android.com/apk/res/android" },
+      application: [
+        {
+          $: { "android:name": ".MainApplication" },
+          service: [
+            {
+              $: { "android:name": notifications, "android:exported": "false" },
+              "intent-filter": [
+                {
+                  action: [
+                    {
+                      $: {
+                        "android:name": "com.google.firebase.MESSAGING_EVENT",
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              $: {
+                "android:name": ".AppMessagingService",
+                "android:exported": "false",
+              },
+            },
+          ],
+        },
+      ],
+    },
+  };
+  for (const owner of [undefined, "library", "app"] as const) {
+    const config: ExportedConfig = withAndroidOptions(
+      { name: "fcm-test", slug: "fcm-test" },
+      owner ? { androidFcmService: owner } : {}
+    );
+    const result = await evaluate(
+      config,
+      config.mods?.android?.manifest,
+      structuredClone(existing)
+    );
+    const services = result.manifest.application?.[0]?.service ?? [];
+    assert.ok(
+      services.some((item) => item.$["android:name"] === ".AppMessagingService")
+    );
+    if (owner === "app") {
+      assert.deepEqual(services, existing.manifest.application?.[0]?.service);
+    } else {
+      assert.deepEqual(
+        services.find((item) => item.$["android:name"] === notifications),
+        { $: { "android:name": notifications, "tools:node": "remove" } }
+      );
+      assert.deepEqual(
+        services.find((item) => item.$["android:name"] === library),
+        {
+          $: { "android:name": library, "android:exported": "false" },
+          "intent-filter": [
+            {
+              action: [
+                {
+                  $: { "android:name": "com.google.firebase.MESSAGING_EVENT" },
+                },
+              ],
+            },
+          ],
+        }
+      );
+    }
+  }
+  let result = structuredClone(existing);
+  for (const androidFcmService of [
+    "library",
+    "library",
+    "app",
+    "app",
+    "library",
+    "app",
+  ] as const) {
+    const config: ExportedConfig = withAndroidOptions(
+      { name: "fcm-test", slug: "fcm-test" },
+      { androidFcmService }
+    );
+    result = await evaluate(config, config.mods?.android?.manifest, result);
+    const services = result.manifest.application?.[0]?.service ?? [];
+    assert.equal(
+      services.filter((item) => item.$["android:name"] === library).length,
+      androidFcmService === "library" ? 1 : 0
+    );
+    assert.equal(
+      services.filter(
+        (item) =>
+          item.$["android:name"] === notifications &&
+          item.$["tools:node"] === "remove"
+      ).length,
+      1
+    );
+  }
+  const removed = structuredClone(existing);
+  removed.manifest.application![0]!.service = [
+    { $: { "android:name": notifications, "tools:node": "remove" } },
+  ];
+  const appConfig: ExportedConfig = withAndroidOptions(
+    { name: "fcm-test", slug: "fcm-test" },
+    { androidFcmService: "app" }
+  );
+  const preserved = await evaluate(
+    appConfig,
+    appConfig.mods?.android?.manifest,
+    structuredClone(removed)
+  );
+  assert.deepEqual(
+    preserved.manifest.application?.[0]?.service,
+    removed.manifest.application?.[0]?.service
+  );
+});
+
+test("unknown FCM owners fail before registering mods", async () => {
+  const { withAndroidOptions } = await import(
+    "../../plugin/build/androidOptions.js"
+  );
+  assert.throws(
+    () =>
+      Reflect.apply(withAndroidOptions, undefined, [
+        { name: "fcm-test", slug: "fcm-test" },
+        { androidFcmService: "other" },
+      ]),
+    /androidFcmService must be library or app/
+  );
+});
