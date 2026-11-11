@@ -41,6 +41,7 @@ class ConversationPresentationJourneyTest {
         val actions = CopyOnWriteArrayList<ConversationAction>()
         val performed = mutableListOf<Map<*, *>>()
         var ended: Map<*, *>? = null
+        var stage = "fixture setup"
 
         init {
             engine.actions.resetBridge()
@@ -70,6 +71,10 @@ class ConversationPresentationJourneyTest {
         fun activityIntent(name: String) = PendingIntent.getActivity(context, 0,
             Intent(context, ConversationActivity::class.java).setAction("$id-$name"), PendingIntent.FLAG_IMMUTABLE)
         fun cards() = manager.activeNotifications.filter { it.notification.category == Notification.CATEGORY_CALL }
+        fun diagnostics() = "stage=$stage, states=${ids.associateWith { state(it)?.get("status") }}, cards=${cards().map {
+            listOf(it.id, it.notification.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name,
+                it.notification.extras.getCharSequence(Notification.EXTRA_TEXT), it.notification.flags)
+        }}"
         suspend fun card(callId: String = id, count: Int = 1, matches: (Notification) -> Boolean = { true }): StatusBarNotification = withTimeout(5000) {
             while (true) {
                 val cards = cards()
@@ -115,7 +120,9 @@ class ConversationPresentationJourneyTest {
         withContext(Dispatchers.Main) {
             withTimeout(5000) { while (TelecomEvidence.calls().isNotEmpty()) delay(10) }
             val fixture = Fixture()
-            try { fixture.body() } finally { withContext(NonCancellable) { fixture.close() } }
+            try { fixture.body() }
+            catch (error: TimeoutCancellationException) { throw AssertionError(fixture.diagnostics(), error) }
+            finally { withContext(NonCancellable) { fixture.close() } }
         }
     }
 
@@ -188,13 +195,54 @@ class ConversationPresentationJourneyTest {
         removed()
     }
 
-    @Test fun activeAndHeldCallsShareOneCardAndPrimaryEndRestoresHeldOnTheSameId() = fixture {
+    @Test fun snapshotUpdatesWithoutContentChangesDoNotRepostThePrimaryCard() = fixture {
         outgoing(id)
+        engine.report(id, mapOf("type" to "connected"))
+        val original = card()
+        val videoUpdates = mutableSetOf<Boolean>()
+        ConversationPresentation.configure { conversation, _ ->
+            videoUpdates += conversation["isVideo"] as Boolean
+            CallNotificationContent()
+        }
+        repeat(20) { index ->
+            engine.report(id, mapOf("type" to "updated", "video" to (index % 2 == 0)))
+            delay(25)
+        }
+        assertEquals(setOf(false, true), videoUpdates)
+        assertEquals("Unchanged content must not consume Android's notification update quota", original.postTime, card().postTime)
+        ConversationControls.end(context, id)
+        removed()
+    }
+
+    @Test fun appActionListChangesAreRenderedWhenTheAppReusesTheList() = fixture {
+        val extraActions = mutableListOf(NotificationCompat.Action(0, "Assistant", activityIntent("assistant")))
+        ConversationPresentation.configure { _, _ -> CallNotificationContent(extraActions = extraActions) }
+        outgoing(id)
+        card { it.actions.any { action -> action.title == "Assistant" } }
+        extraActions[0] = NotificationCompat.Action(0, "Record", activityIntent("record"))
+        engine.report(id, mapOf("type" to "updated", "video" to true))
+        stage = "reused app action list"
+        card { it.actions.any { action -> action.title == "Record" } && it.actions.none { action -> action.title == "Assistant" } }
+        extraActions.clear()
+        engine.report(id, mapOf("type" to "updated", "video" to false))
+        stage = "remove reused app actions"
+        card { it.actions.none { action -> action.title == "Record" } }
+        ConversationControls.end(context, id)
+        removed()
+    }
+
+    @Test fun activeAndHeldCallsShareOneCardAndPrimaryEndRestoresHeldOnTheSameId() = fixture {
+        stage = "first outgoing call"
+        outgoing(id)
+        stage = "first foreground card"
         val foregroundId = card().id
+        stage = "connect and hold first call"
         engine.report(id, mapOf("type" to "connected")); engine.hold(id, true)
         val secondId = "$id-second"
+        stage = "second outgoing call"
         outgoing(secondId)
         engine.report(secondId, mapOf("type" to "connected"))
+        stage = "default held summary"
         val second = card(secondId) { it.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "1 call on hold" }
         assertEquals(foregroundId, second.id)
         assertTrue(second.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0)
@@ -204,13 +252,16 @@ class ConversationPresentationJourneyTest {
             CallNotificationContent(heldSummary = "A paused call")
         }
         engine.report(secondId, mapOf("type" to "updated", "video" to true))
+        stage = "custom held summary"
         card(secondId) { it.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "A paused call" }
         ConversationPresentation.configure(null)
         ConversationControls.end(context, secondId)
+        stage = "restore held primary"
         val restored = card { it.flags and Notification.FLAG_FOREGROUND_SERVICE != 0 }
         assertEquals(foregroundId, restored.id)
         assertEquals("held", state()?.get("status"))
         ConversationControls.end(context, id)
+        stage = "final removal"
         removed()
     }
 

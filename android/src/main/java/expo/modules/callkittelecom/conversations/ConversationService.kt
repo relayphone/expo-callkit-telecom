@@ -17,10 +17,17 @@ import kotlinx.coroutines.launch
 
 /** CallStyle notification plus phoneCall foreground service for all supported Android versions. */
 class ConversationService : Service() {
+    private data class Card(val id: String, val phase: CallPhase, val content: CallNotificationContent,
+                            val callerUri: String?, val callerKey: String?) {
+        // Android icons/actions may change in place, so they must be rebuilt on each snapshot.
+        val hasMutableContent: Boolean get() = content.avatar != null || content.extraActions.isNotEmpty()
+    }
+    private data class WaitingCard(val notificationId: Int, val card: Card)
     companion object {
         private const val FOREGROUND_ID = 6999
         private val roster = CallNotificationRoster()
-        private val waitingIds = linkedMapOf<String, Int>()
+        private val waitingCards = linkedMapOf<String, WaitingCard>()
+        private var foregroundCard: Card? = null
         private var foreground: Notification? = null
         private var nextId = 7000
         fun incomingChannelId(context: Context): String {
@@ -41,12 +48,26 @@ class ConversationService : Service() {
             val plan = roster.plan()
             val manager = context.getSystemService(NotificationManager::class.java)
             val waiting = plan.waiting.map { it["id"] as String }.toSet()
-            for (id in waitingIds.keys.toList()) if (id !in waiting) manager.cancel(waitingIds.remove(id)!!)
-            foreground = plan.primary?.let { notification(context, it, plan.heldSummary) }
-            for (state in plan.waiting) {
-                val notificationId = waitingIds.getOrPut(state["id"] as String) { nextId++ }
-                manager.notify(notificationId, notification(context, state, null))
+            for (id in waitingCards.keys.toList()) if (id !in waiting) manager.cancel(waitingCards.remove(id)!!.notificationId)
+            val primary = plan.primary?.let { card(context, it, plan.heldSummary) }
+            val primaryChanged = foregroundCard != primary || primary?.hasMutableContent == true
+            if (primaryChanged) {
+                foreground = primary?.let { notification(context, it) }
+                foregroundCard = primary
             }
+            for (state in plan.waiting) {
+                val id = state["id"] as String
+                val content = card(context, state, null)
+                val previous = waitingCards[id]
+                if (previous?.card != content || content.hasMutableContent) {
+                    val notificationId = previous?.notificationId ?: nextId++
+                    manager.notify(notificationId, notification(context, content))
+                    waitingCards[id] = WaitingCard(notificationId, content)
+                }
+            }
+            // Snapshot-only changes still reach the customizer, but must not exhaust
+            // Android's update quota and cause a later primary switch to be dropped.
+            if (!primaryChanged) return
             // Ringing can post synchronously before a filtered-call cancellation, preserving
             // repeat-caller history. Ongoing CallStyle posts only through startForeground.
             if (plan.primary?.get("status") == "ringing") manager.notify(FOREGROUND_ID, foreground!!)
@@ -56,24 +77,16 @@ class ConversationService : Service() {
                 context.startService(intent)
             } else ContextCompat.startForegroundService(context, intent)
         }
-        private fun notification(context: Context, state: Map<String, Any?>, heldSummary: String?): Notification {
+        private fun card(context: Context, state: Map<String, Any?>, heldSummary: String?): Card {
             val id = state["id"] as String
-            val manager = context.getSystemService(NotificationManager::class.java)
-            val metadata = context.packageManager.getApplicationInfo(context.packageName, android.content.pm.PackageManager.GET_META_DATA).metaData
-            val ringtone = metadata?.getString("ExpoCallKitTelecomDefaultRingtone") ?: "default"
-            val resource = context.resources.getIdentifier(ringtone.substringBeforeLast('.'), "raw", context.packageName)
-            val sound = if (resource != 0) Uri.parse("android.resource://${context.packageName}/$resource") else Settings.System.DEFAULT_RINGTONE_URI
             val ringing = state["status"] == "ringing"
+            val phase = if (ringing) CallPhase.RINGING else CallPhase.ONGOING
             val defaultChannelId = if (ringing) incomingChannelId(context) else "conversations-ongoing-v2"
-            fun action(name: String) = PendingIntent.getBroadcast(context, 0,
-                Intent(context, ConversationReceiver::class.java).setAction(name)
-                    .setData(Uri.Builder().scheme("voip-conversation").authority(context.packageName).appendPath(id).appendPath(name).build()).putExtra("id", id),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val member = (state["members"] as? List<*>)?.firstOrNull() as? Map<*, *>
             val payload = state["payload"] as? Map<*, *>
             val caller = (payload?.get("caller") as? Map<*, *>)?.let(NativeCaller::parse)
             val callerUri = caller?.address()?.toString() ?: callerAddress(context, member)?.toString()
-            val content = ConversationPresentation.resolve(state, if (ringing) CallPhase.RINGING else CallPhase.ONGOING,
+            val content = ConversationPresentation.resolve(state, phase,
                 CallNotificationContent(
                     title = caller?.displayName ?: member?.get("displayName")?.toString() ?: "Caller",
                     channelId = defaultChannelId,
@@ -82,14 +95,32 @@ class ConversationService : Service() {
                         Intent(context, ConversationActivity::class.java).setData(Uri.Builder().scheme("voip-conversation").authority(context.packageName).appendPath(id).build()),
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) else null,
                 ))
+            return Card(id, phase, content.copy(extraActions = content.extraActions.toList(),
+                heldSummary = if (heldSummary == null) null else content.heldSummary),
+                callerUri, caller?.hostContactID)
+        }
+        private fun notification(context: Context, card: Card): Notification {
+            val id = card.id
+            val content = card.content
+            val ringing = card.phase == CallPhase.RINGING
+            val manager = context.getSystemService(NotificationManager::class.java)
+            val defaultChannelId = if (ringing) incomingChannelId(context) else "conversations-ongoing-v2"
             val channelId = checkNotNull(content.channelId)
             if (channelId == defaultChannelId) {
+                val metadata = context.packageManager.getApplicationInfo(context.packageName, android.content.pm.PackageManager.GET_META_DATA).metaData
+                val ringtone = metadata?.getString("ExpoCallKitTelecomDefaultRingtone") ?: "default"
+                val resource = context.resources.getIdentifier(ringtone.substringBeforeLast('.'), "raw", context.packageName)
+                val sound = if (resource != 0) Uri.parse("android.resource://${context.packageName}/$resource") else Settings.System.DEFAULT_RINGTONE_URI
                 val channel = NotificationChannel(channelId, if (ringing) "Incoming calls" else "Ongoing calls",
                     if (ringing) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_LOW)
                 channel.setSound(if (ringing) sound else null, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build())
                 manager.createNotificationChannel(channel)
             }
-            val person = Person.Builder().setUri(callerUri).setKey(caller?.hostContactID)
+            fun action(name: String) = PendingIntent.getBroadcast(context, 0,
+                Intent(context, ConversationReceiver::class.java).setAction(name)
+                    .setData(Uri.Builder().scheme("voip-conversation").authority(context.packageName).appendPath(id).appendPath(name).build()).putExtra("id", id),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val person = Person.Builder().setUri(card.callerUri).setKey(card.callerKey)
                 .setName(content.title).setIcon(content.avatar?.let { IconCompat.createFromIcon(context, it) })
                 .setImportant(true).build()
             val builder = NotificationCompat.Builder(context, channelId)
@@ -98,7 +129,7 @@ class ConversationService : Service() {
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setFullScreenIntent(content.fullScreenIntent, ringing)
                 .setContentIntent(content.contentIntent)
-            if (heldSummary != null) {
+            if (content.heldSummary != null) {
                 builder.setContentText(content.heldSummary)
                 // Compat CallStyle reads extras directly when rendering on API 26–30.
                 builder.addExtras(Bundle().apply { putCharSequence(NotificationCompat.EXTRA_TEXT, content.heldSummary) })
@@ -111,10 +142,14 @@ class ConversationService : Service() {
             }
         }
     }
+    private var postedForeground: Notification? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = foreground
         if (notification == null) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
-        ServiceCompat.startForeground(this, FOREGROUND_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+        if (postedForeground !== notification) {
+            ServiceCompat.startForeground(this, FOREGROUND_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+            postedForeground = notification
+        }
         return START_NOT_STICKY
     }
     override fun onBind(intent: Intent?): IBinder? = null
