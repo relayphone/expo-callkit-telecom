@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+* **android:** add `ConversationPlatform.backgroundRestriction` and
+  `unrestrictedSettingsIntent` so apps can explain battery restrictions and let
+  people open the app's system battery controls.
+
 * **android:** publish DTMF through native LiveKit with shared `playTones` and
   `ConversationControls.playTones`. Advertise tones only with native LiveKit selected.
   Use proximity screen-off while an active call is on the earpiece route.
