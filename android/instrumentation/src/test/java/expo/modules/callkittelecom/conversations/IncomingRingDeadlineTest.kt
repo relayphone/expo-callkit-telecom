@@ -9,13 +9,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class IncomingRingDeadlineTest {
-    @Test fun explicitExpiryReplacesTheDefaultInEitherDirectionAndPastExpiryIsImmediate() = runBlocking {
+    @Test fun explicitExpiryCanOnlyShortenTheConfiguredTimeoutAndPastExpiryIsImmediate() = runBlocking {
         val waits = mutableListOf<Long>()
         val deadline = IncomingRingDeadline(Clock.fixed(Instant.ofEpochMilli(1_000), ZoneOffset.UTC)) { waits += it }
         for (expiry in listOf(null, 6_000L, 100_000L, 1_000L, 999L, Long.MIN_VALUE)) deadline.await(expiry, 45_000)
-        assertEquals(listOf(45_000L, 5_000L, 99_000L, 0L, 0L, 0L), waits)
+        assertEquals(listOf(45_000L, 5_000L, 45_000L, 0L, 0L, 0L), waits)
         deadline.await(null, 12_000)
         assertEquals(12_000L, waits.last())
+        deadline.await(100_000, 120_000)
+        assertEquals(99_000L, waits.last())
     }
 
     @Test fun admissionTimeSpentBeforeReportingDoesNotExtendExpiry() = runBlocking {
@@ -33,11 +35,13 @@ class IncomingRingDeadlineTest {
         assertEquals(400L, wait)
     }
 
-    @Test fun farFutureExpiryCannotWrapIntoAnImmediateTimeout() = runBlocking {
+    @Test fun farFutureAndOverflowingExpiriesKeepTheConfiguredTimeout() = runBlocking {
         var wait = -1L
-        val deadline = IncomingRingDeadline(Clock.fixed(Instant.ofEpochMilli(-1), ZoneOffset.UTC)) { wait = it }
-        deadline.await(Long.MAX_VALUE, 45_000)
-        assertEquals(Long.MAX_VALUE, wait)
+        for (now in listOf(1_000L, -1L, Long.MIN_VALUE)) {
+            val deadline = IncomingRingDeadline(Clock.fixed(Instant.ofEpochMilli(now), ZoneOffset.UTC)) { wait = it }
+            deadline.await(Long.MAX_VALUE, 45_000)
+            assertEquals(45_000L, wait)
+        }
     }
 
     @Test fun answeringOrEndingCanCancelTheOwnedWait() = runBlocking {
