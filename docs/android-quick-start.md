@@ -282,6 +282,15 @@ notification IDs.
 
 ## Ends your app learns about
 
+Local app or system-UI ends use `local`; remote ends use `remoteEnded`. An unexpected
+Core-Telecom removal uses `failed` with `failure.kind = "frameworkReset"`, while
+native media connection loss uses `failed` with `failure.kind = "media"`.
+Core's first mute observation is a baseline and preserves any app-requested mute.
+Failed disconnects retry once after a short delay, then end locally; a call Core
+no longer tracks is already removed. Overlapping ends share the teardown.
+An app end report received while a local end is disconnecting keeps the report's
+reason and suppresses the pending local action receipt without another Core request.
+
 When your native server integration learns that an incoming call ended, report
 the same `serverCallId` used by its invitation:
 

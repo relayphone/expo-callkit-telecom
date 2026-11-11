@@ -27,7 +27,7 @@ class EndedFailureTest {
     }
 
     @Test fun kindsUseTheTypeScriptNames() {
-        assertEquals(listOf("notPlaced", "media", "connectTimedOut", "server", "filtered", "filtered", "filtered"),
+        assertEquals(listOf("notPlaced", "media", "frameworkReset", "connectTimedOut", "server", "filtered", "filtered", "filtered"),
             EndedFailure.entries.map { it.kind })
     }
 
