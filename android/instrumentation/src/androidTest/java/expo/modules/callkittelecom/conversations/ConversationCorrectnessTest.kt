@@ -164,6 +164,22 @@ class ConversationCorrectnessTest {
         assertEquals(1, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
     }
 
+    @Test fun joiningLogicallyEndedCallRejectsUnknownWhilePlatformRemovalIsPending() = fixture {
+        incoming()
+        engine.join(id)
+        core.disconnectGate = CompletableDeferred()
+        engine.end(id)
+        core.disconnectEntered.await()
+        assertNull(state())
+        assertFalse(core.closed.isCompleted)
+        val error = runCatching { engine.join(id) }.exceptionOrNull()
+        assertNotNull("Joining an ended call must reject", error)
+        assertEquals("unknown_conversation", CommandRejection.from(error as Exception).code)
+        assertEquals(1, core.disconnects)
+        core.disconnectGate!!.complete(Unit)
+        ended()
+    }
+
     @Test fun twoFailedDisconnectsRetryUntilConfirmedRemoval() = fixture {
         ready()
         core.outcomes += CallControlResult.Error(CallException.ERROR_UNKNOWN)

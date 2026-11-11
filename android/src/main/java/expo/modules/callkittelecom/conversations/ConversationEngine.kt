@@ -641,6 +641,7 @@ class ConversationEngine(val context: Context) {
     }
     internal suspend fun join(id: String, origin: NativeActionOrigin = NativeActionOrigin.APP) {
         val current = call(id)
+        requireLive(current)
         if (current.state["status"] == "preview") error("unsupported")
         require(current.state["status"] == "ringing") { "invalid_arguments" }
         check(current.permitted.await()) { "Incoming call filtered" }
