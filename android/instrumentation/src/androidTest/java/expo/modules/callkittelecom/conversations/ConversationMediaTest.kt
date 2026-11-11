@@ -53,12 +53,16 @@ class ConversationMediaTest {
             var payload: Map<String, Any?>? = null
             var activations = 0
             var closes = 0
+            @Volatile private var roomLive = false
+            override val isPrepared get() = roomLive
             @Volatile var muted = false
             var mutedAtActivation = false
             override fun setFailureListener(listener: () -> Unit) { failure = listener }
+            fun disconnect() { roomLive = false; failure() }
             override suspend fun prewarm(payload: Map<String, Any?>) {
                 this.payload = payload; entered.complete(Unit); preparationGate?.await()
-                connection = NativeRoomConnection(scope, { NativeMediaSignals.emit(id, it) }, { failure() }).also { it.observe(room) }
+                roomLive = true
+                connection = NativeRoomConnection(scope, { NativeMediaSignals.emit(id, it) }, ::disconnect).also { it.observe(room) }
                 NativeMediaSignals.emit(id, NativeMediaStage.ROOM_CONNECTED)
             }
             override suspend fun activate() { mutedAtActivation = muted; activations++ }
@@ -89,7 +93,66 @@ class ConversationMediaTest {
     }
 
     private fun fixture(body: suspend Fixture.() -> Unit) = runBlocking {
-        withContext(Dispatchers.Main) { val fixture = Fixture(); try { fixture.body() } finally { fixture.close() } }
+        withContext(Dispatchers.Main) {
+            // A preceding suite's disconnected Telecom call can outlive its engine snapshot.
+            // Establish isolation before installing this fixture's global media factory.
+            withTimeout(5000) { while (TelecomEvidence.calls().isNotEmpty()) delay(10) }
+            val fixture = Fixture()
+            try { fixture.body() } finally { fixture.close() }
+        }
+    }
+
+    private enum class AnswerCredentials { PUSH, HANDLER, PROVIDED }
+
+    private suspend fun Fixture.answerAfterPrewarmLoss(source: AnswerCredentials) {
+        engine.policy.put("prewarm", true)
+        val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"))
+        assertEquals("reported", engine.incoming(incoming.payload() + ("media" to grant))["status"])
+        stage(NativeMediaStage.ROOM_CONNECTED)
+        val old = sessions.single()
+        old.room.emit(NativeRoomState.DISCONNECTED)
+        stage(NativeMediaStage.PREWARM_LOST)
+        withTimeout(3000) { old.closed.await() }
+        assertEquals("ringing", state()?.get("status")); assertNull(ended)
+        assertTrue(TelecomEvidence.calls().single().contains("state=RINGING"))
+        assertEquals(1, old.closes); assertEquals(0, old.activations)
+        val replacement = grant + ("token" to "replacement-fixture-grant")
+        when (source) {
+            AnswerCredentials.PUSH -> Unit
+            AnswerCredentials.HANDLER -> ConversationActions.configure { ConversationActionResult.Proceed(replacement) }
+            AnswerCredentials.PROVIDED -> {
+                ConversationMedia.provide(context, id, replacement)
+                stage(NativeMediaStage.MEDIA_PROVIDED)
+            }
+        }
+        engine.join(id); stage(NativeMediaStage.CONNECTED)
+        assertEquals("connected", state()?.get("status"))
+        assertEquals(2, sessions.size)
+        assertEquals(if (source == AnswerCredentials.PUSH) grant else replacement, sessions.last().payload?.get("media"))
+        assertEquals(1, sessions.last().activations)
+        assertFalse(engine.snapshot.toString().contains("fixture-grant"))
+        assertFalse(signals.toString().contains("fixture-grant"))
+    }
+
+    @Test fun lostRingingPrejoinUsesThePushCredentialsOnAnswer() = fixture { answerAfterPrewarmLoss(AnswerCredentials.PUSH) }
+    @Test fun lostRingingPrejoinUsesTheAnswerHandlerCredentials() = fixture { answerAfterPrewarmLoss(AnswerCredentials.HANDLER) }
+    @Test fun lostRingingPrejoinAcceptsProvidedCredentialsBeforeAnswer() = fixture { answerAfterPrewarmLoss(AnswerCredentials.PROVIDED) }
+
+    @Test fun credentialsProvidedImmediatelyAfterPrejoinLossUseAFreshSession() = fixture {
+        engine.policy.put("prewarm", true)
+        val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+        assertEquals("reported", engine.incoming(incoming.payload())["status"])
+        stage(NativeMediaStage.ROOM_CONNECTED)
+        val replacement = grant + ("token" to "immediate-replacement-token")
+        sessions.single().disconnect()
+        // Main-thread room loss must be handled before the very next native command.
+        ConversationMedia.provide(context, id, replacement)
+        engine.join(id); stage(NativeMediaStage.CONNECTED)
+        stage(NativeMediaStage.PREWARM_LOST); stage(NativeMediaStage.MEDIA_PROVIDED)
+        assertFalse(signals.any { it.stage == NativeMediaStage.MEDIA_IGNORED })
+        assertEquals(2, sessions.size)
+        assertEquals(replacement, sessions.last().payload?.get("media"))
+        assertEquals("connected", state()?.get("status")); assertNull(ended)
     }
 
     @Test fun incomingCredentialsRemainPrivateUntilAnswer() = fixture {

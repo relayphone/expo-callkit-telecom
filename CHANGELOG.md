@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixes
+
+* **android:** keep incoming calls ringing when their optional pre-joined room is
+  lost. Emit `PREWARM_LOST`, release the old session, and join fresh on answer.
+
 ### Documentation
 
 * **ios:** document the observed iOS 27 behavior of delivering a push-started preview's update

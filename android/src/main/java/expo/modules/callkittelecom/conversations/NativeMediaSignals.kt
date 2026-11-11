@@ -7,7 +7,7 @@ import java.util.concurrent.CopyOnWriteArraySet
 
 enum class NativeMediaStage(val value: String) {
     PUSH_RECEIVED("pushReceived"), PUSH_REFUSED("pushRefused"), REPORTED("reported"), PREWARM_STARTED("prewarmStarted"),
-    ROOM_CONNECTED("roomConnected"), PREJOINED("prejoined"),
+    ROOM_CONNECTED("roomConnected"), PREJOINED("prejoined"), PREWARM_LOST("prewarmLost"),
     JS_WARM_STARTED("jsWarmStarted"), ANSWER_REQUESTED("answerRequested"),
     HANDLER_STARTED("handlerStarted"), HANDLER_RESPONDED("handlerResponded"), CONNECTED("connected"),
     MEDIA_PROVIDED("mediaProvided"), MEDIA_IGNORED("mediaIgnored"),
