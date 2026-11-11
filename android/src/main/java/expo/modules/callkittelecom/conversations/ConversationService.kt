@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
 /** CallStyle notification plus phoneCall foreground service for all supported Android versions. */
 class ConversationService : Service() {
     private data class Card(val id: String, val phase: CallPhase, val content: CallNotificationContent,
-                            val callerUri: String?, val callerKey: String?) {
+                            val callerUri: String?, val callerKey: String?, val ending: Boolean = false) {
         // Android icons/actions may change in place, so they must be rebuilt on each snapshot.
         val hasMutableContent: Boolean get() = content.avatar != null || content.extraActions.isNotEmpty()
     }
@@ -26,9 +26,11 @@ class ConversationService : Service() {
     companion object {
         private const val FOREGROUND_ID = 6999
         private val roster = CallNotificationRoster()
+        private val endingIds = mutableMapOf<String, Int>()
         private val waitingCards = linkedMapOf<String, WaitingCard>()
         private var foregroundCard: Card? = null
         private var foreground: Notification? = null
+        private var foregroundId: Int? = null
         private var nextId = 7000
         fun incomingChannelId(context: Context): String {
             val metadata = context.packageManager.getApplicationInfo(context.packageName, android.content.pm.PackageManager.GET_META_DATA).metaData
@@ -42,25 +44,40 @@ class ConversationService : Service() {
             if (roster.refresh(states)) render(context)
         }
         fun remove(context: Context, id: String) {
+            endingIds.remove(id)
             if (roster.remove(id)) render(context)
         }
+        internal fun ending(context: Context, id: String) {
+            endingIds.getOrPut(id) { if (foregroundCard?.id == id) checkNotNull(foregroundId)
+                else waitingCards[id]?.notificationId ?: nextId++ }
+            if (roster.ending(id)) render(context)
+        }
         private fun render(context: Context) {
-            val plan = roster.plan()
+            val plan = roster.plan(foregroundCard?.id)
             val manager = context.getSystemService(NotificationManager::class.java)
             val waiting = plan.waiting.map { it["id"] as String }.toSet()
-            for (id in waitingCards.keys.toList()) if (id !in waiting) manager.cancel(waitingCards.remove(id)!!.notificationId)
+            val primaryId = plan.primary?.get("id") as? String
+            val nextForegroundId = primaryId?.let { endingIds[it] ?: FOREGROUND_ID }
+            for (id in waitingCards.keys.toList()) if (id !in waiting) {
+                val removed = waitingCards.remove(id)!!
+                if (removed.notificationId != nextForegroundId) manager.cancel(removed.notificationId)
+            }
+            foregroundId?.takeIf { it != nextForegroundId && it !in endingIds.values }?.let {
+                manager.cancel(it)
+            }
             val primary = plan.primary?.let { card(context, it, plan.heldSummary) }
             val primaryChanged = foregroundCard != primary || primary?.hasMutableContent == true
             if (primaryChanged) {
                 foreground = primary?.let { notification(context, it) }
                 foregroundCard = primary
+                foregroundId = nextForegroundId
             }
             for (state in plan.waiting) {
                 val id = state["id"] as String
                 val content = card(context, state, null)
                 val previous = waitingCards[id]
                 if (previous?.card != content || content.hasMutableContent) {
-                    val notificationId = previous?.notificationId ?: nextId++
+                    val notificationId = endingIds[id] ?: previous?.notificationId ?: nextId++
                     manager.notify(notificationId, notification(context, content))
                     waitingCards[id] = WaitingCard(notificationId, content)
                 }
@@ -70,15 +87,16 @@ class ConversationService : Service() {
             if (!primaryChanged) return
             // Ringing can post synchronously before a filtered-call cancellation, preserving
             // repeat-caller history. Ongoing CallStyle posts only through startForeground.
-            if (plan.primary?.get("status") == "ringing") manager.notify(FOREGROUND_ID, foreground!!)
+            if (plan.primary?.get("status") == "ringing") manager.notify(foregroundId!!, foreground!!)
             val intent = Intent(context, ConversationService::class.java)
             if (foreground == null) {
-                manager.cancel(FOREGROUND_ID)
                 context.startService(intent)
             } else ContextCompat.startForegroundService(context, intent)
         }
         private fun card(context: Context, state: Map<String, Any?>, heldSummary: String?): Card {
             val id = state["id"] as String
+            if (state["status"] == "ending") return Card(id, CallPhase.ONGOING,
+                CallNotificationContent(title = "Ending call…", channelId = "conversations-ongoing-v2"), null, null, ending = true)
             val ringing = state["status"] == "ringing"
             val phase = if (ringing) CallPhase.RINGING else CallPhase.ONGOING
             val defaultChannelId = if (ringing) incomingChannelId(context) else "conversations-ongoing-v2"
@@ -120,6 +138,10 @@ class ConversationService : Service() {
                 Intent(context, ConversationReceiver::class.java).setAction(name)
                     .setData(Uri.Builder().scheme("voip-conversation").authority(context.packageName).appendPath(id).appendPath(name).build()).putExtra("id", id),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            if (card.ending) return NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.sym_call_incoming).setOngoing(true).setOnlyAlertOnce(true)
+                .setCategory(NotificationCompat.CATEGORY_CALL).setContentTitle(content.title)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "End", action("retryEnd")).build()
             val person = Person.Builder().setUri(card.callerUri).setKey(card.callerKey)
                 .setName(content.title).setIcon(content.avatar?.let { IconCompat.createFromIcon(context, it) })
                 .setImportant(true).build()
@@ -147,7 +169,7 @@ class ConversationService : Service() {
         val notification = foreground
         if (notification == null) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
         if (postedForeground !== notification) {
-            ServiceCompat.startForeground(this, FOREGROUND_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+            ServiceCompat.startForeground(this, checkNotNull(foregroundId), notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
             postedForeground = notification
         }
         return START_NOT_STICKY
@@ -161,7 +183,11 @@ class ConversationReceiver : BroadcastReceiver() {
         val pending = goAsync()
         val engine = ConversationEngine.get(context)
         engine.jobs.launch {
-            try { if (intent.action == "join") engine.join(id, NativeActionOrigin.SYSTEM) else engine.end(id, NativeActionOrigin.SYSTEM) }
+            try { when (intent.action) {
+                "join" -> engine.join(id, NativeActionOrigin.SYSTEM)
+                "retryEnd" -> engine.retryPlatformRemoval(id)
+                else -> engine.end(id, NativeActionOrigin.SYSTEM)
+            } }
             catch (_: Exception) { /* The native engine owns failure and terminal state. */ }
             finally { pending.finish() }
         }

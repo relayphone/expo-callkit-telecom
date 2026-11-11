@@ -25,6 +25,7 @@ class ConversationCorrectnessTest {
         val entered = CompletableDeferred<Unit>()
         val admit = CompletableDeferred<Unit>()
         val removed = CompletableDeferred<Unit>()
+        val confirmed = CompletableDeferred<Unit>()
         val closed = CompletableDeferred<Unit>()
         val disconnectEntered = CompletableDeferred<Unit>()
         var disconnectGate: CompletableDeferred<Unit>? = null
@@ -59,6 +60,8 @@ class ConversationCorrectnessTest {
                         if (disconnects == 2) { retryEntered.complete(Unit); retryGate?.await() }
                         if (throwsRemaining > 0) { throwsRemaining--; error("Core disconnect failed") }
                         val outcome = outcomes.removeFirstOrNull() ?: CallControlResult.Success()
+                        if (outcome is CallControlResult.Success || outcome is CallControlResult.Error &&
+                            outcome.errorCode == CallException.ERROR_CALL_IS_NOT_BEING_TRACKED) confirmed.complete(Unit)
                         removed.complete(Unit)
                         return outcome
                     }
@@ -105,7 +108,10 @@ class ConversationCorrectnessTest {
             assertEquals("reported", engine.incoming(IncomingCallPush(id, "incoming-$id",
                 mapOf("handleType" to "generic", "value" to id, "displayName" to id)).payload())["status"])
         }
-        suspend fun ended() = withTimeout(5000) { while (state() != null || !core.closed.isCompleted) delay(10) }
+        suspend fun ended() = withTimeout(5000) {
+            if (core.disconnects > 0) core.confirmed.await()
+            while (state() != null || !core.closed.isCompleted) delay(10)
+        }
         suspend fun close() {
             try {
                 core.admit.complete(Unit); core.disconnectGate?.complete(Unit); core.retryGate?.complete(Unit)
@@ -158,24 +164,25 @@ class ConversationCorrectnessTest {
         assertEquals(1, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
     }
 
-    @Test fun failedDisconnectRetriesOnceBeforeEndingLocally() = fixture {
+    @Test fun twoFailedDisconnectsRetryUntilConfirmedRemoval() = fixture {
         ready()
         core.outcomes += CallControlResult.Error(CallException.ERROR_UNKNOWN)
         core.outcomes += CallControlResult.Error(CallException.ERROR_UNKNOWN)
         engine.end(id); ended()
-        assertEquals(2, core.disconnects)
+        assertEquals(3, core.disconnects)
         assertEquals("local", ended?.get("reason")); assertNull(ended?.get("failure"))
     }
 
-    @Test fun coreLifetimeClosingOnErrorDoesNotPublishBeforeTheRetrySettles() = fixture {
+    @Test fun coreLifetimeClosingOnErrorDoesNotPreventLogicalEndOrConfirmedRetry() = fixture {
         ready()
         core.outcomes += CallControlResult.Error(CallException.ERROR_UNKNOWN)
         core.retryGate = CompletableDeferred()
         coroutineScope {
             val ending = async { engine.end(id) }
             core.retryEntered.await(); core.closed.await()
-            assertNull(ended)
-            assertNotNull(state())
+            assertEquals("local", ended?.get("reason"))
+            assertNull(state())
+            assertFalse(core.confirmed.isCompleted)
             core.retryGate!!.complete(Unit)
             ending.await()
         }
@@ -197,8 +204,8 @@ class ConversationCorrectnessTest {
         assertEquals("remoteEnded", ended?.get("reason")); assertNull(ended?.get("failure"))
     }
 
-    @Test fun remoteReportJoiningLocalDisconnectKeepsItsReasonWithoutPersonAction() = reportJoiningLocalDisconnect("remoteEnded")
-    @Test fun failedReportJoiningLocalDisconnectKeepsItsFailureWithoutPersonAction() = reportJoiningLocalDisconnect("failed")
+    @Test fun remoteReportAfterLogicalEndCannotReplaceItsReason() = reportJoiningLocalDisconnect("remoteEnded")
+    @Test fun failedReportAfterLogicalEndCannotReplaceItsFailure() = reportJoiningLocalDisconnect("failed")
 
     private fun reportJoiningLocalDisconnect(reason: String) = fixture {
         ready(); core.disconnectGate = CompletableDeferred()
@@ -210,10 +217,8 @@ class ConversationCorrectnessTest {
             core.disconnectGate!!.complete(Unit); local.await()
         }
         ended()
-        assertEquals(reason, ended?.get("reason"))
-        if (reason == "failed") assertEquals(mapOf("kind" to "server"), ended?.get("failure"))
-        else assertNull(ended?.get("failure"))
-        assertEquals(0, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
+        assertEquals("local", ended?.get("reason")); assertNull(ended?.get("failure"))
+        assertEquals(1, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
     }
 
     @Test fun cancellingAReportCannotLetALaterReportReplaceItsReason() = fixture {
@@ -274,13 +279,13 @@ class ConversationCorrectnessTest {
             core.disconnectGate!!.complete(Unit)
             ended()
         }
-        assertEquals(2, core.disconnects)
+        assertEquals(3, core.disconnects)
         assertEquals("local", ended?.get("reason"))
     }
 
-    @Test fun serverAnsweredElsewhereJoiningLocalDisconnectKeepsItsEvent() = serverEndJoiningDisconnect("answeredElsewhere")
-    @Test fun serverFailureJoiningLocalDisconnectKeepsItsFailureKind() = serverEndJoiningDisconnect("failed")
-    @Test fun serverEndJoiningRemoteReportUsesItsClaimedReasonAndEvent() = serverEndJoiningDisconnect("answeredElsewhere", reportFirst = true)
+    @Test fun lateServerAnsweredElsewhereCannotReplaceLogicalEnd() = serverEndJoiningDisconnect("answeredElsewhere")
+    @Test fun lateServerFailureCannotReplaceLogicalEnd() = serverEndJoiningDisconnect("failed")
+    @Test fun lateServerEndCannotReplaceLogicalRemoteReport() = serverEndJoiningDisconnect("answeredElsewhere", reportFirst = true)
 
     private fun serverEndJoiningDisconnect(reason: String, reportFirst: Boolean = false) = fixture {
         incoming(); core.disconnectGate = CompletableDeferred()
@@ -294,9 +299,9 @@ class ConversationCorrectnessTest {
         }
         ended()
         assertEquals(1, core.disconnects)
-        assertEquals(reason, ended?.get("reason"))
-        if (reason == "failed") assertEquals(mapOf("kind" to "server"), ended?.get("failure"))
-        else assertEquals(1, events.count { it["type"] == "answeredElsewhere" })
+        assertEquals(if (reportFirst) "remoteEnded" else "local", ended?.get("reason"))
+        assertNull(ended?.get("failure"))
+        assertEquals(0, events.count { it["type"] == "answeredElsewhere" })
     }
 
     @Test fun notTrackedDoesNotRetryAndRemoteReasonIsPreserved() = fixture {

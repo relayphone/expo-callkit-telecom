@@ -12,6 +12,7 @@ internal class NativeRoomConnection(
     scope: CoroutineScope,
     private val signal: (NativeMediaStage) -> Unit,
     private val disconnected: () -> Unit,
+    private val reconnectTimeoutMillis: Long = NATIVE_MEDIA_RECONNECT_TIMEOUT_MILLIS,
     private val wait: suspend (Long) -> Unit = { delay(it) },
 ) {
     private val lifetime = SupervisorJob(scope.coroutineContext[Job])
@@ -25,7 +26,7 @@ internal class NativeRoomConnection(
                 NativeRoomState.RECONNECTING -> if (deadline == null) {
                     signal(NativeMediaStage.RECONNECTING)
                     deadline = work.launch {
-                        wait(NATIVE_MEDIA_RECONNECT_TIMEOUT_MILLIS)
+                        wait(reconnectTimeoutMillis)
                         disconnect()
                     }
                 }

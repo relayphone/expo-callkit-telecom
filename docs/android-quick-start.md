@@ -3,7 +3,7 @@
 Install the v2 prerelease from the GitHub release asset in your `package.json`:
 
 ```json
-"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.2/expo-callkit-telecom-2.0.0-alpha.2.tgz"
+"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.3/expo-callkit-telecom-2.0.0-alpha.3.tgz"
 ```
 
 See [release verification](./releases.md). Prerelease versions can change APIs.

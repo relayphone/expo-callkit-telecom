@@ -21,6 +21,7 @@ enum class NativeMediaStage(val value: String) {
     TERMINAL_SIGNAL_COMPLETED("terminalSignalCompleted"),
     CORE_ADD_REQUESTED("coreAddRequested"), CORE_ADMITTED("coreAdmitted"), CORE_LATE_DISCONNECTED("coreLateDisconnected"),
     CORE_MUTE_OBSERVED("coreMuteObserved"),
+    PLATFORM_REMOVAL_FAILED("platformRemovalFailed"),
     CREDENTIALS_STARTED("credentialsStarted"), CREDENTIALS_RESOLVED("credentialsResolved"),
     MEDIA_CONNECT_STARTED("mediaConnectStarted"), MEDIA_CONNECT_COMPLETED("mediaConnectCompleted"),
     ICE_CHECKING("iceChecking"), ICE_CONNECTED("iceConnected"), DTLS_CONNECTED("dtlsConnected"),

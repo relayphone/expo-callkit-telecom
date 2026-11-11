@@ -73,6 +73,7 @@ internal class CallNotificationRoster {
         return changed
     }
     fun remove(id: String): Boolean = entries.remove(id) != null
+    fun ending(id: String): Boolean = if (id in entries) put(id, mapOf("status" to "ending")) else false
 
     data class Plan(val primary: Map<String, Any?>?, val waiting: List<Map<String, Any?>>, val heldCount: Int) {
         val heldSummary: String? get() = when (heldCount) {
@@ -81,12 +82,16 @@ internal class CallNotificationRoster {
             else -> "$heldCount calls on hold"
         }
     }
-    fun plan(): Plan {
+    fun plan(retainedPrimaryId: String? = null): Plan {
         val active = entries.values.filter { it.state["status"] in listOf("dialing", "connecting", "connected") }
         val held = entries.values.filter { it.state["status"] == "held" }
         val ringing = entries.values.filter { it.state["status"] == "ringing" }
-        val primary = active.maxByOrNull { it.entered } ?: held.maxByOrNull { it.entered } ?: ringing.firstOrNull()
-        return Plan(primary?.state, ringing.filter { it !== primary }.map { it.state }, held.size)
+        val ending = entries.values.filter { it.state["status"] == "ending" }
+        val retained = ending.firstOrNull { it.state["id"] == retainedPrimaryId }
+        val primary = retained ?: active.maxByOrNull { it.entered }
+            ?: held.maxByOrNull { it.entered } ?: ending.firstOrNull() ?: ringing.firstOrNull()
+        val secondary = ringing + ending + if (retained != null) active + held else emptyList()
+        return Plan(primary?.state, secondary.filter { it !== primary }.map { it.state }, held.size)
     }
 }
 

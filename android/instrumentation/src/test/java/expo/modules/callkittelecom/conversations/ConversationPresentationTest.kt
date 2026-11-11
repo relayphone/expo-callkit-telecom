@@ -67,4 +67,20 @@ class ConversationPresentationTest {
         roster.refresh(listOf(mapOf("id" to "first", "status" to "ended"), mapOf("id" to "unpresented", "status" to "ringing")))
         assertNull(roster.plan().primary); assertTrue(roster.plan().waiting.isEmpty())
     }
+
+    @Test fun pendingRemovalRemainsPresentedAlongsideAnActiveCall() {
+        val roster = CallNotificationRoster()
+        roster.put("ending", mapOf("status" to "connected", "members" to listOf("private caller")))
+        assertTrue(roster.ending("ending"))
+        assertEquals(mapOf("id" to "ending", "status" to "ending"), roster.plan().primary)
+        roster.put("active", mapOf("status" to "connected"))
+        assertEquals("active", roster.plan().primary?.get("id"))
+        assertEquals(listOf(mapOf("id" to "ending", "status" to "ending")), roster.plan().waiting)
+        assertEquals("ending", roster.plan("ending").primary?.get("id"))
+        assertEquals(listOf("active"), roster.plan("ending").waiting.map { it["id"] })
+        roster.remove("active")
+        assertEquals("ending", roster.plan().primary?.get("id"))
+        roster.remove("ending")
+        assertNull(roster.plan().primary)
+    }
 }

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.3 (2026-11-11)
+
+### Fixes
+
+* **android:** remove an answered call's system entry even when Android refuses
+  the first disconnects. End media and audio promptly, then retry platform removal
+  for up to 60 seconds while retaining the foreground service and an “Ending
+  call…” notification. Its End action retries immediately. If Android continues
+  refusing removal, emit `PLATFORM_REMOVAL_FAILED` before local cleanup.
+
 ## 2.0.0-alpha.2 (2026-11-11)
 
 ### Fixes

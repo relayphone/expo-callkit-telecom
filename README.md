@@ -10,7 +10,7 @@ The fork's `v2` branch is a breaking migration from upstream v1. Install the fir
 prerelease from its CI-built GitHub release asset in your `package.json`:
 
 ```json
-"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.2/expo-callkit-telecom-2.0.0-alpha.2.tgz"
+"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.3/expo-callkit-telecom-2.0.0-alpha.3.tgz"
 ```
 
 Prerelease versions can change APIs. See [releases and verification](https://github.com/relayphone/expo-callkit-telecom/blob/v2/docs/releases.md),
