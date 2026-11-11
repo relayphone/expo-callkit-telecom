@@ -16,10 +16,12 @@ data class IncomingCallPush(
     val hasVideo: Boolean = false,
     val media: Map<String, Any?>? = null,
     val metadata: Map<String, Any?> = emptyMap(),
+    val expiresAtMillis: Long? = null,
 ) {
     internal fun payload(): Map<String, Any?> = mapOf(
         "serverCallId" to serverCallId, "eventId" to eventId, "caller" to caller,
         "hasVideo" to hasVideo, "media" to media, "metadata" to metadata,
+        "expiresAtMillis" to expiresAtMillis,
     )
 }
 
@@ -61,6 +63,7 @@ object DefaultCallPushDecoder : CallPushDecoder {
         } else DecodedCallPush.Incoming(IncomingCallPush(
             server, event, payload["caller"] as? Map<String, Any?>, payload["hasVideo"] == true,
             payload["media"] as? Map<String, Any?>, payload["metadata"] as? Map<String, Any?> ?: emptyMap(),
+            (payload["expiresAtMillis"] as? Number)?.toLong(),
         ))
     }
 

@@ -17,6 +17,11 @@ export const withAndroidOptions: ConfigPlugin<ComposedPluginProps> = (
   const fcmService = props.androidFcmService ?? "library";
   if (fcmService !== "library" && fcmService !== "app")
     throw new Error("androidFcmService must be library or app.");
+  if (
+    props.androidSupportsHold !== undefined &&
+    typeof props.androidSupportsHold !== "boolean"
+  )
+    throw new Error("androidSupportsHold must be a boolean.");
   if ("joinPolicy" in props)
     throw new Error(
       "joinPolicy was removed; use androidNativeMedia for native media selection."
@@ -34,6 +39,7 @@ export const withAndroidOptions: ConfigPlugin<ComposedPluginProps> = (
     const values: Record<string, string> = {
       VoIPConversationsMediaAdapter: props.mediaAdapter ?? "webrtc",
       ExpoCallKitTelecomUnhandledAction: props.unhandledAction ?? "fail",
+      ExpoCallKitTelecomSupportsHold: String(props.androidSupportsHold ?? true),
       ExpoCallKitTelecomIncomingCallTimeout: String(
         props.incomingCallTimeout ?? 45
       ),
