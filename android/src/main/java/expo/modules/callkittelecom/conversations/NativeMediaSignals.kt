@@ -9,6 +9,7 @@ enum class NativeMediaStage(val value: String) {
     PUSH_RECEIVED("pushReceived"), PUSH_REFUSED("pushRefused"), REPORTED("reported"), PREWARM_STARTED("prewarmStarted"),
     ROOM_CONNECTED("roomConnected"), PREJOINED("prejoined"),
     JS_WARM_STARTED("jsWarmStarted"), ANSWER_REQUESTED("answerRequested"),
+    HANDLER_STARTED("handlerStarted"), HANDLER_RESPONDED("handlerResponded"), CONNECTED("connected"),
     ANSWER_ACCEPTED("answerAccepted"), AUDIO_WAIT_STARTED("audioWaitStarted"), AUDIO_WAIT_EXPIRED("audioWaitExpired"),
     ANSWER_FAILED("answerFailed"), AUDIO_AUTHORIZED("audioAuthorized"),
     FIRST_AUDIO("firstAudio"), CAPTURE_STARTED("captureStarted"),

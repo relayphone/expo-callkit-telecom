@@ -35,6 +35,7 @@ internal class NativeMediaController(private val context: Context, private val p
     private val serial = Mutex()
     private var session: NativeMediaSession? = null
     private var preparation: Deferred<Unit>? = null
+    internal val isPrewarmed: Boolean get() = preparation?.let { it.isCompleted && !it.isCancelled } == true && session?.isPrepared != false
     private var answerJob: Job? = null
     private var unmuteJob: Job? = null
     private var resumeJob: Job? = null
