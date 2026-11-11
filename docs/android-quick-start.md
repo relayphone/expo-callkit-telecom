@@ -131,9 +131,9 @@ report-before-warmup behavior.
 
 Incoming pushes can set `IncomingCallPush.expiresAtMillis` to their absolute UTC
 expiry in Unix epoch milliseconds. The default JSON decoder reads the same
-optional `expiresAtMillis` field. It replaces the configured incoming timeout,
-so an invitation can ring for less or more than 45 seconds. An already expired
-invitation ends immediately as `unanswered`; time spent in admission or Telecom
+optional `expiresAtMillis` field. It can shorten the configured incoming timeout
+but never extend it. To allow longer rings, raise `incomingCallTimeout`. An
+already expired invitation ends immediately as `unanswered`; time spent in admission or Telecom
 reporting does not extend its expiry. Omit the field to keep the configured
 `incomingCallTimeout` (45 seconds by default). Answering or ending the call
 cancels its ringing deadline; duplicate invitations do not extend it.

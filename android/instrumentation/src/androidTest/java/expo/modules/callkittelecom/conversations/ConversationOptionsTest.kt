@@ -116,7 +116,7 @@ class ConversationOptionsTest {
         try { fixture.body() } finally { fixture.close() }
     }
 
-    @Test fun engineUsesShorterLongerAndDefaultRingDeadlines() = runBlocking {
+    @Test fun engineCapsExplicitExpiryAtTheConfiguredRingDeadline() = runBlocking {
         withEngine {
             val clock = ManualClock()
             engine.incomingRingDeadline = IncomingRingDeadline(clock, clock::sleep)
@@ -124,7 +124,7 @@ class ConversationOptionsTest {
                 val push = push(duration?.let { clock.millis() + it })
                 val id = incoming(push)
                 assertEquals(1, clock.pending)
-                clock.advanceBy((duration ?: 45_000) - 1)
+                clock.advanceBy(minOf(duration ?: 45_000, 45_000) - 1)
                 yield()
                 assertEquals("ringing", state(id)?.get("status"))
                 clock.advanceBy(1)

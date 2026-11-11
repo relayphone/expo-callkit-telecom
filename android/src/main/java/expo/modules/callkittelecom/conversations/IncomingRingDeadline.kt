@@ -3,7 +3,7 @@ package expo.modules.callkittelecom.conversations
 import java.time.Clock
 import kotlinx.coroutines.delay
 
-/** Converts a push's absolute expiry at admission time; absent expiry keeps the configured timeout. */
+/** A push's absolute expiry can shorten the configured timeout at admission, never extend it. */
 internal class IncomingRingDeadline(
     private val clock: Clock = Clock.systemUTC(),
     private val waitMillis: suspend (Long) -> Unit = { delay(it) },
@@ -12,7 +12,7 @@ internal class IncomingRingDeadline(
         val remaining = if (expiresAtMillis == null) fallbackMillis else {
             val now = clock.millis()
             if (expiresAtMillis <= now) 0L
-            else (expiresAtMillis - now).takeIf { it >= 0 } ?: Long.MAX_VALUE
+            else minOf(fallbackMillis, (expiresAtMillis - now).takeIf { it >= 0 } ?: fallbackMillis)
         }
         waitMillis(remaining)
     }
