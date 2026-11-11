@@ -40,6 +40,72 @@ class NativeMediaJourneyTest {
     @Test fun realNativeLiveKitAudioAndCleanup() = journey("livekit", listOf("push", "fetcher"))
     @Test fun realNativeWebRTCAudioAndCleanup() = journey("webrtc", listOf("fetcher", "livekitPush"))
 
+    @Test fun appStartedLiveKitMediaUsesCoreAudioAndLeavesNoRoomAfterEnd() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val engine = ConversationEngine.get(context)
+            val previousMedia = engine.nativeMedia; val previousPolicy = engine.policy
+            val previousAccept = engine.actions.acceptUnhandled; val previousEmit = engine.emit
+            val id = "provided-${System.nanoTime()}"
+            val signals = CopyOnWriteArrayList<NativeMediaSignal>()
+            val observer = NativeMediaObserver { if (it.serverCallId == id) signals += it }
+            val audio = context.getSystemService(android.media.AudioManager::class.java)
+            val recording = NativeRecordingObservation(audio)
+            fun state() = (engine.snapshot["conversations"] as List<*>).filterIsInstance<Map<*, *>>().firstOrNull { it["id"] == id }
+            suspend fun stage(kind: NativeMediaStage): NativeMediaSignal = withTimeout(10_000) {
+                while (signals.none { it.stage == kind }) delay(10)
+                signals.first { it.stage == kind }
+            }
+            engine.nativeMedia = AndroidNativeMedia.LIVEKIT
+            engine.policy = JSONObject(mapOf("media" to "livekit", "credentials" to "fromPush"))
+            engine.actions.resetBridge(); engine.actions.acceptUnhandled = true
+            engine.emit = { name, _ -> assertNotEquals("handlerAction", name) }
+            NativeMediaSignals.observers += observer
+            try {
+                withTimeout(7000) { while (TelecomEvidence.calls().isNotEmpty() || audio.mode != android.media.AudioManager.MODE_NORMAL) delay(20) }
+                assertEquals(id, engine.start(mapOf("id" to id, "to" to mapOf("id" to "peer"))))
+                val invitation = fixture("/fixture/invitation/$id?media=1")
+                val grant = invitation.getJSONObject("media").let { value -> value.keys().asSequence().associateWith { value.get(it) } }
+                ConversationMedia.provide(context, id, grant)
+                val connected = stage(NativeMediaStage.CONNECTED)
+                val room = stage(NativeMediaStage.ROOM_CONNECTED)
+                val authority = stage(NativeMediaStage.AUDIO_AUTHORIZED)
+                val capture = stage(NativeMediaStage.CAPTURE_STARTED)
+                val output = stage(NativeMediaStage.OUTPUT_FIRST_NONZERO)
+                assertEquals("connected", state()?.get("status"))
+                assertTrue(room.elapsedRealtimeNanos <= connected.elapsedRealtimeNanos)
+                assertTrue(authority.elapsedRealtimeNanos <= capture.elapsedRealtimeNanos)
+                assertTrue(authority.elapsedRealtimeNanos <= output.elapsedRealtimeNanos)
+                assertEquals(1L, authority.measurements["coreActive"])
+                assertEquals(android.media.AudioManager.MODE_IN_COMMUNICATION.toLong(), authority.measurements["audioMode"])
+                assertTrue(TelecomEvidence.calls().single().contains("state=ACTIVE"))
+                assertFalse(signals.any { it.stage in setOf(NativeMediaStage.CAPTURE_BEFORE_AUTHORITY, NativeMediaStage.OUTPUT_BEFORE_AUTHORITY) })
+                assertFalse(engine.snapshot.toString().contains(grant["token"] as String))
+                assertFalse(signals.toString().contains(grant["token"] as String))
+                ConversationMedia.provide(context, id, grant)
+                assertEquals("alreadyHasSession", stage(NativeMediaStage.MEDIA_IGNORED).reason)
+                engine.end(id)
+                stage(NativeMediaStage.CLOSED)
+                withTimeout(7000) {
+                    while (state() != null || TelecomEvidence.calls().isNotEmpty() || recording.activeNewCount() != 0 ||
+                        fixture("/fixture/observations/$id").getInt("clients") != 0) delay(20)
+                }
+                assertEquals(1, signals.count { it.stage == NativeMediaStage.CLOSED })
+                assertEquals(1, signals.count { it.stage == NativeMediaStage.MEDIA_CONNECT_STARTED })
+                val ignored = signals.count { it.stage == NativeMediaStage.MEDIA_IGNORED }
+                ConversationMedia.provide(context, id, grant)
+                withTimeout(1000) { while (signals.count { it.stage == NativeMediaStage.MEDIA_IGNORED } == ignored) delay(10) }
+                assertEquals("unknownConversation", signals.last { it.stage == NativeMediaStage.MEDIA_IGNORED }.reason)
+                assertEquals(1, signals.count { it.stage == NativeMediaStage.MEDIA_CONNECT_STARTED })
+            } finally {
+                if (state() != null) runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
+                withTimeout(7000) { while (state() != null || TelecomEvidence.calls().isNotEmpty()) delay(20) }
+                NativeMediaSignals.observers -= observer; recording.close()
+                engine.nativeMedia = previousMedia; engine.policy = previousPolicy
+                engine.actions.resetBridge(); engine.actions.acceptUnhandled = previousAccept; engine.emit = previousEmit
+            }
+        }
+    }
+
     @Test fun registeredWebRTCFixtureRetainsItsIdWhenClosedBeforePrewarm() = runBlocking {
         val serverId = "raw-id/closed-before-prewarm "
         val signals = CopyOnWriteArrayList<NativeMediaSignal>()

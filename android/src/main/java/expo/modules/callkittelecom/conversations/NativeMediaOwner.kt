@@ -16,17 +16,20 @@ internal enum class AndroidNativeMedia {
 internal class NativeMediaOwner(
     private val selection: AndroidNativeMedia,
     private val audio: NativeAudioLifecycle,
+    initiallyMuted: Boolean = false,
     private val create: (Map<String, Any?>?) -> NativeMediaController,
 ) {
     private var controller: NativeMediaController? = null
     private var closed = false
     private var transition = 0L
+    private var desiredMuted = initiallyMuted
     internal val isPrewarmed: Boolean get() = controller?.isPrewarmed == true
+    internal val hasSession: Boolean get() = controller?.hasSession == true
 
     fun prewarm() {
         check(!closed)
         if (selection == AndroidNativeMedia.NONE || controller != null) return
-        val created = create(null)
+        val created = createController(null)
         controller = created
         try { created.prewarm() }
         catch (error: Exception) {
@@ -44,7 +47,7 @@ internal class NativeMediaOwner(
         else {
             if (media != null && !isPrewarmed) {
                 controller?.close("replaced")
-                controller = create(media).also { it.prewarm() }
+                controller = createController(media).also { it.prewarm() }
             }
             prewarm()
             controller!!.answered { audio.nativeActivated() }
@@ -70,9 +73,10 @@ internal class NativeMediaOwner(
         }
     }
 
-    suspend fun mute() { check(!closed); controller?.mute() }
-    fun clearMute() { check(!closed); controller?.clearMute() }
-    fun unmute() { check(!closed); controller?.unmute { audio.nativeActivated() } }
+    private fun createController(media: Map<String, Any?>?) = create(media).also { it.setDesiredMuted(desiredMuted) }
+    suspend fun mute() { check(!closed); desiredMuted = true; controller?.mute() }
+    fun clearMute() { check(!closed); desiredMuted = false; controller?.clearMute() }
+    fun unmute() { check(!closed); desiredMuted = false; controller?.unmute { audio.nativeActivated() } }
 
     fun close(reason: String) {
         if (closed) return

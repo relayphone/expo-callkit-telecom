@@ -177,6 +177,30 @@ Observe `ANSWER_REQUESTED`, `HANDLER_STARTED`, `HANDLER_RESPONDED`,
 before the answer can emit `ROOM_CONNECTED` earlier. Signals contain monotonic
 timings, counts and reason codes, never names, phone numbers or media grants.
 
+## Media for calls your app starts
+
+With `androidNativeMedia: "livekit"`, pass credentials obtained by your native
+server integration to the existing conversation ID:
+
+```kotlin
+ConversationMedia.provide(context, conversationId, media)
+```
+
+`media` has the same LiveKit shape as an incoming push: `provider`, `url`, `room`,
+`identity`, `token` and `expiresAt` (Unix seconds). Outgoing calls join natively,
+including credentials supplied while placement is still pending. Capture and
+audible output wait for Core-Telecom activation; the existing connected path
+publishes `connected` and emits `CONNECTED` after native media activation.
+Ringing incoming calls without a prewarmed session keep the credentials privately
+until answer. An answer handler's `Proceed.media`, when supplied, takes precedence.
+
+Unknown, ended, disabled-provider or already-owned sessions are ignored with
+`MEDIA_IGNORED` and a reason code. Credentials stay out of snapshots and signals.
+`MEDIA_PROVIDED` records accepted provision. Calls may emit `RECONNECTING` and
+`RECONNECTED` while keeping their current status. A final room disconnection or
+30 seconds without recovery fails the call. Ending the call
+cancels recovery observation and its deadline.
+
 ## Configure a host for native answer and audio
 
 Incoming pushes can set `IncomingCallPush.expiresAtMillis` to their absolute UTC
@@ -204,8 +228,8 @@ const callingPlugin: [string, { androidNativeMedia: "livekit" }] = [
 ```
 
 The default `androidNativeMedia: "none"` leaves media to the application. With
-`"livekit"`, production native media uses fresh LiveKit credentials from the
-incoming push. There is no built-in HTTP credentials endpoint, authentication
+`"livekit"`, production native media uses fresh LiveKit credentials from an
+incoming push or `ConversationMedia.provide`. There is no built-in HTTP credentials endpoint, authentication
 provider registry or configurable HTTP fallback. Supply a short-lived token and
 expiry from your backend; never place a bearer in plugin configuration.
 

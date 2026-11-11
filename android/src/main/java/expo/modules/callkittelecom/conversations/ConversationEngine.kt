@@ -48,6 +48,7 @@ class ConversationEngine(val context: Context) {
             if (current.terminalIntent == null) current.state["endReason"] = payload.reason
             current.permitted.complete(false)
             current.timeout?.cancel()
+            current.providedMediaJob?.cancel()
             current.media?.close("ended")
             // The intent is already claimed before cancellation can reenter a handler.
             actions.cancel(entry.id)
@@ -105,6 +106,8 @@ class ConversationEngine(val context: Context) {
         var visible = false
         var endpoint: CallEndpointCompat? = null
         var media: NativeMediaOwner? = null
+        var providedMedia: Map<String, Any?>? = null
+        var providedMediaJob: Job? = null
         lateinit var audio: NativeAudioLifecycle
         val receipts = mutableMapOf<NativePerformedAction, NativeActionReceipt>()
         var holdingTerminal = false
@@ -208,8 +211,8 @@ class ConversationEngine(val context: Context) {
     }
     @Suppress("UNCHECKED_CAST")
     private fun signal(current: Call, stage: NativeMediaStage, measurements: Map<String, Long> = emptyMap(), reason: String? = null) {
-        ((current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String)
-            ?.let { NativeMediaSignals.emit(it, stage, measurements, reason = reason) }
+        val id = (current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String ?: current.reservation.id
+        NativeMediaSignals.emit(id, stage, measurements, reason = reason)
     }
     private fun call(id: String) = calls[id] ?: error("unknown_conversation")
     private fun live(current: Call): Boolean = calls[current.state["id"] as String] === current &&
@@ -461,10 +464,44 @@ class ConversationEngine(val context: Context) {
         catch (error: Exception) { if (!call.terminal) call.job?.cancel(); throw error }
         return call
     }
+    internal fun provideMedia(id: String, media: Map<String, Any?>) {
+        ConversationMediaRouter({ nativeMedia }, { key -> calls[key]?.let { current ->
+            ConversationMediaRouter.Target(current.reservation.direction, live(current) && !current.ringExpired,
+                current.state["status"] == "ringing", current.media?.hasSession == true || current.providedMediaJob != null,
+                { credentials, route -> supplyMedia(current, credentials, route) })
+        } }, { key, reason -> NativeMediaSignals.emit(key, NativeMediaStage.MEDIA_IGNORED, reason = reason.reason) })
+            .provide(id, media)
+    }
+
+    private fun supplyMedia(current: Call, media: Map<String, Any?>, route: MediaProvisionRoute) {
+        signal(current, NativeMediaStage.MEDIA_PROVIDED)
+        if (route == MediaProvisionRoute.ANSWER) { current.providedMedia = media; return }
+        val id = current.reservation.id
+        prepareMedia(id, mapOf("serverCallId" to id, "media" to media))
+        val owner = checkNotNull(current.media)
+        val work = jobs.launch(start = CoroutineStart.LAZY) {
+            try {
+                val controls = current.ready.await()
+                if (!live(current) || current.state["status"] == "held") return@launch
+                if (!current.active) checked(controls.setActive())
+                if (!live(current) || current.state["status"] == "held") return@launch
+                current.active = true
+                if (current.state["connectedAt"] == null) current.state["status"] = "connecting"
+                signal(current, NativeMediaStage.AUDIO_WAIT_STARTED)
+                owner.answered()
+                publish()
+            } catch (error: Exception) {
+                if (error !is CancellationException && live(current)) terminateLater(id, "failed", EndedFailure.MEDIA)
+            }
+        }
+        current.providedMediaJob = work
+        work.start()
+    }
+
     private fun prepareMedia(id: String, payload: Map<String, Any?>, prewarm: Boolean = true) {
         val call = call(id)
         run {
-            call.media = call.media ?: NativeMediaOwner(nativeMedia, call.audio) { answerMedia -> NativeMediaController(context,
+            call.media = call.media ?: NativeMediaOwner(nativeMedia, call.audio, initiallyMuted = call.state["isMuted"] == true) { answerMedia -> NativeMediaController(context,
                 if (answerMedia == null) payload else payload + ("media" to answerMedia),
                 policy, jobs, failed = {
                 if (calls[id] === call) terminateLater(id, "failed", EndedFailure.MEDIA)
@@ -589,6 +626,8 @@ class ConversationEngine(val context: Context) {
     private fun joined(id: String, media: Map<String, Any?>? = null) {
         val current = call(id)
         requireLive(current)
+        val answerMedia = media ?: current.providedMedia
+        current.providedMedia = null
         signal(current, NativeMediaStage.ANSWER_ACCEPTED)
         current.state["status"] = "connecting"
         current.timeout?.cancel()
@@ -598,10 +637,10 @@ class ConversationEngine(val context: Context) {
         }
         ConversationService.show(context, id, current.state)
         signal(current, NativeMediaStage.AUDIO_WAIT_STARTED)
-        if (current.media == null && media != null) {
+        if (current.media == null && answerMedia != null) {
             (current.state["payload"] as? Map<String, Any?>)?.let { prepareMedia(id, it, prewarm = false) }
         }
-        if (current.media != null) current.media?.answered(media) else current.audio.coreActivated()
+        if (current.media != null) current.media?.answered(answerMedia) else current.audio.coreActivated()
         refreshRoutes()
         publish()
     }
@@ -609,6 +648,7 @@ class ConversationEngine(val context: Context) {
         val current = call(id)
         // Own a local end before cancelling placement can resume its failure cleanup.
         current.localEndPending = true
+        current.providedMediaJob?.cancel()
         if (current.placement == Placement.PENDING) { current.placement = Placement.FAILED; actions.cancel(id) }
         native(id, NativePerformedAction.End, origin) {
             check(calls[id] === current && identities.isCurrent(current.reservation) && !current.terminal && current.incoming?.intent == null) { "unknown_conversation" }
@@ -694,6 +734,8 @@ class ConversationEngine(val context: Context) {
         val current = calls[id] ?: return
         if (current.terminal) return
         current.terminal = true
+        current.providedMediaJob?.cancel()
+        current.providedMedia = null
         current.ready.completeExceptionally(ConversationFailure("unknown_conversation"))
         current.holdingTerminal = !publishNow
         current.audio.close()
