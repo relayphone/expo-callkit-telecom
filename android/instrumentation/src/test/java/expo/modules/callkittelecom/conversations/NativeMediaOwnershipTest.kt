@@ -1,5 +1,7 @@
 package expo.modules.callkittelecom.conversations
 
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -19,6 +21,23 @@ class NativeMediaOwnershipTest {
         override fun unmute(audioReady: suspend () -> Unit) { muted = false }
         override fun setDesiredMuted(muted: Boolean) { this.muted = muted }
         override fun close(reason: String) { isPrewarmed = false; closes += reason }
+    }
+
+    @Test fun coreBaselinePreservesInitiallyMutedOwnerButLaterSystemMuteApplies() = runBlocking {
+        val session = Session()
+        val owner = NativeMediaOwner(AndroidNativeMedia.LIVEKIT, NativeAudioLifecycle({ true }, { 0 }, {}), initiallyMuted = true) { session }
+        owner.prewarm()
+        val updates = MutableSharedFlow<Boolean>()
+        val collection = launch(start = CoroutineStart.UNDISPATCHED) {
+            updates.coreMuteChanges().collect { if (it) owner.mute() else owner.clearMute() }
+        }
+        try {
+            updates.emit(false); yield()
+            assertTrue(session.muted)
+            owner.clearMute(); assertFalse(session.muted)
+            updates.emit(true); yield()
+            assertTrue(session.muted)
+        } finally { collection.cancelAndJoin(); owner.close("ended") }
     }
 
     @Test fun lostPrejoinClosesOnceAndAnswerCreatesFreshMediaWithoutClosingAudioAuthority() {

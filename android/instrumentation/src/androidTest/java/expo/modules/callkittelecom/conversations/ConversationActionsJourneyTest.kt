@@ -6,11 +6,14 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Person
 import android.os.SystemClock
+import androidx.core.telecom.CallControlScope
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
@@ -36,6 +39,7 @@ class ConversationActionsJourneyTest {
         @Volatile var muteGate: CompletableDeferred<Unit>? = null
         val muteEntered = CompletableDeferred<Unit>()
         @Volatile var mediaMuted = false
+        @Volatile var failMediaMute = false
         private val observer = NativeMediaObserver { signals += it }
         init {
             engine.actions.resetBridge()
@@ -58,6 +62,7 @@ class ConversationActionsJourneyTest {
                     override suspend fun activate() {}
                     override suspend fun setHeld(held: Boolean) {}
                     override suspend fun setMuted(muted: Boolean) {
+                        if (muted && failMediaMute) error("Capture session lost")
                         if (muted) { muteEntered.complete(Unit); muteGate?.await() }
                         mediaMuted = muted
                     }
@@ -112,6 +117,35 @@ class ConversationActionsJourneyTest {
 
     private fun fixture(body: suspend Fixture.() -> Unit) = runBlocking {
         withContext(Dispatchers.Main) { val fixture = Fixture(); try { fixture.body() } finally { fixture.close() } }
+    }
+
+    @Test fun mediaFailureDuringSystemMuteIsMediaFailureRatherThanFrameworkRemoval() = fixture {
+        val originalAdmission = engine.coreAdmission
+        val originalEmit = engine.emit
+        val coreMuted = MutableSharedFlow<Boolean>(replay = 1)
+        var failure: Map<*, *>? = null
+        engine.coreAdmission = CoreCallAdmission { attributes, callbacks, admitted ->
+            originalAdmission.add(attributes, callbacks) {
+                admitted(object : CallControlScope by this { override val isMuted: Flow<Boolean> = coreMuted })
+            }
+        }
+        engine.emit = { name, body ->
+            originalEmit(name, body)
+            if (name == "conversationsChanged") (body["conversations"] as List<*>).filterIsInstance<Map<*, *>>()
+                .firstOrNull { it["status"] == "ended" }?.let { failure = (it["ended"] as Map<*, *>)["failure"] as? Map<*, *> }
+        }
+        try {
+            handler { ConversationActionResult.Proceed() }
+            val id = incoming(media = grant("mute-failure"))
+            engine.join(id); connected(id)
+            coreMuted.emit(false)
+            withTimeout(5000) { while (signals.none { it.stage == NativeMediaStage.CORE_MUTE_OBSERVED }) delay(10) }
+            failMediaMute = true
+            coreMuted.emit(true)
+            removed(id)
+            assertEquals("failed", ended[id])
+            assertEquals(mapOf("kind" to "media"), failure)
+        } finally { engine.coreAdmission = originalAdmission; engine.emit = originalEmit }
     }
 
     @Test fun systemOriginAnswerConnectsWithoutJavaScriptAndSignalsItsOrderedTiming() = fixture {

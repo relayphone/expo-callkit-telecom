@@ -67,6 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Bug Fixes
 
+* **android:** preserve app mute across Core-Telecom's first mute snapshot, report
+  unexpected Core removal as `failed/frameworkReset`, and retry failed disconnects
+  once while sharing teardown across overlapping ends.
+
 * **ios:** configure the audio session through the SDK when native call media is registered, so its calls get audio.
 * **ios:** give the generated call preview widget the app's version and build number, so apps that use call previews install on devices.
 * **ios:** include the system's refusal reason in refused action messages when available.

@@ -9,6 +9,8 @@ internal enum class EndedFailure(val kind: String, val cause: NativeIncomingFilt
     NOT_PLACED("notPlaced"),
     /** The native media session couldn't be prepared, started or kept running. */
     MEDIA("media"),
+    /** Core-Telecom removed the session without a requested end. */
+    FRAMEWORK_RESET("frameworkReset"),
     /** An answered call wasn't reported connected before the answer deadline. */
     CONNECT_TIMED_OUT("connectTimedOut"),
     /** The app or its server reported the failure. */

@@ -13,6 +13,7 @@ import androidx.core.telecom.*
 import java.time.Instant
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.onEach
 
 /** All mutable state and Core-Telecom controls are confined to Dispatchers.Main. */
 class ConversationEngine(val context: Context) {
@@ -73,6 +74,9 @@ class ConversationEngine(val context: Context) {
     private val telecom = CallsManager(context).apply {
         registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE or CallsManager.CAPABILITY_SUPPORTS_VIDEO_CALLING)
     }
+    internal var coreAdmission = CoreCallAdmission { attributes, callbacks, admitted ->
+        telecom.addCall(attributes, callbacks.answer, callbacks.disconnect, callbacks.activate, callbacks.deactivate, admitted)
+    }
     private var startingEndpoints: List<CallEndpointCompat> = emptyList()
     init {
         // Keep this collection alive through addCall: Core-Telecom shares Bluetooth
@@ -124,6 +128,7 @@ class ConversationEngine(val context: Context) {
         var ending = false
         var terminal = false
         var terminalIntent: NativeEndedIntake.Intent? = null
+        lateinit var disconnect: CoreCallDisconnect
         /** Why the call failed, when that is known before it ends. */
         var failure: EndedFailure? = null
     }
@@ -375,6 +380,7 @@ class ConversationEngine(val context: Context) {
             "status" to if (incoming) "ringing" else "dialing", "members" to listOf(member),
             "isMuted" to false, "isVideo" to video, "payload" to payload?.filterKeys { it != "media" },
             "capabilities" to capabilities.snapshot()), reservation, capabilities, (payload?.get("expiresAtMillis") as? Number)?.toLong())
+        call.disconnect = CoreCallDisconnect(jobs, onGiveUp = { call.job?.cancel() })
         call.visible = !incoming
         calls[id] = call
         call.audio = NativeAudioLifecycle({ live(call) && call.active }, { audio.mode }) { event ->
@@ -404,24 +410,32 @@ class ConversationEngine(val context: Context) {
         call.job = jobs.launch {
             try {
                 signal(call, NativeMediaStage.CORE_ADD_REQUESTED)
-                telecom.addCall(attributes,
-                    onAnswer = { if (calls[id] === call) answerFromSystem(id) },
-                    onDisconnect = { withTimeout(4500) { if (calls[id] === call) {
+                coreAdmission.add(attributes, CoreCallCallbacks(
+                    answer = { if (calls[id] === call) answerFromSystem(id) },
+                    disconnect = { cause -> withTimeout(4500) { if (calls[id] === call) {
                         if (call.ending || call.incoming?.intent != null) terminal(id, call.state["endReason"] as? String ?: call.incoming?.intent?.payload?.reason ?: "failed")
+                        else if (!call.disconnect.started && cause.code == DisconnectCause.REMOTE) {
+                            call.nonActionEnd = true
+                            terminal(id, "remoteEnded")
+                        } else if (!call.disconnect.started && cause.code == DisconnectCause.ERROR) {
+                            call.nonActionEnd = true
+                            call.failure = EndedFailure.FRAMEWORK_RESET
+                            terminal(id, "failed")
+                        }
                         else native(id, NativePerformedAction.End, NativeActionOrigin.SYSTEM)
                     } } },
-                    onSetActive = { withTimeout(4500) { check(call.permitted.await());
+                    activate = { withTimeout(4500) { check(call.permitted.await());
                         // Initial activation remains valid when this call does not offer hold/resume.
                         if (calls[id] === call && call.capabilities.supportsHold) hold(id, false, NativeActionOrigin.SYSTEM) } },
-                    onSetInactive = { withTimeout(4500) { if (calls[id] === call) hold(id, true, NativeActionOrigin.SYSTEM) } }) {
+                    deactivate = { withTimeout(4500) { if (calls[id] === call) hold(id, true, NativeActionOrigin.SYSTEM) } })) {
                     if (calls[id] !== call || !identities.isCurrent(call.reservation) || call.terminal) {
                         launch(start = CoroutineStart.UNDISPATCHED) {
                             withContext(NonCancellable) {
-                                checked(disconnect(DisconnectCause(DisconnectCause.LOCAL)))
-                                signal(call, NativeMediaStage.CORE_LATE_DISCONNECTED)
+                                if (disconnectCore(call, this@add, DisconnectCause(DisconnectCause.LOCAL)) == CoreDisconnectOutcome.REMOVED)
+                                    signal(call, NativeMediaStage.CORE_LATE_DISCONNECTED)
                             }
                         }
-                        return@addCall
+                        return@add
                     }
                     call.admitted = true
                     call.incoming?.let(endedIntake::admitted)
@@ -442,14 +456,19 @@ class ConversationEngine(val context: Context) {
                         try { coroutineScope {
                     launch { controls.availableEndpoints.collect { call.endpoints = it; updateRoutes(id, null) } }
                     launch { controls.currentCallEndpoint.collect { updateRoutes(id, it) } }
-                    launch { controls.isMuted.collect { muted ->
-                        if (calls[id] === call) {
-                            signal(call, NativeMediaStage.CORE_MUTE_OBSERVED, mapOf("muted" to if (muted) 1L else 0L))
-                            if (call.state["isMuted"] != muted) mute(id, muted, NativeActionOrigin.SYSTEM)
+                    launch { controls.isMuted.onEach { muted ->
+                        signal(call, NativeMediaStage.CORE_MUTE_OBSERVED, mapOf("muted" to if (muted) 1L else 0L))
+                    }.coreMuteChanges().collect { muted ->
+                        if (live(call) && call.state["isMuted"] != muted) {
+                            try { mute(id, muted, NativeActionOrigin.SYSTEM) }
+                            catch (error: Exception) {
+                                if (error !is CancellationException && live(call)) call.failure = EndedFailure.MEDIA
+                                throw error
+                            }
                         }
                     } }
                         } } catch (error: Exception) {
-                            if (error !is CancellationException && calls[id] === call) terminateLater(id, "failed")
+                            if (error !is CancellationException && live(call)) terminateLater(id, "failed", call.failure ?: EndedFailure.FRAMEWORK_RESET)
                         }
                     }
                     // Install ownership/cleanup before waking incoming or retained end work.
@@ -458,8 +477,14 @@ class ConversationEngine(val context: Context) {
             } catch (e: Exception) { call.ready.completeExceptionally(e) }
             finally {
                 call.collectors?.cancel()
-                if (calls[id] === call) terminal(id, call.state["endReason"] as? String ?: "failed",
-                    call.nonActionEnd || !call.receipts.containsKey(NativePerformedAction.End))
+                // Core 1.0.1 closes this lifetime even when disconnect returns an error.
+                // The independently owned retry must settle before publishing the end.
+                withContext(NonCancellable) { call.disconnect.awaitCompletion() }
+                if (calls[id] === call) {
+                    if (call.admitted && call.state["endReason"] == null) call.failure = call.failure ?: EndedFailure.FRAMEWORK_RESET
+                    terminal(id, call.state["endReason"] as? String ?: "failed",
+                        call.nonActionEnd || !call.receipts.containsKey(NativePerformedAction.End))
+                }
             }
         }
         try { withTimeout(6000) { call.ready.await() } }
@@ -652,14 +677,16 @@ class ConversationEngine(val context: Context) {
     }
     internal suspend fun end(id: String, origin: NativeActionOrigin = NativeActionOrigin.APP) {
         val current = call(id)
+        if (current.ending || current.nonActionEnd) return
         // Own a local end before cancelling placement can resume its failure cleanup.
         current.localEndPending = true
         current.providedMediaJob?.cancel()
         if (current.placement == Placement.PENDING) { current.placement = Placement.FAILED; actions.cancel(id) }
         native(id, NativePerformedAction.End, origin) {
-            check(calls[id] === current && identities.isCurrent(current.reservation) && !current.terminal && current.incoming?.intent == null) { "unknown_conversation" }
+            check(calls[id] === current && identities.isCurrent(current.reservation) && !current.terminal &&
+                !current.ending && !current.nonActionEnd && current.incoming?.intent == null) { "unknown_conversation" }
             current.state["endReason"] = "local"
-            if (current.admitted) checked(current.ready.await().disconnect(DisconnectCause(DisconnectCause.LOCAL)))
+            if (current.admitted) disconnectCore(current, current.ready.await(), DisconnectCause(DisconnectCause.LOCAL))
         }
     }
     internal suspend fun hold(id: String, held: Boolean, origin: NativeActionOrigin = NativeActionOrigin.APP) {
@@ -711,7 +738,18 @@ class ConversationEngine(val context: Context) {
     private suspend fun finish(id: String, reason: String, failure: EndedFailure? = null) {
         require(reason in setOf("local", "remoteEnded", "failed", "unanswered", "answeredElsewhere", "declinedElsewhere")) { "invalid_arguments" }
         val current = call(id)
-        if (current.ending || current.terminal) return
+        if (current.terminal) return
+        if (current.disconnect.started) {
+            // Server intake keeps its reason/event ownership when joining an already
+            // requested disconnect. A later plain app report cannot replace that request.
+            current.incoming?.intent?.let { intent ->
+                current.terminalIntent = intent
+                current.state["endReason"] = intent.payload.reason
+                current.failure = EndedFailure.SERVER.takeIf { intent.payload.reason == "failed" }
+            }
+            return
+        }
+        if (current.ending) return
         current.nonActionEnd = true
         current.ending = true
         if (reason == "failed") current.failure = current.failure ?: failure
@@ -732,9 +770,12 @@ class ConversationEngine(val context: Context) {
                 else -> DisconnectCause.REMOTE
             }, reason)
             current.state["endReason"] = endedReason
-            checked(controls.disconnect(cause))
-            if (calls[id] === current) terminal(id, endedReason)
+            disconnectCore(current, controls, cause)
+            if (calls[id] === current) terminal(id, current.state["endReason"] as? String ?: endedReason)
         } catch (error: Exception) { current.ending = false; throw error }
+    }
+    private suspend fun disconnectCore(current: Call, controls: CallControlScope, cause: DisconnectCause): CoreDisconnectOutcome {
+        return current.disconnect.remove { controls.disconnect(cause) }
     }
     private fun terminal(id: String, reason: String, publishNow: Boolean = true) {
         val current = calls[id] ?: return
