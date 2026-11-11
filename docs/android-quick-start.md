@@ -177,6 +177,109 @@ Observe `ANSWER_REQUESTED`, `HANDLER_STARTED`, `HANDLER_RESPONDED`,
 before the answer can emit `ROOM_CONNECTED` earlier. Signals contain monotonic
 timings, counts and reason codes, never names, phone numbers or media grants.
 
+## Your own ringing screen
+
+Configure notification content from `Application.onCreate`. The library keeps the
+CallStyle notification, foreground service, and native Answer/Decline controls.
+The customizer receives the public conversation snapshot entry (including members,
+status and `payload.metadata`), with media credentials removed. It runs on main:
+use already-loaded content and do no I/O. Null fields retain the library defaults;
+`ConversationPresentation.configure(null)` restores them for subsequent notifications.
+
+```kotlin
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Intent
+import android.net.Uri
+import expo.modules.callkittelecom.conversations.*
+
+// In Application.onCreate, after super.onCreate():
+getSystemService(NotificationManager::class.java).createNotificationChannel(
+    NotificationChannel("app-ringing", "Incoming calls", NotificationManager.IMPORTANCE_HIGH)
+        .apply { enableVibration(true) },
+)
+ConversationPresentation.configure { conversation, phase ->
+    val id = conversation["id"] as String
+    val member = (conversation["members"] as? List<*>)?.firstOrNull() as? Map<*, *>
+    val screen = PendingIntent.getActivity(this, 0,
+        Intent(this, RingingActivity::class.java)
+            .setData(Uri.Builder().scheme("app-call").authority(packageName).appendPath(id).build())
+            .putExtra("conversationId", id),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+    CallNotificationContent(
+        title = member?.get("displayName") as? String,
+        fullScreenIntent = if (phase == CallPhase.RINGING) screen else null,
+        contentIntent = screen,
+        channelId = if (phase == CallPhase.RINGING) "app-ringing" else null,
+    )
+}
+```
+
+Register the app's activity in its manifest with `android:exported="false"`.
+Its controls use the same native action handler as the notification, with origin
+`app`; server agreement and refusal semantics still apply. Calls are dispatched
+on main and may be made from any thread. Observe conversation snapshots to update
+or close the activity after an answer, refusal or remote end.
+
+```kotlin
+import android.app.Activity
+import android.os.Bundle
+import android.os.Build
+import android.view.WindowManager
+import android.widget.Button
+import android.widget.LinearLayout
+import expo.modules.callkittelecom.conversations.ConversationControls
+
+class RingingActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val id = intent.getStringExtra("conversationId") ?: run { finish(); return }
+        if (Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
+        }
+        val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun button(label: String, action: () -> Unit) {
+            controls.addView(Button(this).apply { text = label; setOnClickListener { action() } })
+        }
+        button("Answer") { ConversationControls.answer(this, id) }
+        button("Decline") { ConversationControls.decline(this, id) }
+        button("End") { ConversationControls.end(this, id) }
+        setContentView(controls)
+    }
+}
+```
+
+Supply an already-created channel to control sound and vibration; the library
+preserves its settings. Ringing notifications set `FLAG_INSISTENT` for repeating
+alerts on either the app's channel or the default channel. Android stops repetition
+when the notification is cancelled or its notification window is opened; answering
+replaces it with an ongoing notification without that flag or a full-screen intent.
+Full-screen launch remains subject to Android's permissions and system policy.
+`avatar` accepts an Android `Icon`; `extraActions` accepts `NotificationCompat.Action`
+values for app actions such as Assistant. [CallStyle](https://developer.android.com/reference/androidx/core/app/NotificationCompat.CallStyle)
+allows one custom action while ringing and up to two while ongoing, alongside its
+required controls. Extra actions beyond the platform's visible limit may be omitted.
+
+One stable foreground card shows the primary call: the active call, otherwise the
+most recently held call, otherwise the ringing call. Other held calls have no
+separate cards. The primary card keeps its End control and summarises all held calls
+with text such as "1 call on hold" or "2 calls on hold". Return a non-null
+`heldSummary` in `CallNotificationContent` to override that wording; it is shown
+only when calls are held. The primary card's customizer receives the primary
+call's public snapshot entry. Unhold calls from your app or the system UI.
+
+A waiting incoming call has its own incoming CallStyle card alongside the primary
+card. Answering removes that waiting card and presents the answered call on the
+same foreground notification ID. Ending the primary call promotes a remaining
+held call on that ID. The library never transfers foreground ownership between
+notification IDs.
+
 ## Ends your app learns about
 
 When your native server integration learns that an incoming call ended, report

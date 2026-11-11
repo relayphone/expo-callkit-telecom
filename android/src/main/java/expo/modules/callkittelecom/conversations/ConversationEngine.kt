@@ -162,14 +162,16 @@ class ConversationEngine(val context: Context) {
     private val audio = context.getSystemService(AudioManager::class.java)
 
     fun audioRoutes() = routes
+    private fun publicState(id: String, call: Call): Map<String, Any?> = buildMap {
+        putAll(call.state.filterKeys { it != "endReason" }.filterValues { it != null })
+        actions.pending(id)?.let { put("pending", it) }
+    }
     private fun publish() {
-        val states = calls.filterValues { it.visible }.map { (id, call) ->
-            buildMap<String, Any?> {
-                putAll(call.state.filterKeys { it != "endReason" }.filterValues { it != null })
-                actions.pending(id)?.let { put("pending", it) }
-            }
-        }.sortedBy { it["id"] as String }
-        if (snapshot["conversations"] != states) snapshot = mapOf("revision" to ++revision, "conversations" to states)
+        val states = calls.filterValues { it.visible }.map { (id, call) -> publicState(id, call) }.sortedBy { it["id"] as String }
+        if (snapshot["conversations"] != states) {
+            snapshot = mapOf("revision" to ++revision, "conversations" to states)
+            ConversationService.refresh(context, states)
+        }
         if (publishing) return
         publishing = true
         try {
@@ -263,7 +265,7 @@ class ConversationEngine(val context: Context) {
                 current.permitted.complete(filter == null)
                 // A DND-suppressed notification still records repeat-caller history when cancelled.
                 // App block-list/other rejections are never presented.
-                if (appFilter == null) ConversationService.show(context, id, current.state)
+                if (appFilter == null) ConversationService.show(context, id, publicState(id, current))
                 if (filter != null && current.state["status"] == "ringing") {
                     closeFiltered(id, filter.reason)
                     filtered(filter)
@@ -426,7 +428,7 @@ class ConversationEngine(val context: Context) {
                     signal(call, NativeMediaStage.CORE_ADMITTED)
                     signal(call, NativeMediaStage.REPORTED)
                     publish()
-                    if (!incoming) ConversationService.show(context, id, call.state)
+                    if (!incoming) ConversationService.show(context, id, publicState(id, call))
                     call.timeout = jobs.launch {
                         if (incoming) incomingRingDeadline.await(call.expiresAtMillis, incomingTimeoutMillis)
                         else delay((metadata?.getInt("ExpoCallKitTelecomOutgoingCallTimeout", 60) ?: 60).coerceAtLeast(1).toLong()*1000)
@@ -639,7 +641,7 @@ class ConversationEngine(val context: Context) {
             delay(answerTimeoutMillis)
             if (calls[id] === current && current.state["connectedAt"] == null) terminateLater(id, "failed", EndedFailure.CONNECT_TIMED_OUT)
         }
-        ConversationService.show(context, id, current.state)
+        ConversationService.show(context, id, publicState(id, current))
         signal(current, NativeMediaStage.AUDIO_WAIT_STARTED)
         if (current.media == null && answerMedia != null) {
             (current.state["payload"] as? Map<String, Any?>)?.let { prepareMedia(id, it, prewarm = false) }
