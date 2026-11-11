@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.2 (2026-11-11)
+
+### Fixes
+
+* Load the config plugin on Expo 57 and 58 through `expo/config-plugins`.
+* Add `ios: false` for Android-only apps that keep their own iOS calling.
+  It skips the SDK plugin, iOS mods and retired Apple integration check.
+
+iOS on Expo 58 needs the next iOS SDK release. Use `ios: false` or Expo 57
+until that release is available. The default still configures both platforms.
+
 ## 2.0.0-alpha.1 (2026-11-11)
 
 The first v2 prerelease shares the Conversations API, with Android on Core-Telecom.

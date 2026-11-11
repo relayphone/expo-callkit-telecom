@@ -3,7 +3,7 @@ import {
   type ConfigPlugin,
   withAndroidManifest,
   withGradleProperties,
-} from "expo/config-plugins.js";
+} from "expo/config-plugins";
 
 /** Android's native provider selection is independent of the public audio adapter. */
 export type AndroidNativeMedia = "livekit" | "none";

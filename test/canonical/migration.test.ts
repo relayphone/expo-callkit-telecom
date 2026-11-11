@@ -94,3 +94,41 @@ test("fresh and canonical Apple projects accept repeat prebuild", async (t) => {
     await prebuild(root);
   }
 });
+
+test("Android-only mode preserves app iOS mods and skips the retired integration check", async (t) => {
+  const root = project(t, {
+    "Podfile.properties.json": "not valid JSON",
+    Podfile: "# expo-callkit-telecom: ios-voip-sdk source\n",
+  });
+  let runs = 0;
+  const owned: NonNullable<NonNullable<ExportedConfig["mods"]>["ios"]> = {
+    dangerous: async (mod) => {
+      runs++;
+      return mod;
+    },
+  };
+  const config = plugin(
+    {
+      name: "AndroidOnly",
+      slug: "android-only",
+      mods: { ios: owned },
+    },
+    { ios: false }
+  );
+  assert.equal(config.mods?.ios, owned);
+  assert.deepEqual(Object.keys(owned), ["dangerous"]);
+  await owned.dangerous!({
+    ...config,
+    modResults: {},
+    modRawConfig: config,
+    modRequest: {
+      projectRoot: root,
+      platformProjectRoot: join(root, "ios"),
+      platform: "ios",
+      modName: "dangerous",
+      introspect: false,
+    },
+  });
+  assert.equal(runs, 1);
+  assert.ok(config.mods?.android?.manifest);
+});

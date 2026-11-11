@@ -3,13 +3,35 @@
 Install the v2 prerelease from the GitHub release asset in your `package.json`:
 
 ```json
-"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.1/expo-callkit-telecom-2.0.0-alpha.1.tgz"
+"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.2/expo-callkit-telecom-2.0.0-alpha.2.tgz"
 ```
 
 See [release verification](./releases.md). Prerelease versions can change APIs.
 Android uses Core-Telecom and native FCM intake. For iOS, see
 [iOS](./migrating-v1-to-v2.md#ios). For API replacements and breaking changes,
 start with [Migrating from v1](./migrating-v1-to-v2.md).
+
+## Android only
+
+Apps that keep their own iOS calling can disable v2's iOS config plugin:
+
+```json
+{
+  "expo": {
+    "plugins": [
+      ["expo-callkit-telecom", { "ios": false, "androidNativeMedia": "livekit" }]
+    ]
+  }
+}
+```
+
+`ios` defaults to `true`. With `false`, v2 never loads the iOS SDK plugin,
+adds no iOS mods and skips the retired Apple integration check. Android options
+work as usual. This lets apps generate their iOS project at prebuild while
+keeping their existing iOS calling setup.
+
+The pinned iOS SDK still needs its next release to load on Expo 58. Until then,
+use `ios: false` on Expo 58 or keep Expo 57 when using the iOS integration.
 
 ## Run the example's signaling journey
 

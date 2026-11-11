@@ -1,8 +1,4 @@
-import {
-  IOSConfig,
-  type ExportedConfig,
-  type Mod,
-} from "expo/config-plugins.js";
+import type { ExportedConfig, Mod } from "expo/config-plugins";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -15,6 +11,9 @@ import type { ComposedPluginProps } from "../../plugin/src/withConversations";
 const require = createRequire(import.meta.url);
 const sdk: typeof import("@relayphone/ios-voip-sdk/plugin").default =
   require("@relayphone/ios-voip-sdk/app.plugin").default;
+const {
+  IOSConfig,
+}: typeof import("expo/config-plugins") = require("expo/config-plugins");
 
 const fork: typeof import("../../plugin/src/withConversations").default =
   require("../../app.plugin.js").default;

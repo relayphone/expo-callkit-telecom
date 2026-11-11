@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.sdk-evaluation.json",
+  "compilerOptions": { "module": "esnext", "moduleResolution": "bundler" },
+  "include": ["tools/plugin-loading.ts", "tools/plugin-loading.test.ts"]
+}

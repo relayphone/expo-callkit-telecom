@@ -3,7 +3,7 @@ import {
   type ConfigPlugin,
   withAndroidManifest,
   withDangerousMod,
-} from "expo/config-plugins.js";
+} from "expo/config-plugins";
 import { mkdirSync, copyFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 
