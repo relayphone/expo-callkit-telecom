@@ -196,18 +196,38 @@ class ConversationCorrectnessTest {
         assertEquals("remoteEnded", ended?.get("reason")); assertNull(ended?.get("failure"))
     }
 
-    @Test fun localEndAlreadyDisconnectingKeepsItsReasonWhenRemoteReportOverlaps() = fixture {
+    @Test fun remoteReportJoiningLocalDisconnectKeepsItsReasonWithoutPersonAction() = reportJoiningLocalDisconnect("remoteEnded")
+    @Test fun failedReportJoiningLocalDisconnectKeepsItsFailureWithoutPersonAction() = reportJoiningLocalDisconnect("failed")
+
+    private fun reportJoiningLocalDisconnect(reason: String) = fixture {
         ready(); core.disconnectGate = CompletableDeferred()
         coroutineScope {
-            val local = async { engine.end(id) }
+            val local = async { runCatching { engine.end(id) } }
             core.disconnectEntered.await()
-            engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+            engine.report(id, mapOf("type" to "ended", "reason" to reason))
             assertEquals(1, core.disconnects)
             core.disconnectGate!!.complete(Unit); local.await()
         }
         ended()
-        assertEquals("local", ended?.get("reason")); assertNull(ended?.get("failure"))
-        assertEquals(1, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
+        assertEquals(reason, ended?.get("reason"))
+        if (reason == "failed") assertEquals(mapOf("kind" to "server"), ended?.get("failure"))
+        else assertNull(ended?.get("failure"))
+        assertEquals(0, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
+    }
+
+    @Test fun cancellingAReportCannotLetALaterReportReplaceItsReason() = fixture {
+        ready(); core.disconnectGate = CompletableDeferred()
+        coroutineScope {
+            val remote = async { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
+            core.disconnectEntered.await()
+            remote.cancelAndJoin()
+            engine.report(id, mapOf("type" to "ended", "reason" to "failed"))
+            assertEquals(1, core.disconnects)
+            core.disconnectGate!!.complete(Unit)
+        }
+        ended()
+        assertEquals("remoteEnded", ended?.get("reason")); assertNull(ended?.get("failure"))
+        assertEquals(0, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
     }
 
     @Test fun aLateLocalHandlerCannotReplaceAnAlreadyDisconnectingRemoteEnd() = fixture {

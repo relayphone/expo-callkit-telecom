@@ -740,13 +740,16 @@ class ConversationEngine(val context: Context) {
         val current = call(id)
         if (current.terminal) return
         if (current.disconnect.started) {
-            // Server intake keeps its reason/event ownership when joining an already
-            // requested disconnect. A later plain app report cannot replace that request.
-            current.incoming?.intent?.let { intent ->
-                current.terminalIntent = intent
-                current.state["endReason"] = intent.payload.reason
-                current.failure = EndedFailure.SERVER.takeIf { intent.payload.reason == "failed" }
-            }
+            val intent = current.incoming?.intent
+            if (current.nonActionEnd && intent == null) return
+            // A reported end suppresses the pending local receipt while sharing its
+            // Core request. Retained server intake also keeps its reason/event ownership.
+            current.nonActionEnd = true
+            current.ending = true
+            current.terminalIntent = intent
+            current.state["endReason"] = intent?.payload?.reason ?: reason
+            if (intent != null) current.failure = EndedFailure.SERVER.takeIf { intent.payload.reason == "failed" }
+            else if (reason == "failed") current.failure = current.failure ?: failure
             return
         }
         if (current.ending) return
