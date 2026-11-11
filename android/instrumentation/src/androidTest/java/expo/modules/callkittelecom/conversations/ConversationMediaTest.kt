@@ -93,7 +93,13 @@ class ConversationMediaTest {
     }
 
     private fun fixture(body: suspend Fixture.() -> Unit) = runBlocking {
-        withContext(Dispatchers.Main) { val fixture = Fixture(); try { fixture.body() } finally { fixture.close() } }
+        withContext(Dispatchers.Main) {
+            // A preceding suite's disconnected Telecom call can outlive its engine snapshot.
+            // Establish isolation before installing this fixture's global media factory.
+            withTimeout(5000) { while (TelecomEvidence.calls().isNotEmpty()) delay(10) }
+            val fixture = Fixture()
+            try { fixture.body() } finally { fixture.close() }
+        }
     }
 
     private enum class AnswerCredentials { PUSH, HANDLER, PROVIDED }
