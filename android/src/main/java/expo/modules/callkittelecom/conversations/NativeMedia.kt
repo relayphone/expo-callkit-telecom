@@ -28,15 +28,15 @@ object NativeMediaRegistry {
 /** Native work has one lifetime. Cleanup can run even after the caller's scope is cancelled. */
 internal class NativeMediaController(private val context: Context, private val payload: Map<String, Any?>,
     private val policy: JSONObject, private val scope: CoroutineScope,
-    private val failed: () -> Unit, private val connected: () -> Unit) {
+    private val failed: () -> Unit, private val connected: () -> Unit) : NativeMediaControl {
     private val dispatcher = Dispatchers.IO.limitedParallelism(1)
     private val lifetime = SupervisorJob(scope.coroutineContext[Job])
     private val operations = CoroutineScope(lifetime + dispatcher)
     private val serial = Mutex()
     private var session: NativeMediaSession? = null
     @Volatile private var preparation: Deferred<Unit>? = null
-    internal val isPrewarmed: Boolean get() = preparation?.let { it.isCompleted && !it.isCancelled } == true && session?.isPrepared != false
-    internal val hasSession: Boolean get() = preparation != null || answerJob != null
+    override val isPrewarmed: Boolean get() = preparation?.let { it.isCompleted && !it.isCancelled } == true && session?.isPrepared != false
+    override val hasSession: Boolean get() = preparation != null || answerJob != null
     @Volatile private var answerJob: Job? = null
     private var unmuteJob: Job? = null
     private var resumeJob: Job? = null
@@ -61,7 +61,7 @@ internal class NativeMediaController(private val context: Context, private val p
                 ?: BuiltInMedia.session(context, adapter, payload["serverCallId"] as? String ?: error("Invalid media invitation"))
         }
         session?.setFailureListener {
-            operations.launch(Dispatchers.Main) { if (!closed) failed() }
+            operations.launch(Dispatchers.Main.immediate) { if (!closed) failed() }
         }
         currentCoroutineContext().ensureActive(); check(!closed)
         val pushed = payload["media"] as? Map<String, Any?>
@@ -84,14 +84,14 @@ internal class NativeMediaController(private val context: Context, private val p
         currentCoroutineContext().ensureActive(); check(!closed)
         session?.prewarm(resolved) ?: error("Native media adapter unavailable")
     }
-    fun prewarm() {
+    override fun prewarm() {
         check(!closed)
         if (policy.optBoolean("prewarm", true)) preparation = operations.async {
             (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.PREWARM_STARTED) }
             withTimeout(8000) { prepare() }
         }
     }
-    fun answered(audioReady: suspend () -> Unit) {
+    override fun answered(audioReady: suspend () -> Unit) {
         if (answerJob != null || closed) return
         answerJob = operations.launch {
             var phase = 1L
@@ -134,23 +134,23 @@ internal class NativeMediaController(private val context: Context, private val p
             }
         }
     }
-    suspend fun mute() {
+    override suspend fun mute() {
         check(!closed)
         setDesiredMuted(true)
         if (!activated) return
         val work = operations.async { withTimeout(1000) { serial.withLock { check(!closed); session?.setMuted(true) } } }
         try { work.await() } finally { work.cancel() }
     }
-    internal fun setDesiredMuted(muted: Boolean) { check(!closed); desiredMuted = muted; unmuteJob?.cancel() }
-    fun clearMute() { setDesiredMuted(false) }
-    suspend fun pause() {
+    override fun setDesiredMuted(muted: Boolean) { check(!closed); desiredMuted = muted; unmuteJob?.cancel() }
+    override fun clearMute() { setDesiredMuted(false) }
+    override suspend fun pause() {
         check(!closed)
         held = true; answerJob?.cancel(); answerJob = null; unmuteJob?.cancel(); resumeJob?.cancel()
         if (!activated && !activating) return
         val work = operations.async { withTimeout(1000) { serial.withLock { check(!closed); session?.setHeld(true) } } }
         try { work.await() } finally { work.cancel() }
     }
-    fun resume(audioReady: suspend () -> Unit) {
+    override fun resume(audioReady: suspend () -> Unit) {
         check(!closed)
         held = false
         if (!activated) { answerJob = null; answered(audioReady); return }
@@ -162,7 +162,7 @@ internal class NativeMediaController(private val context: Context, private val p
             } } catch (_: Exception) { if (isActive && !closed && !held) withContext(Dispatchers.Main) { if (!closed) failed() } }
         }
     }
-    fun unmute(audioReady: suspend () -> Unit) {
+    override fun unmute(audioReady: suspend () -> Unit) {
         check(!closed)
         clearMute()
         if (!activated || held) return
@@ -173,7 +173,7 @@ internal class NativeMediaController(private val context: Context, private val p
             } } catch (_: Exception) { if (isActive && !closed && !held) withContext(Dispatchers.Main) { if (!closed) failed() } }
         }
     }
-    fun close(reason: String) {
+    override fun close(reason: String) {
         if (!closing.compareAndSet(false, true)) return
         closed = true
         lifetime.cancel()

@@ -504,7 +504,11 @@ class ConversationEngine(val context: Context) {
             call.media = call.media ?: NativeMediaOwner(nativeMedia, call.audio, initiallyMuted = call.state["isMuted"] == true) { answerMedia -> NativeMediaController(context,
                 if (answerMedia == null) payload else payload + ("media" to answerMedia),
                 policy, jobs, failed = {
-                if (calls[id] === call) terminateLater(id, "failed", EndedFailure.MEDIA)
+                if (calls[id] === call && live(call)) {
+                    if (call.reservation.direction == NativeCallDirection.INCOMING && call.state["status"] == "ringing") {
+                        if (call.media?.prewarmLost() == true) signal(call, NativeMediaStage.PREWARM_LOST)
+                    } else terminateLater(id, "failed", EndedFailure.MEDIA)
+                }
             }, connected = {
                 if (calls[id] === call) {
                     call.timeout?.cancel()

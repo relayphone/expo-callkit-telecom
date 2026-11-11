@@ -197,8 +197,12 @@ until answer. An answer handler's `Proceed.media`, when supplied, takes preceden
 Unknown, ended, disabled-provider or already-owned sessions are ignored with
 `MEDIA_IGNORED` and a reason code. Credentials stay out of snapshots and signals.
 `MEDIA_PROVIDED` records accepted provision. Calls may emit `RECONNECTING` and
-`RECONNECTED` while keeping their current status. A final room disconnection or
-30 seconds without recovery fails the call. Ending the call
+`RECONNECTED` while keeping their current status. If an incoming call is still
+ringing, losing its optional pre-join emits `PREWARM_LOST` and keeps it ringing.
+Answer creates a fresh session using the push credentials, `Proceed.media`, or
+credentials supplied through `ConversationMedia.provide`. For outgoing, answered
+and held calls, a final room disconnection or 30 seconds without recovery fails
+the call. Ending the call
 cancels recovery observation and its deadline.
 
 ## Configure a host for native answer and audio

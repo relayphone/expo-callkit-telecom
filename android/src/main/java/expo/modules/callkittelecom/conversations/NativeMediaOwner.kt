@@ -12,19 +12,43 @@ internal enum class AndroidNativeMedia {
     }
 }
 
+internal interface NativeMediaControl {
+    val isPrewarmed: Boolean
+    val hasSession: Boolean
+    fun prewarm()
+    fun answered(audioReady: suspend () -> Unit)
+    suspend fun pause()
+    fun resume(audioReady: suspend () -> Unit)
+    suspend fun mute()
+    fun clearMute()
+    fun unmute(audioReady: suspend () -> Unit)
+    fun setDesiredMuted(muted: Boolean)
+    fun close(reason: String)
+}
+
 /** Main-thread call ownership. Only an explicitly selected native provider creates a controller. */
 internal class NativeMediaOwner(
     private val selection: AndroidNativeMedia,
     private val audio: NativeAudioLifecycle,
     initiallyMuted: Boolean = false,
-    private val create: (Map<String, Any?>?) -> NativeMediaController,
+    private val create: (Map<String, Any?>?) -> NativeMediaControl,
 ) {
-    private var controller: NativeMediaController? = null
+    private var controller: NativeMediaControl? = null
     private var closed = false
     private var transition = 0L
     private var desiredMuted = initiallyMuted
     internal val isPrewarmed: Boolean get() = controller?.isPrewarmed == true
     internal val hasSession: Boolean get() = controller?.hasSession == true
+
+    /** A ringing call can discard its optional pre-join without retiring audio authority. */
+    fun prewarmLost(): Boolean {
+        if (closed) return false
+        val previous = controller ?: return false
+        controller = null
+        transition++
+        previous.close("prewarmLost")
+        return true
+    }
 
     fun prewarm() {
         check(!closed)
