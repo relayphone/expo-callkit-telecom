@@ -177,6 +177,23 @@ Observe `ANSWER_REQUESTED`, `HANDLER_STARTED`, `HANDLER_RESPONDED`,
 before the answer can emit `ROOM_CONNECTED` earlier. Signals contain monotonic
 timings, counts and reason codes, never names, phone numbers or media grants.
 
+## Ends your app learns about
+
+When your native server integration learns that an incoming call ended, report
+the same `serverCallId` used by its invitation:
+
+```kotlin
+ConversationEnds.report(context, serverCallId, "answeredElsewhere")
+```
+
+Call this from any thread. Reasons are `remoteEnded`, `answeredElsewhere`,
+`declinedElsewhere`, `unanswered` and `failed`; other values become `failed`.
+Reports use the same native path as a `callEnded` push, including termination
+during pending Telecom admission. Repeated reports and earlier or later pushes
+share the call's server identity, remove its ringing surfaces, and publish its
+terminal reason without ending it twice. Reports for unknown calls follow the
+same behavior as unknown end pushes.
+
 ## Media for calls your app starts
 
 With `androidNativeMedia: "livekit"`, pass credentials obtained by your native

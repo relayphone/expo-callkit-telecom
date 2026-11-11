@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+* **android:** add `ConversationEnds.report` for call ends learned by the app.
+  Reports share push-end ownership, reason handling and pending-admission cleanup.
+
 * **android:** accept native LiveKit credentials through `ConversationMedia.provide`
   for app-started calls and unprepared ringing calls. Preserve Core-owned audio,
   signal room recovery without changing conversation status, and bound reconnection to 30 seconds.
