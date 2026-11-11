@@ -50,6 +50,35 @@ media credentials. Running it against the unmodified signaling example therefore
 does not test native pre-warm or audio. Cloud FCM delivery requires your Firebase
 setup and is not part of the emulator latency measurements.
 
+## Calls on phones that suspend apps
+
+Battery restrictions can delay incoming calls while your app is in the background.
+Read the current Android policy from native app code:
+
+```kotlin
+val restriction = ConversationPlatform.backgroundRestriction(context)
+```
+
+`UNRESTRICTED` means the app ignores battery optimizations and has no explicit
+background restriction; `OPTIMIZED` means normal optimizations apply;
+`RESTRICTED` means Android explicitly restricts background work. On Android 26–27,
+only the battery optimization status is available. This reports Android's
+[battery exemption](https://developer.android.com/reference/android/os/PowerManager#isIgnoringBatteryOptimizations(java.lang.String))
+and [background restriction](https://developer.android.com/reference/android/app/ActivityManager#isBackgroundRestricted())
+status; it cannot detect every manufacturer's suspension policy or guarantee push delivery.
+
+Explain how battery restrictions affect calls, then let the person choose whether
+to open settings from your app:
+
+```kotlin
+context.startActivity(ConversationPlatform.unrestrictedSettingsIntent(context))
+```
+
+The intent opens this app's system details screen. From there, open its battery
+controls to allow unrestricted use; wording varies by phone. Your app owns the
+explanation and the decision to launch settings. Check the status again when the
+person returns. v2 only reads status and creates the intent.
+
 ## Your own FCM service
 
 Set `androidFcmService: "app"` in the `expo-callkit-telecom` plugin options and

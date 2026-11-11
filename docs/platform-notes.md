@@ -33,6 +33,14 @@ authority. `audioActivated` follows successful native audio authority, or Core
 activation with app-managed media. Hold and disconnect deactivate audio; native
 authority's 1500 ms timeout emits `audioActivationMissing`.
 
+### Background battery restrictions
+
+`ConversationPlatform.backgroundRestriction(context)` reports the app's current
+`UNRESTRICTED`, `OPTIMIZED` or `RESTRICTED` policy. The app can explain the effect on
+calls and launch `ConversationPlatform.unrestrictedSettingsIntent(context)` to
+open its system details and battery controls. See
+[Calls on phones that suspend apps](./android-quick-start.md#calls-on-phones-that-suspend-apps).
+
 ### Incoming call UI
 
 The module posts a CallStyle notification for the Core-Telecom call, with answer
