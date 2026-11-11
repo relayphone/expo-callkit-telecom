@@ -33,6 +33,18 @@ authority. `audioActivated` follows successful native audio authority, or Core
 activation with app-managed media. Hold and disconnect deactivate audio; native
 authority's 1500 ms timeout emits `audioActivationMissing`.
 
+### Platform call removal
+
+Logical end releases media and audio immediately. Platform removal retries for
+up to 60 seconds while the foreground service and the same ongoing “Ending
+call…” notification remain; its End action retries immediately. If Android
+keeps refusing removal, v2 emits native `PLATFORM_REMOVAL_FAILED` through
+`NativeMediaSignals`, with the conversation ID, `attemptCount` and
+`lastCoreErrorCode`, then cancels the Core scope and removes the service and
+notification. The system may still show the call: Core-Telecom 1.0.1 has no
+other removal path. The ended reason and failure stay unchanged. A typed flag
+on the ended failure follows with the next iOS SDK release.
+
 ### Background battery restrictions
 
 `ConversationPlatform.backgroundRestriction(context)` reports the app's current

@@ -2,6 +2,9 @@ package expo.modules.callkittelecom.conversations
 
 import android.Manifest
 import android.media.AudioManager
+import android.telecom.DisconnectCause
+import androidx.core.telecom.CallControlResult
+import androidx.core.telecom.CallControlScope
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
@@ -387,6 +390,25 @@ class ConversationJourneyTest {
             val prefix = "notification-${System.nanoTime()}-"
             val first = prefix + "Aa"; val second = prefix + "BB"
             assertEquals(first.hashCode(), second.hashCode())
+            val previousAdmission = engine.coreAdmission
+            val disconnectEntered = CompletableDeferred<Unit>()
+            val releaseDisconnect = CompletableDeferred<Unit>()
+            var secondDisconnects = 0
+            engine.coreAdmission = CoreCallAdmission { attributes, callbacks, admitted ->
+                previousAdmission.add(attributes, callbacks) {
+                    val real = this
+                    admitted(object : CallControlScope by real {
+                        override suspend fun disconnect(cause: DisconnectCause): CallControlResult {
+                            if (attributes.displayName.toString() == second) {
+                                secondDisconnects++
+                                disconnectEntered.complete(Unit)
+                                releaseDisconnect.await()
+                            }
+                            return real.disconnect(cause)
+                        }
+                    })
+                }
+            }
             engine.nativeMedia = AndroidNativeMedia.NONE; engine.actions.resetBridge()
             val performed = mutableListOf<Map<*, *>>()
             engine.emit = { name, body -> if (name == "conversationEvent" && body["type"] == "actionPerformed") performed += body["payload"] as Map<*, *> }
@@ -413,14 +435,24 @@ class ConversationJourneyTest {
                 withTimeout(5000) { while (present(first)) delay(10) }
                 assertTrue(present(second))
                 assertTrue(performed.any { it["conversationId"] == first && it["origin"] == "system" && it["action"] == mapOf("kind" to "end") })
-                val ending = async(start = CoroutineStart.UNDISPATCHED) { runCatching { engine.end(second) } }
-                assertFalse("Must exercise an outstanding native disconnect", ending.isCompleted)
-                runCatching { engine.report(second, mapOf("type" to "ended", "reason" to "remoteEnded")) }
-                withTimeout(5000) { ending.await(); while (present(second) || TelecomEvidence.calls().isNotEmpty()) delay(10) }
-                assertFalse(performed.any { it["conversationId"] == second && it["action"] == mapOf("kind" to "end") })
+                assertFalse(performed.any { it["conversationId"] == second })
+                engine.end(second)
+                withTimeout(5000) { disconnectEntered.await() }
+                assertFalse("Logical end must complete while native removal is pending", present(second))
+                assertTrue("The gated native call must still be tracked", TelecomEvidence.calls().isNotEmpty())
+                engine.report(second, mapOf("type" to "ended", "reason" to "remoteEnded"))
+                assertEquals(1, secondDisconnects)
+                assertEquals(1, performed.count { it["conversationId"] == second && it["origin"] == "app" &&
+                    it["action"] == mapOf("kind" to "end") })
+                releaseDisconnect.complete(Unit)
+                awaitTelecomRemoval()
             } finally {
+                releaseDisconnect.complete(Unit)
                 for (id in listOf(first, second)) runCatching { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
-                engine.emit = previous; engine.nativeMedia = selection; engine.actions.resetBridge()
+                try { awaitTelecomRemoval() } finally {
+                    engine.coreAdmission = previousAdmission
+                    engine.emit = previous; engine.nativeMedia = selection; engine.actions.resetBridge()
+                }
             }
         }
     }

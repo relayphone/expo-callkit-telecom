@@ -1,7 +1,7 @@
 # v2 releases
 
 v2 is installed from a GitHub release asset, not from this fork on npm. Prerelease
-versions such as `2.0.0-alpha.2` can change APIs.
+versions such as `2.0.0-alpha.3` can change APIs.
 
 ## Cut a release
 
@@ -14,8 +14,8 @@ Create and push an annotated tag on the merge commit:
 
 ```sh
 git fetch https://github.com/relayphone/expo-callkit-telecom.git v2
-git tag -a v2.0.0-alpha.2 FETCH_HEAD -m '2.0.0-alpha.2'
-git push https://github.com/relayphone/expo-callkit-telecom.git v2.0.0-alpha.2
+git tag -a v2.0.0-alpha.3 FETCH_HEAD -m '2.0.0-alpha.3'
+git push https://github.com/relayphone/expo-callkit-telecom.git v2.0.0-alpha.3
 ```
 
 The tag must match `v` plus the package version, and its commit must be contained
@@ -32,8 +32,8 @@ changelog, source commit, CI run and install URL. No local archive is published.
 Download all three assets from the same release:
 
 ```sh
-gh release download v2.0.0-alpha.2 -R relayphone/expo-callkit-telecom \
-  -p 'expo-callkit-telecom-2.0.0-alpha.2.tgz' -p SHA256SUMS -p attestation.sigstore.json
+gh release download v2.0.0-alpha.3 -R relayphone/expo-callkit-telecom \
+  -p 'expo-callkit-telecom-2.0.0-alpha.3.tgz' -p SHA256SUMS -p attestation.sigstore.json
 sha256sum -c SHA256SUMS
 ```
 
@@ -42,20 +42,20 @@ tag's source commit against the reviewed merge commit. Use that full commit SHA
 in place of `SOURCE_COMMIT` for each [attestation verification](https://cli.github.com/manual/gh_attestation_verify):
 
 ```sh
-gh attestation verify expo-callkit-telecom-2.0.0-alpha.2.tgz \
+gh attestation verify expo-callkit-telecom-2.0.0-alpha.3.tgz \
   --repo relayphone/expo-callkit-telecom \
   --signer-workflow relayphone/expo-callkit-telecom/.github/workflows/v2-release.yml \
-  --source-ref refs/tags/v2.0.0-alpha.2 --source-digest SOURCE_COMMIT \
+  --source-ref refs/tags/v2.0.0-alpha.3 --source-digest SOURCE_COMMIT \
   --deny-self-hosted-runners --bundle attestation.sigstore.json
 gh attestation verify SHA256SUMS \
   --repo relayphone/expo-callkit-telecom \
   --signer-workflow relayphone/expo-callkit-telecom/.github/workflows/v2-release.yml \
-  --source-ref refs/tags/v2.0.0-alpha.2 --source-digest SOURCE_COMMIT \
+  --source-ref refs/tags/v2.0.0-alpha.3 --source-digest SOURCE_COMMIT \
   --deny-self-hosted-runners --bundle attestation.sigstore.json
 ```
 
 After verification, install via the release URL in `package.json`:
 
 ```json
-"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.2/expo-callkit-telecom-2.0.0-alpha.2.tgz"
+"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.3/expo-callkit-telecom-2.0.0-alpha.3.tgz"
 ```

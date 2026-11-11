@@ -18,13 +18,14 @@ class CoreCallLifecycleTest {
         } finally { collection.cancelAndJoin() }
     }
 
-    @Test fun retriesOnceAfterDelayAndSharesOverlappingRequests() = runBlocking {
+    @Test fun retriesAfterFailureAndSharesOverlappingRequests() = runBlocking {
         val retry = CompletableDeferred<Unit>()
         val releaseRetry = CompletableDeferred<Unit>()
-        val disconnect = CoreCallDisconnect(this) { retry.complete(Unit); releaseRetry.await() }
+        val disconnect = CoreCallDisconnect(this)
         var requests = 0
         val request: suspend () -> CallControlResult = {
-            if (++requests == 1) CallControlResult.Error(CallException.ERROR_UNKNOWN) else CallControlResult.Success()
+            if (++requests == 1) { retry.complete(Unit); releaseRetry.await(); CallControlResult.Error(CallException.ERROR_UNKNOWN) }
+            else CallControlResult.Success()
         }
         val first = async(start = CoroutineStart.UNDISPATCHED) { disconnect.remove(request) }
         retry.await()
@@ -36,22 +37,42 @@ class CoreCallLifecycleTest {
         assertEquals(2, requests)
     }
 
-    @Test fun givesUpAfterTwoFailuresIncludingThrownErrors() = runBlocking {
+    @Test fun retriesThrownAndReturnedFailuresUntilConfirmedRemoval() = runBlocking {
         var requests = 0
-        var delays = 0
-        val disconnect = CoreCallDisconnect(this) { delays++ }
-        assertEquals(CoreDisconnectOutcome.GAVE_UP, disconnect.remove {
+        val disconnect = CoreCallDisconnect(this)
+        assertEquals(CoreDisconnectOutcome.REMOVED, disconnect.remove {
             requests++
             if (requests == 1) error("Core operation failed")
-            CallControlResult.Error(CallException.ERROR_UNKNOWN)
+            if (requests == 2) CallControlResult.Error(CallException.ERROR_UNKNOWN) else CallControlResult.Success()
         })
-        assertEquals(2, requests); assertEquals(1, delays)
+        assertEquals(3, requests)
+    }
+
+    @Test fun boundedBackoffKeepsRetryingAtFiveSeconds() {
+        assertEquals(listOf(100L, 250L, 500L, 1000L, 2000L, 5000L, 5000L, 5000L),
+            (1..8).map(::coreRemovalBackoffMillis))
+        assertEquals(60_000L, PLATFORM_REMOVAL_DEADLINE_MILLIS)
+    }
+
+    @Test fun deadlineAlsoBoundsASuspendedRequestAndRetainsDiagnostics() = runBlocking {
+        val disconnect = CoreCallDisconnect(this, deadlineMillis = 30)
+        assertEquals(CoreDisconnectOutcome.DEADLINE_EXPIRED, disconnect.remove { awaitCancellation() })
+        assertEquals(1, disconnect.attempts)
+        assertEquals(CallException.ERROR_UNKNOWN, disconnect.lastErrorCode)
+        assertFalse(disconnect.pending)
+    }
+
+    @Test fun deadlineRetainsTheLastCoreErrorCode() = runBlocking {
+        val disconnect = CoreCallDisconnect(this, deadlineMillis = 30)
+        assertEquals(CoreDisconnectOutcome.DEADLINE_EXPIRED, disconnect.remove { CallControlResult.Error(73) })
+        assertEquals(1, disconnect.attempts)
+        assertEquals(73, disconnect.lastErrorCode)
     }
 
     @Test fun notTrackedIsAlreadyRemovedWithoutRetry() = runBlocking {
         for (throws in listOf(false, true)) {
             var requests = 0
-            val disconnect = CoreCallDisconnect(this) { fail("Already removed must not wait or retry") }
+            val disconnect = CoreCallDisconnect(this)
             assertEquals(CoreDisconnectOutcome.REMOVED, disconnect.remove {
                 requests++
                 if (throws) throw CallException(CallException.ERROR_CALL_IS_NOT_BEING_TRACKED)
