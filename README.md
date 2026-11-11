@@ -37,8 +37,8 @@ fabricate performed actions.
 Native LiveKit media uses short-lived credentials from the incoming push. Physical
 capture and audible output wait for Core-Telecom audio authority. With
 `androidNativeMedia: "none"`, the application owns media and native code never
-attempts a media session. Android does not support tones or call previews;
-`providerReset` is iOS-only.
+attempts a media session. Android tones require native LiveKit. Call previews are
+unsupported on Android; `providerReset` is iOS-only.
 The [native audio readiness contract](https://github.com/relayphone/expo-callkit-telecom/blob/v2/docs/contracts/android-latency.md)
 describes the retained functional media checks.
 

@@ -34,6 +34,7 @@ class ConversationCorrectnessTest {
         var throwsRemaining = 0
         val outcomes = ArrayDeque<CallControlResult>()
         val muted = MutableSharedFlow<Boolean>(replay = 1)
+        val endpoint = MutableStateFlow<CallEndpointCompat?>(null)
         lateinit var callbacks: CoreCallCallbacks
 
         override suspend fun add(attributes: CallAttributesCompat, callbacks: CoreCallCallbacks, admitted: CallControlScope.() -> Unit) {
@@ -44,7 +45,7 @@ class ConversationCorrectnessTest {
                 val controls = object : CallControlScope {
                     override val coroutineContext: CoroutineContext = this@coroutineScope.coroutineContext
                     override fun getCallId() = ParcelUuid(UUID.randomUUID())
-                    override val currentCallEndpoint = emptyFlow<CallEndpointCompat>()
+                    override val currentCallEndpoint = endpoint.filterNotNull()
                     override val availableEndpoints = flowOf(emptyList<CallEndpointCompat>())
                     override val isMuted: Flow<Boolean> = muted
                     override suspend fun setActive() = CallControlResult.Success()
@@ -326,6 +327,39 @@ class ConversationCorrectnessTest {
         if (reason == "failed") assertEquals(mapOf("kind" to "frameworkReset"), ended?.get("failure"))
         else assertNull(ended?.get("failure"))
         assertEquals(0, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
+    }
+
+    @Test fun proximityTracksCoreRoutesHoldResumeAndPendingEnd() = fixture {
+        val previous = engine.proximity
+        val events = mutableListOf<Boolean>()
+        engine.proximity = ConversationProximity(object : ProximityWakeLock {
+            override fun acquire() { events += true }
+            override fun release() { events += false }
+        })
+        try {
+            ready(); engine.report(id, mapOf("type" to "connected"))
+            suspend fun route(type: Int, count: Int) {
+                core.endpoint.value = CallEndpointCompat("route", type, ParcelUuid(UUID.randomUUID()))
+                withTimeout(3000) { while (events.size != count) delay(10) }
+            }
+            assertTrue(events.isEmpty())
+            route(CallEndpointCompat.TYPE_EARPIECE, 1); route(CallEndpointCompat.TYPE_SPEAKER, 2)
+            route(CallEndpointCompat.TYPE_EARPIECE, 3); route(CallEndpointCompat.TYPE_BLUETOOTH, 4)
+            route(CallEndpointCompat.TYPE_EARPIECE, 5); route(CallEndpointCompat.TYPE_WIRED_HEADSET, 6)
+            route(CallEndpointCompat.TYPE_EARPIECE, 7)
+            engine.hold(id, true); assertEquals(8, events.size)
+            engine.hold(id, false); assertEquals(9, events.size)
+            core.disconnectGate = CompletableDeferred()
+            coroutineScope {
+                val ending = async { engine.end(id) }
+                core.disconnectEntered.await()
+                assertEquals(10, events.size)
+                assertFalse(events.last())
+                core.disconnectGate!!.complete(Unit); ending.await()
+            }
+            ended()
+            assertEquals(List(5) { listOf(true, false) }.flatten(), events)
+        } finally { engine.proximity.update(false, null); engine.proximity = previous }
     }
 
     @Test fun systemUserEndIsLocalWithoutRequestingAnotherDisconnect() = fixture {

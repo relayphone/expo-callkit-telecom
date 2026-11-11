@@ -1,6 +1,7 @@
 package expo.modules.callkittelecom.conversations
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import io.livekit.android.*
 import io.livekit.android.audio.NoAudioHandler
 import io.livekit.android.events.RoomEvent
@@ -43,7 +44,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         val media = payload["media"] as? Map<String, Any?> ?: error("Missing media credentials")
         require(media["provider"] == "livekit")
         val url = media["url"] as? String ?: error("Missing media URL")
-        require(java.net.URI(url).let { it.scheme == "wss" && it.host != null && it.userInfo == null })
+        requireNativeMediaUrl(url, context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
         require((media["expiresAt"] as? Number)?.toLong()?.let { it > System.currentTimeMillis() / 1000 } == true)
         val token = media["token"] as? String ?: error("Missing media token")
         pcm.close(); decoded.close(); warmth.close()
@@ -183,6 +184,15 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     override suspend fun setMuted(muted: Boolean): Unit = withContext(Dispatchers.Main.immediate) {
         check(!closed); this@LiveKitNativeSession.muted = muted
         if (active) setMicrophone(!held && !muted)
+    }
+    override suspend fun playTones(digits: String): Unit = withContext(Dispatchers.Main.immediate) {
+        val tones = NativeDtmfDigit.parse(digits)
+        for (tone in tones) {
+            ensureActive()
+            check(!closed && active && !held) { "invalid_arguments" }
+            val participant = room?.localParticipant ?: error("invalid_arguments")
+            participant.publishDtmf(tone.code, tone.digit).getOrThrow()
+        }
     }
     private suspend fun setMicrophone(enabled: Boolean) {
         if (enabled) {

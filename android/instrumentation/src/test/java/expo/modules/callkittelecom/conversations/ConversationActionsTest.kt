@@ -21,6 +21,7 @@ class ConversationActionsTest {
             for (action in actions) NativeActionReceipt("call", origin, action, "server").decide(runner)
             NativeActionReceipt("call", origin, NativePerformedAction.End, "server", decline = true).decide(runner)
             assertNull(NativeActionReceipt("call", origin, NativePerformedAction.Start).decide(runner))
+            assertNull(NativeActionReceipt("call", origin, NativePerformedAction.Tones("1")).decide(runner))
         }
         assertEquals(listOf("app", "system").flatMap { origin -> listOf(
             ConversationAction.Answer("call", "server", origin), ConversationAction.End("call", "server", origin),

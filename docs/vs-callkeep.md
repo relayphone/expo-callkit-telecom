@@ -29,7 +29,7 @@ Import functions and hooks from `expo-callkit-telecom`, and types from
 scope before React mounts. The optional `join` handler is for iOS preview
 placement. Native answer, end, hold and mute do not use handler callbacks.
 
-Android tones and preview joining are unsupported. `androidNativeMedia`
+Android tones require native LiveKit; preview joining is unsupported. `androidNativeMedia`
 selects Android native media independently of SDK `mediaAdapter` audio
 integration. See the [migration guide](./migrating-v1-to-v2.md) for payloads,
 plugin changes and regeneration, and [verification scope](./verified-against.md)

@@ -165,6 +165,7 @@ class ConversationEngine(val context: Context) {
         acceptUnhandled = metadata?.getString("ExpoCallKitTelecomUnhandledAction") == "accept"
     }
     private val audio = context.getSystemService(AudioManager::class.java)
+    internal var proximity = ConversationProximity(proximityWakeLock(context))
 
     fun audioRoutes() = routes
     private fun publicState(id: String, call: Call): Map<String, Any?> = buildMap {
@@ -172,6 +173,7 @@ class ConversationEngine(val context: Context) {
         actions.pending(id)?.let { put("pending", it) }
     }
     private fun publish() {
+        refreshProximity()
         val states = calls.filterValues { it.visible }.map { (id, call) -> publicState(id, call) }.sortedBy { it["id"] as String }
         if (snapshot["conversations"] != states) {
             snapshot = mapOf("revision" to ++revision, "conversations" to states)
@@ -376,10 +378,11 @@ class ConversationEngine(val context: Context) {
                        payload: Map<String, Any?>?): Call {
         val id = reservation.id
         val incoming = payload != null
+        val supported = capabilities.copy(supportsTones = nativeMedia == AndroidNativeMedia.LIVEKIT)
         val call = Call(linkedMapOf("id" to id, "direction" to if (incoming) "incoming" else "outgoing",
             "status" to if (incoming) "ringing" else "dialing", "members" to listOf(member),
             "isMuted" to false, "isVideo" to video, "payload" to payload?.filterKeys { it != "media" },
-            "capabilities" to capabilities.snapshot()), reservation, capabilities, (payload?.get("expiresAtMillis") as? Number)?.toLong())
+            "capabilities" to supported.snapshot()), reservation, supported, (payload?.get("expiresAtMillis") as? Number)?.toLong())
         call.disconnect = CoreCallDisconnect(jobs, onGiveUp = { call.job?.cancel() })
         call.visible = !incoming
         calls[id] = call
@@ -571,7 +574,7 @@ class ConversationEngine(val context: Context) {
                 }
         }
         receipt.retain()
-        if (action == NativePerformedAction.End) { current.localEndPending = true; current.timeout?.cancel() }
+        if (action == NativePerformedAction.End) { current.localEndPending = true; current.timeout?.cancel(); refreshProximity() }
         fun latest(): Boolean = when (action) {
             is NativePerformedAction.Hold -> receipt.controlRevision == current.holdRevision
             is NativePerformedAction.Mute -> receipt.controlRevision == current.muteRevision
@@ -614,7 +617,7 @@ class ConversationEngine(val context: Context) {
                         if (current.active && origin == NativeActionOrigin.APP) audio.isMicrophoneMute = action.muted
                         current.state["isMuted"] = action.muted
                     }
-                    NativePerformedAction.Start -> error("invalid_arguments")
+                    NativePerformedAction.Start, is NativePerformedAction.Tones -> error("invalid_arguments")
                 }
             }, ::publish) { name, body ->
                 emit(name, body)
@@ -703,8 +706,19 @@ class ConversationEngine(val context: Context) {
         if (current.state["isMuted"] == muted && current.receipts.keys.none { it is NativePerformedAction.Mute }) return
         native(id, NativePerformedAction.Mute(muted), origin)
     }
-    @Suppress("UNUSED_PARAMETER")
-    suspend fun tones(id: String, digits: String): Unit = error("unsupported")
+    suspend fun tones(id: String, digits: String) {
+        NativeDtmfDigit.parse(digits)
+        val current = call(id)
+        requireLive(current)
+        current.capabilities.requireTones()
+        fun requireActive() { requireLive(current); check(current.active && current.state["status"] != "held") { "invalid_arguments" } }
+        requireActive()
+        // Separate presses with identical digits are separate actions, never callback echoes.
+        NativeActionReceipt(id, NativeActionOrigin.APP, NativePerformedAction.Tones(digits)).perform({
+            (current.media ?: error("invalid_arguments")).playTones(digits)
+            requireActive()
+        }, ::publish, emit)
+    }
     suspend fun report(id: String, report: Map<String, Any?>) {
         val current = call(id)
         if (report["type"] != "ended") requireLive(current)
@@ -746,6 +760,7 @@ class ConversationEngine(val context: Context) {
             // Core request. Retained server intake also keeps its reason/event ownership.
             current.nonActionEnd = true
             current.ending = true
+            refreshProximity()
             current.terminalIntent = intent
             current.state["endReason"] = intent?.payload?.reason ?: reason
             if (intent != null) current.failure = EndedFailure.SERVER.takeIf { intent.payload.reason == "failed" }
@@ -755,6 +770,7 @@ class ConversationEngine(val context: Context) {
         if (current.ending) return
         current.nonActionEnd = true
         current.ending = true
+        refreshProximity()
         if (reason == "failed") current.failure = current.failure ?: failure
         try {
             if (!current.admitted) { terminal(id, reason); return }
@@ -826,7 +842,12 @@ class ConversationEngine(val context: Context) {
         }
         refreshRoutes()
     }
+    private fun refreshProximity() {
+        val active = calls.values.firstOrNull { it.active && live(it) && it.state["status"] != "held" }
+        proximity.update(active != null, active?.endpoint?.type)
+    }
     private fun refreshRoutes() {
+        refreshProximity()
         val selected = calls.values.firstOrNull { it.active } ?: calls.values.firstOrNull { it.admitted }
         val available = selected?.endpoints?.map(::route) ?: emptyList()
         val current = selected?.endpoint?.let(::route)

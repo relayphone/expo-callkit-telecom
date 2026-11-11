@@ -5,6 +5,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ConversationCapabilitiesTest {
+    @Test fun tonesAreOptionalWithoutChangingCoreHoldSupport() {
+        assertEquals(false, ConversationCapabilities().snapshot()["tones"])
+        assertEquals("unsupported", CommandRejection.from(
+            runCatching { ConversationCapabilities().requireTones() }.exceptionOrNull() as Exception).code)
+        val enabled = ConversationCapabilities(supportsTones = true)
+        assertEquals(true, enabled.snapshot()["tones"])
+        assertEquals(CallAttributesCompat.SUPPORTS_SET_INACTIVE, enabled.telecom)
+        enabled.requireTones()
+    }
+
     @Test fun defaultsKeepHoldSupportInCoreAndSnapshots() {
         val capabilities = ConversationCapabilities()
         assertEquals(CallAttributesCompat.SUPPORTS_SET_INACTIVE, capabilities.telecom)

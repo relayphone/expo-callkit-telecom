@@ -28,6 +28,7 @@ class ConversationMediaTest {
         private val previousHandler = ConversationActions.handler
         val sessions = CopyOnWriteArrayList<Session>()
         val signals = mutableListOf<NativeMediaSignal>()
+        val performed = mutableListOf<Map<*, *>>()
         var preparationGate: CompletableDeferred<Unit>? = null
         var ended: Map<*, *>? = null
         private val observer = NativeMediaObserver { if (it.serverCallId == id) signals += it }
@@ -35,7 +36,9 @@ class ConversationMediaTest {
             engine.nativeMedia = AndroidNativeMedia.LIVEKIT
             engine.policy = JSONObject(mapOf("media" to "livekit", "credentials" to "fromPush", "prewarm" to false))
             engine.actions.resetBridge(); engine.actions.acceptUnhandled = true
-            engine.emit = { name, body -> if (name == "conversationsChanged") {
+            engine.emit = { name, body ->
+                if (name == "conversationEvent" && body["type"] == "actionPerformed") performed += body["payload"] as Map<*, *>
+                if (name == "conversationsChanged") {
                 (body["conversations"] as List<*>).filterIsInstance<Map<*, *>>().firstOrNull {
                     it["id"] == id && it["status"] == "ended"
                 }?.let { ended = it["ended"] as Map<*, *> }
@@ -57,6 +60,11 @@ class ConversationMediaTest {
             override val isPrepared get() = roomLive
             @Volatile var muted = false
             var mutedAtActivation = false
+            val tones = CopyOnWriteArrayList<String>()
+            val toneEntered = CompletableDeferred<Unit>()
+            var toneGate: CompletableDeferred<Unit>? = null
+            var failTones = false
+            @Volatile var held = false
             override fun setFailureListener(listener: () -> Unit) { failure = listener }
             fun disconnect() { roomLive = false; failure() }
             override suspend fun prewarm(payload: Map<String, Any?>) {
@@ -66,8 +74,13 @@ class ConversationMediaTest {
                 NativeMediaSignals.emit(id, NativeMediaStage.ROOM_CONNECTED)
             }
             override suspend fun activate() { mutedAtActivation = muted; activations++ }
-            override suspend fun setHeld(held: Boolean) {}
+            override suspend fun setHeld(held: Boolean) { this.held = held }
             override suspend fun setMuted(muted: Boolean) { this.muted = muted }
+            override suspend fun playTones(digits: String) {
+                toneEntered.complete(Unit); toneGate?.await()
+                check(!failTones) { "DTMF publication failed" }
+                tones += digits
+            }
             override suspend fun close(reason: String) { closes++; connection?.close(); scope.cancel(); closed.complete(Unit) }
         }
         fun state() = (engine.snapshot["conversations"] as List<*>).filterIsInstance<Map<*, *>>().firstOrNull { it["id"] == id }
@@ -78,6 +91,7 @@ class ConversationMediaTest {
         suspend fun removed() = withTimeout(5000) { while (state() != null || TelecomEvidence.calls().isNotEmpty()) delay(10) }
         suspend fun close() {
             try {
+                sessions.forEach { it.toneGate?.complete(Unit) }
                 if (state() != null) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                 removed()
                 withTimeout(5000) { sessions.forEach { it.closed.await() } }
@@ -103,6 +117,100 @@ class ConversationMediaTest {
     }
 
     private enum class AnswerCredentials { PUSH, HANDLER, PROVIDED }
+
+    @Test fun tonesReachTheSessionAndNativeControlsPublishOneReceiptPerPress() = fixture {
+        start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
+        assertEquals(true, (state()?.get("capabilities") as Map<*, *>)["tones"])
+        ConversationActions.configure { error("Tones must not ask the server action handler") }
+        engine.tones(id, "12*#abCD")
+        val session = sessions.single()
+        assertEquals(listOf("1", "2", "*", "#", "A", "B", "C", "D"), session.tones.toList())
+        assertEquals(1, performed.count { it["action"] == mapOf("kind" to "tones", "digits" to "12*#abCD") })
+        engine.tones(id, "1"); engine.tones(id, "1")
+        ConversationControls.playTones(context, id, "9")
+        withTimeout(3000) { while (performed.count { (it["action"] as Map<*, *>)["kind"] == "tones" } != 4) delay(10) }
+        assertEquals(listOf("1", "1", "9"), session.tones.takeLast(3))
+        assertTrue(performed.filter { (it["action"] as Map<*, *>)["kind"] == "tones" }.all { it["origin"] == "app" })
+    }
+
+    @Test fun invalidHeldAndFailedTonesHaveNoPerformedReceipt() = fixture {
+        start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
+        val session = sessions.single()
+        for (digits in listOf("", "12x")) assertEquals("invalid_arguments", CommandRejection.from(
+            runCatching { engine.tones(id, digits) }.exceptionOrNull() as Exception).code)
+        assertTrue(session.tones.isEmpty())
+        session.failTones = true
+        assertTrue(runCatching { engine.tones(id, "1") }.isFailure)
+        assertEquals("connected", state()?.get("status"))
+        engine.hold(id, true)
+        assertEquals("invalid_arguments", CommandRejection.from(
+            runCatching { engine.tones(id, "1") }.exceptionOrNull() as Exception).code)
+        assertFalse(performed.any { (it["action"] as Map<*, *>)["kind"] == "tones" })
+    }
+
+    @Test fun tonesAreUnsupportedWithoutNativeLiveKitAndRequireReadyMediaWhenSelected() = fixture {
+        engine.nativeMedia = AndroidNativeMedia.NONE
+        start()
+        assertEquals(false, (state()?.get("capabilities") as Map<*, *>)["tones"])
+        assertEquals("unsupported", CommandRejection.from(
+            runCatching { engine.tones(id, "1") }.exceptionOrNull() as Exception).code)
+        assertTrue(sessions.isEmpty())
+    }
+
+    @Test fun tonesCannotCreateAnUnpreparedMediaSession() = fixture {
+        start()
+        assertEquals(true, (state()?.get("capabilities") as Map<*, *>)["tones"])
+        assertEquals("invalid_arguments", CommandRejection.from(
+            runCatching { engine.tones(id, "1") }.exceptionOrNull() as Exception).code)
+        assertTrue(sessions.isEmpty())
+        assertFalse(performed.any { (it["action"] as Map<*, *>)["kind"] == "tones" })
+    }
+
+    @Test fun endingTheCallCancelsOutstandingTonesWithoutAPerformedReceipt() = fixture {
+        start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
+        val session = sessions.single().apply { toneGate = CompletableDeferred() }
+        coroutineScope {
+            val tones = async { runCatching { engine.tones(id, "12") } }
+            withTimeout(3000) { session.toneEntered.await() }
+            engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+            assertTrue(tones.await().isFailure)
+        }
+        removed()
+        assertTrue(session.tones.isEmpty())
+        assertFalse(performed.any { (it["action"] as Map<*, *>)["kind"] == "tones" })
+    }
+
+    @Test fun holdingDuringPublicationStopsRemainingDigitsAndSuppressesTheReceipt() = fixture {
+        start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
+        val session = sessions.single().apply { toneGate = CompletableDeferred() }
+        coroutineScope {
+            val tones = async { runCatching { engine.tones(id, "12") } }
+            withTimeout(3000) { session.toneEntered.await() }
+            val holding = async { engine.hold(id, true) }
+            withTimeout(3000) { while (state()?.get("status") != "held") delay(10) }
+            withTimeout(1500) { holding.await() }
+            assertFalse(session.toneGate!!.isCompleted)
+            assertTrue(session.held)
+            assertTrue(tones.await().isFailure)
+        }
+        assertTrue(session.tones.isEmpty())
+        assertFalse(performed.any { (it["action"] as Map<*, *>)["kind"] == "tones" })
+    }
+
+    @Test fun mutingDuringPublicationDoesNotWaitForTheToneTransport() = fixture {
+        start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
+        val session = sessions.single().apply { toneGate = CompletableDeferred() }
+        coroutineScope {
+            val tones = async { runCatching { engine.tones(id, "12") } }
+            withTimeout(3000) { session.toneEntered.await() }
+            withTimeout(1500) { engine.mute(id, true) }
+            assertFalse(session.toneGate!!.isCompleted)
+            assertTrue(session.muted)
+            assertTrue(tones.await().isFailure)
+        }
+        assertTrue(session.tones.isEmpty())
+        assertFalse(performed.any { (it["action"] as Map<*, *>)["kind"] == "tones" })
+    }
 
     private suspend fun Fixture.answerAfterPrewarmLoss(source: AnswerCredentials) {
         engine.policy.put("prewarm", true)

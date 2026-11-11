@@ -20,6 +20,7 @@ internal interface NativeMediaControl {
     suspend fun pause()
     fun resume(audioReady: suspend () -> Unit)
     suspend fun mute()
+    suspend fun playTones(digits: String): Unit = error("unsupported")
     fun clearMute()
     fun unmute(audioReady: suspend () -> Unit)
     fun setDesiredMuted(muted: Boolean)
@@ -101,6 +102,11 @@ internal class NativeMediaOwner(
     suspend fun mute() { check(!closed); desiredMuted = true; controller?.mute() }
     fun clearMute() { check(!closed); desiredMuted = false; controller?.clearMute() }
     fun unmute() { check(!closed); desiredMuted = false; controller?.unmute { audio.nativeActivated() } }
+    suspend fun playTones(digits: String) {
+        check(!closed)
+        check(selection == AndroidNativeMedia.LIVEKIT) { "unsupported" }
+        (controller ?: error("invalid_arguments")).playTones(digits)
+    }
 
     fun close(reason: String) {
         if (closed) return

@@ -171,6 +171,19 @@ receive outgoing start, which keeps its JavaScript placement handler. JavaScript
 still receives the usual snapshots and `actionPerformed` events. Calling
 `ConversationActions.configure(null)` restores the existing native behavior.
 
+With `androidNativeMedia: "livekit"`, an active native media session accepts the
+shared `playTones(conversationId, digits)` API or
+`ConversationControls.playTones(context, conversationId, digits)`. Digits are
+`0`–`9`, `*`, `#`, and `A`–`D` (lowercase is accepted). Each successful request
+publishes LiveKit SIP DTMF and emits an app-origin `actionPerformed` tones event.
+Tones do not ask the native server-action handler. Held or unprepared media
+cannot publish tones; app-managed media advertises `capabilities.tones = false`
+and rejects tones with `unsupported`.
+
+An active call on Core-Telecom's earpiece route holds a proximity screen-off lock.
+Switching to speaker, Bluetooth or wired audio, holding, or ending the call
+releases it immediately. Devices without a proximity sensor need no lock.
+
 Observe `ANSWER_REQUESTED`, `HANDLER_STARTED`, `HANDLER_RESPONDED`,
 `ROOM_CONNECTED` and `CONNECTED` through `NativeMediaSignals` to time the answer.
 `HANDLER_RESPONDED.reason` is `proceed` or the refusal code. A room prewarmed
@@ -322,6 +335,9 @@ audible output wait for Core-Telecom activation; the existing connected path
 publishes `connected` and emits `CONNECTED` after native media activation.
 Ringing incoming calls without a prewarmed session keep the credentials privately
 until answer. An answer handler's `Proceed.media`, when supplied, takes precedence.
+
+LiveKit signaling URLs require `wss://` in release apps. Debuggable apps also
+accept `ws://` for local development; the app's network security policy still applies.
 
 Unknown, ended, disabled-provider or already-owned sessions are ignored with
 `MEDIA_IGNORED` and a reason code. Credentials stay out of snapshots and signals.

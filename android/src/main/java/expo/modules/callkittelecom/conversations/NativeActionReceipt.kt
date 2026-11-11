@@ -10,6 +10,7 @@ internal sealed interface NativePerformedAction {
     data object End : NativePerformedAction
     data class Hold(val held: Boolean) : NativePerformedAction
     data class Mute(val muted: Boolean) : NativePerformedAction
+    data class Tones(val digits: String) : NativePerformedAction
 
     fun fields(): Map<String, Any> = when (this) {
         Answer -> mapOf("kind" to "answer")
@@ -17,6 +18,7 @@ internal sealed interface NativePerformedAction {
         End -> mapOf("kind" to "end")
         is Hold -> mapOf("kind" to "hold", "held" to held)
         is Mute -> mapOf("kind" to "mute", "muted" to muted)
+        is Tones -> mapOf("kind" to "tones", "digits" to digits)
     }
 }
 
@@ -42,7 +44,7 @@ internal class NativeActionReceipt(
             else ConversationAction.End(conversationId, serverCallId, origin.wireValue)
         is NativePerformedAction.Hold -> ConversationAction.Hold(conversationId, serverCallId, origin.wireValue, action.held)
         is NativePerformedAction.Mute -> ConversationAction.Mute(conversationId, serverCallId, origin.wireValue, action.muted)
-        NativePerformedAction.Start -> null
+        NativePerformedAction.Start, is NativePerformedAction.Tones -> null
     }
 
     /** Memoize before suspending so an app request and its system echo share the same decision. */

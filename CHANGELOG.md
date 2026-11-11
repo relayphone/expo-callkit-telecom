@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+* **android:** publish DTMF through native LiveKit with shared `playTones` and
+  `ConversationControls.playTones`. Advertise tones only with native LiveKit selected.
+  Use proximity screen-off while an active call is on the earpiece route.
+
 * **android:** add `ConversationPresentation` for app-owned notification content,
   caller avatars, ringing screens, channels and extra actions. Add native
   `ConversationControls.answer`, `decline` and `end` through the app action path.
@@ -53,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **ios:** cancel pending joins with `joinFailed` when joining ends before the call takes part.
 
 ### Changed
+
+* **android:** allow `ws://` LiveKit signaling in debuggable apps; release apps
+  continue to require `wss://`.
 
 * **android:** ringing CallStyle notifications now set `FLAG_INSISTENT` so channel
   sound and vibration repeat until answered, ended or silenced by Android. Applies

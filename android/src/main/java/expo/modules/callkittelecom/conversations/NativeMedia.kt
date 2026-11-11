@@ -18,6 +18,8 @@ interface NativeMediaSession {
     suspend fun setHeld(held: Boolean)
     /** Set desired mute state without starting inactive media. */
     suspend fun setMuted(muted: Boolean)
+    /** Publish validated DTMF digits through an active native media session. */
+    suspend fun playTones(digits: String): Unit = error("unsupported")
     suspend fun close(reason: String)
 }
 object NativeMediaRegistry {
@@ -40,6 +42,7 @@ internal class NativeMediaController(private val context: Context, private val p
     @Volatile private var answerJob: Job? = null
     private var unmuteJob: Job? = null
     private var resumeJob: Job? = null
+    private val toneJobs = ConcurrentHashMap.newKeySet<Job>()
     @Volatile private var closed = false
     private val closing = AtomicBoolean()
     @Volatile private var desiredMuted = false
@@ -138,14 +141,31 @@ internal class NativeMediaController(private val context: Context, private val p
         check(!closed)
         setDesiredMuted(true)
         if (!activated) return
+        toneJobs.forEach { it.cancel() }
         val work = operations.async { withTimeout(1000) { serial.withLock { check(!closed); session?.setMuted(true) } } }
         try { work.await() } finally { work.cancel() }
     }
     override fun setDesiredMuted(muted: Boolean) { check(!closed); desiredMuted = muted; unmuteJob?.cancel() }
+    override suspend fun playTones(digits: String) {
+        val tones = NativeDtmfDigit.parse(digits)
+        check(!closed && activated && !held) { "invalid_arguments" }
+        val work = operations.async(start = CoroutineStart.LAZY) { withTimeout(3000) { serial.withLock {
+            for (tone in tones) {
+                ensureActive()
+                check(!closed && activated && !held) { "invalid_arguments" }
+                (session ?: error("invalid_arguments")).playTones(tone.digit)
+            }
+        } } }
+        toneJobs += work
+        work.start()
+        try { work.await() } finally { toneJobs -= work; work.cancel() }
+    }
     override fun clearMute() { setDesiredMuted(false) }
     override suspend fun pause() {
         check(!closed)
         held = true; answerJob?.cancel(); answerJob = null; unmuteJob?.cancel(); resumeJob?.cancel()
+        // A suspended DTMF publish must not delay capture/playback suspension.
+        toneJobs.forEach { it.cancel() }
         if (!activated && !activating) return
         val work = operations.async { withTimeout(1000) { serial.withLock { check(!closed); session?.setHeld(true) } } }
         try { work.await() } finally { work.cancel() }
