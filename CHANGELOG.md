@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.1 (2026-11-11)
+
+The first v2 prerelease shares the Conversations API, with Android on Core-Telecom.
+Install it from its GitHub release asset URL.
+
 ### Fixes
 
 * **android:** keep incoming calls ringing when their optional pre-joined room is

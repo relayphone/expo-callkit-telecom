@@ -6,10 +6,15 @@ This package composes `@relayphone/ios-voip-sdk`: it re-exports the SDK's shared
 TypeScript API, adds the Android `VoIPConversations` provider, and composes both
 platforms' config plugins. The SDK supplies the sole Apple native provider.
 
-The fork's `v2` branch is a breaking migration from upstream v1. The inherited
-package version does not identify a published v2 release. Evaluate a pinned fork
-checkout with the SDK's v0.4.0 release asset using the
-[package evaluation guide](https://github.com/relayphone/expo-callkit-telecom/blob/v2/docs/sdk-package-evaluation.md).
+The fork's `v2` branch is a breaking migration from upstream v1. Install the first
+prerelease from its CI-built GitHub release asset in your `package.json`:
+
+```json
+"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.1/expo-callkit-telecom-2.0.0-alpha.1.tgz"
+```
+
+Prerelease versions can change APIs. See [releases and verification](https://github.com/relayphone/expo-callkit-telecom/blob/v2/docs/releases.md),
+or evaluate a pinned checkout with the [package evaluation guide](https://github.com/relayphone/expo-callkit-telecom/blob/v2/docs/sdk-package-evaluation.md).
 
 ## Integration
 

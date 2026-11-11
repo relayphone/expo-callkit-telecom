@@ -1,6 +1,12 @@
 # Android v2 quick-start
 
-This guide uses the fork's **`v2` branch**, not a published npm v2 release.
+Install the v2 prerelease from the GitHub release asset in your `package.json`:
+
+```json
+"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.1/expo-callkit-telecom-2.0.0-alpha.1.tgz"
+```
+
+See [release verification](./releases.md). Prerelease versions can change APIs.
 Android uses Core-Telecom and native FCM intake. For iOS, see
 [iOS](./migrating-v1-to-v2.md#ios). For API replacements and breaking changes,
 start with [Migrating from v1](./migrating-v1-to-v2.md).
