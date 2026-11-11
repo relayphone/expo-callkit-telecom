@@ -17,6 +17,7 @@ on:
 
 jobs:
   publish:
+    if: github.repository == 'mfairley/expo-callkit-telecom'
     runs-on: ubuntu-latest
     environment:
       name: npm-prod

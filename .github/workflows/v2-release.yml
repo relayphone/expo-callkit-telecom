@@ -1,0 +1,112 @@
+name: v2 release
+
+on:
+  pull_request:
+    branches: [v2]
+    paths:
+      - "package.json"
+      - "bun.lock"
+      - "src/**"
+      - "plugin/**"
+      - "android/**"
+      - "app.plugin.js"
+      - "expo-module.config.json"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "LICENSE"
+      - ".npmignore"
+      - "tsconfig*.json"
+      - "tools/release*"
+      - "tools/package.json"
+      - "tools/sdk-evaluation*"
+      - ".github/workflows/v2-release.yml"
+      - ".github/workflows/publish.yml"
+  push:
+    tags: ["v2.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-controls:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "26"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.0"
+      - name: Test release controls
+        run: node --test tools/release.test.ts
+      - run: bun install --frozen-lockfile
+      - name: Build and check TypeScript and host contracts
+        run: |
+          bun run build
+          bun run typecheck
+          node node_modules/typescript/bin/tsc -p tsconfig.release.json
+          bun run test:contracts
+      - name: Pack and verify the CI archive and checksum
+        run: node tools/release.ts pack "$RUNNER_TEMP/v2-release"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v2-release-controls
+          path: ${{ runner.temp }}/v2-release/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    if: github.repository == 'relayphone/expo-callkit-telecom' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v2.')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "26"
+      - name: Require an annotated version tag contained in v2
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node tools/release.ts check-tag "$RELEASE_TAG"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile
+      - name: Build and run TypeScript, host and release tests
+        run: |
+          bun run build
+          bun run typecheck
+          node node_modules/typescript/bin/tsc -p tsconfig.release.json
+          bun run test:contracts
+          node --test tools/release.test.ts
+      - name: Pack and verify the CI archive and checksum
+        run: node tools/release.ts pack "$RUNNER_TEMP/v2-release"
+      - name: Attest the archive and checksums
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/v2-release/*.tgz
+            ${{ runner.temp }}/v2-release/SHA256SUMS
+          create-storage-record: false
+      - name: Verify both attestations before publishing the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
+        run: node tools/release.ts publish "$RUNNER_TEMP/v2-release" "$BUNDLE_PATH"

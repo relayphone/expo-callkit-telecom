@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.sdk-evaluation.json",
+  "include": ["tools/release.ts", "tools/release.test.ts"]
+}
