@@ -1,34 +1,71 @@
 package expo.modules.callkittelecom.conversations
 
-import org.json.JSONArray
-import org.json.JSONObject
+/** Main-confined FCM data entry; reporting completes before media/JS preparation. */
+class NativeCallPush internal constructor(
+    private val incoming: suspend (Map<String, Any?>) -> Map<String, Any?>,
+    private val remoteEnd: (Map<String, Any?>, () -> Unit) -> Unit,
+    private val canWarm: (String) -> Boolean,
+    private val shouldWarm: () -> Boolean,
+    private val warmJavaScript: () -> Unit,
+    private val signal: (String, NativeMediaStage, Map<String, Long>, String?) -> Unit = { id, stage, measurements, reason ->
+        NativeMediaSignals.emit(id, stage, measurements, reason = reason)
+    },
+) {
+    private class PendingAdmission(var ended: Boolean = false)
+    private val admissions = mutableMapOf<String, MutableSet<PendingAdmission>>()
+    constructor(engine: ConversationEngine, warmJavaScript: () -> Unit) : this(
+        engine::incoming, engine::remoteEnd, engine::canWarmIncoming,
+        { engine.policy.optString("type", "native") != "native" || engine.policy.optBoolean("prewarm", true) },
+        warmJavaScript,
+    )
 
-/** Shared production FCM data entry; reporting completes before media/JS preparation. */
-class NativeCallPush(private val engine: ConversationEngine, private val warmJavaScript: () -> Unit) {
     companion object {
         fun accepts(data: Map<String, String>) = data["messageType"] in
             setOf("incomingCall", "incoming_call", "callEnded", "call_ended")
-        private fun value(input: Any?): Any? = when (input) {
-            JSONObject.NULL -> null
-            is JSONObject -> input.keys().asSequence().associateWith { value(input.get(it)) }
-            is JSONArray -> (0 until input.length()).map { value(input.get(it)) }
-            else -> input
-        }
     }
-    @Suppress("UNCHECKED_CAST")
-    suspend fun handle(data: Map<String, String>, highPriority: Boolean): Map<String, Any?>? {
-        if (!accepts(data)) return null
-        val type = data["messageType"] ?: return null
-        val raw = data[type] ?: return null
-        val payload = value(JSONObject(raw)) as Map<String, Any?>
-        if (type == "callEnded" || type == "call_ended") { engine.remoteEnd(payload); return null }
-        val serverId = payload["serverCallId"] as? String ?: return null
-        NativeMediaSignals.emit(serverId, NativeMediaStage.PUSH_RECEIVED, mapOf("highPriority" to if (highPriority) 1L else 0L))
-        val outcome = engine.incoming(payload)
-        if (outcome["status"] == "reported" &&
-            engine.canWarmIncoming(outcome["id"] as String) &&
-            (engine.policy.optString("type", "native") != "native" || engine.policy.optBoolean("prewarm", true))) {
-            NativeMediaSignals.emit(serverId, NativeMediaStage.JS_WARM_STARTED)
+
+    suspend fun handle(data: Map<String, String>, highPriority: Boolean): Map<String, Any?>? =
+        DefaultCallPushDecoder.decode(data)?.let { handle(it, highPriority) }
+
+    internal suspend fun handle(
+        decoded: DecodedCallPush,
+        highPriority: Boolean,
+        admission: CallPushAdmission = CallPushAdmission { CallPushDecision.Admit },
+    ): Map<String, Any?>? {
+        val push = when (decoded) {
+            is DecodedCallPush.Ended -> {
+                val payload = decoded.push.payload()
+                remoteEnd(payload) {
+                    admissions[decoded.push.serverCallId]?.forEach { it.ended = true }
+                }
+                return null
+            }
+            is DecodedCallPush.Incoming -> decoded.push
+        }
+        signal(push.serverCallId, NativeMediaStage.PUSH_RECEIVED,
+            mapOf("highPriority" to if (highPriority) 1L else 0L), null)
+        val pending = PendingAdmission()
+        val waiting = admissions.getOrPut(push.serverCallId) { mutableSetOf() }
+        waiting += pending
+        try {
+            when (val decision = admission.admit(push)) {
+                CallPushDecision.Admit -> Unit
+                is CallPushDecision.Refuse -> {
+                    signal(push.serverCallId, NativeMediaStage.PUSH_REFUSED, emptyMap(), decision.reason)
+                    return null
+                }
+            }
+            if (pending.ended) {
+                signal(push.serverCallId, NativeMediaStage.PUSH_REFUSED, emptyMap(), "callEndedBeforeAdmission")
+                return null
+            }
+        } finally {
+            waiting -= pending
+            if (waiting.isEmpty() && admissions[push.serverCallId] === waiting) admissions.remove(push.serverCallId)
+        }
+        val outcome = incoming(push.payload())
+        if (outcome["status"] == "reported" && canWarm(outcome["id"] as String) && shouldWarm()) {
+            signal(push.serverCallId, NativeMediaStage.JS_WARM_STARTED, emptyMap(), null)
             warmJavaScript()
         }
         return outcome

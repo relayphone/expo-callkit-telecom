@@ -37,9 +37,13 @@ class ConversationEngine(val context: Context) {
     fun updatePushToken(value: String?) { if (pushToken != value) { pushToken = value; tokenRevision++; emit("pushTokenUpdated", pushTokenSnapshot()) } }
     fun receiveCallEnded(payload: Map<String, Any?>): Boolean =
         NativeCallEnded.typed(payload)?.let(::receiveEnded) ?: false
-    fun remoteEnd(payload: Map<String, Any?>) { NativeCallEnded.wire(payload)?.let(::receiveEnded) }
-    private fun receiveEnded(payload: NativeCallEnded): Boolean {
-        val entry = endedIntake.accept(payload) ?: return false
+    fun remoteEnd(payload: Map<String, Any?>) { remoteEnd(payload) {} }
+    internal fun remoteEnd(payload: Map<String, Any?>, onConsumed: () -> Unit) {
+        NativeCallEnded.wire(payload)?.let { receiveEnded(it, onConsumed) }
+    }
+    private fun receiveEnded(payload: NativeCallEnded): Boolean = receiveEnded(payload) {}
+    private fun receiveEnded(payload: NativeCallEnded, onConsumed: () -> Unit): Boolean {
+        val entry = endedIntake.accept(payload, onConsumed) ?: return false
         calls[entry.id]?.takeIf { it.incoming === entry && !it.terminal }?.let { current ->
             if (current.terminalIntent == null) current.state["endReason"] = payload.reason
             current.permitted.complete(false)

@@ -13,6 +13,15 @@ if (!(androidNativeMedia in ['livekit', 'none'])) {
 }
 def nativeMediaEngine = androidNativeMedia == 'livekit'
 
+// Expo autolinking knows whether notifications is a source project or a prebuilt artifact.
+def notificationsDependency = rootProject.findProject(':expo-notifications')
+if (notificationsDependency == null) {
+  def autolinking = gradle.extensions.findByName('expoGradle')
+  if (autolinking?.config?.allProjects?.any { it.name == 'expo-notifications' }) {
+    notificationsDependency = expoModule.getExpoDependency('expo-notifications')
+  }
+}
+
 android {
   namespace "expo.modules.callkittelecom"
   defaultConfig {
@@ -24,6 +33,9 @@ android {
   }
   sourceSets {
     main.java.srcDir(nativeMediaEngine ? 'src/livekit/java' : 'src/withoutLivekit/java')
+    if (notificationsDependency != null) {
+      main.java.srcDir('src/main/notifications')
+    }
   }
 }
 
@@ -42,12 +54,7 @@ dependencies {
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2"
   implementation "com.google.firebase:firebase-messaging:24.1.0"
 
-  // expo-notifications may be included as a source project or as a prebuilt
-  // Maven artifact via Expo's version catalog, depending on the SDK version.
-  def notificationsProject = rootProject.findProject(":expo-notifications")
-  if (notificationsProject != null) {
-    compileOnly notificationsProject
-  } else {
-    compileOnly "host.exp.exponent:expo.modules.notifications:+"
+  if (notificationsDependency != null) {
+    compileOnly notificationsDependency
   }
 }

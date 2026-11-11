@@ -14,6 +14,9 @@ export const withAndroidOptions: ConfigPlugin<ComposedPluginProps> = (
   config,
   props
 ) => {
+  const fcmService = props.androidFcmService ?? "library";
+  if (fcmService !== "library" && fcmService !== "app")
+    throw new Error("androidFcmService must be library or app.");
   if ("joinPolicy" in props)
     throw new Error(
       "joinPolicy was removed; use androidNativeMedia for native media selection."
@@ -63,12 +66,28 @@ export const withAndroidOptions: ConfigPlugin<ComposedPluginProps> = (
       });
     const service =
       "expo.modules.notifications.service.ExpoFirebaseMessagingService";
+    const libraryService =
+      "expo.modules.callkittelecom.services.ExpoCallKitTelecomMessagingService";
     app.service = (app.service ?? []).filter(
-      (item) => item.$["android:name"] !== service
+      (item) =>
+        item.$["android:name"] !== libraryService &&
+        !(item.$["android:name"] === service && fcmService === "library")
     );
-    app.service.push({
-      $: { "android:name": service, "tools:node": "remove" },
-    });
+    if (fcmService === "library") {
+      app.service.push({
+        $: { "android:name": service, "tools:node": "remove" },
+      });
+      app.service.push({
+        $: { "android:name": libraryService, "android:exported": "false" },
+        "intent-filter": [
+          {
+            action: [
+              { $: { "android:name": "com.google.firebase.MESSAGING_EVENT" } },
+            ],
+          },
+        ],
+      });
+    }
     app.receiver = (app.receiver ?? []).filter(
       (item) =>
         !item["intent-filter"]?.some((filter) =>
