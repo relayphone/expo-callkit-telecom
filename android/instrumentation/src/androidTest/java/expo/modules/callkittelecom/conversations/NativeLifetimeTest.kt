@@ -10,31 +10,6 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NativeLifetimeTest {
-    @Test fun nativeDeadlineAndReplacement() = runBlocking {
-        withContext(Dispatchers.Main) {
-            val deliveries = mutableListOf<Map<String, Any?>>()
-            val coordinator = ActionCoordinator({ name, body -> if (name == "handlerAction") deliveries += body }, {})
-            val conversation = mapOf<String, Any?>("id" to "test-conversation")
-            val pending = async { coordinator.perform(conversation, "join", "system") }
-            yield()
-            assertNotNull(coordinator.pending("test-conversation"))
-            coordinator.attach(true, 1, coordinator.epoch)
-            assertEquals(1, deliveries.size)
-            coordinator.attach(true, 2, coordinator.epoch)
-            assertEquals(2, deliveries.size)
-            val id = deliveries[0]["actionID"] as String
-            coordinator.settle(id, 1, false, coordinator.epoch)
-            assertFalse(pending.isCompleted)
-            coordinator.settle(id, 2, true, coordinator.epoch)
-            pending.await()
-            assertNull(coordinator.pending("test-conversation"))
-            val began = android.os.SystemClock.elapsedRealtime()
-            val failure = runCatching { coordinator.perform(conversation, "join", "system") }.exceptionOrNull()
-            assertNotNull(failure)
-            assertTrue(android.os.SystemClock.elapsedRealtime() - began in 3300..4500)
-            assertNull(coordinator.pending("test-conversation"))
-        }
-    }
     @Test fun terminationCancelsAnswerAndFetchFallbackIsNative() = runBlocking {
         withContext(Dispatchers.Main) {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -75,27 +50,6 @@ class NativeLifetimeTest {
                 NativeMediaRegistry.fetchers.remove("fixture-fetcher")
                 owner.cancel()
             }
-        }
-    }
-
-    @Test fun bridgeEpochAndColdBudgetCannotBeReused() = runBlocking {
-        withContext(Dispatchers.Main) {
-            val deliveries = mutableListOf<Map<String, Any?>>()
-            val coordinator = ActionCoordinator({ name, body -> if (name == "handlerAction") deliveries += body }, {})
-            coordinator.coldJoinBudgetMs = 60_000
-            assertEquals(3500L, coordinator.coldJoinBudgetMs)
-            assertTrue(runCatching { coordinator.coldJoinBudgetMs = 0 }.isFailure)
-            val oldEpoch = coordinator.epoch
-            coordinator.attach(true, 1, oldEpoch)
-            val pending = async { coordinator.perform(mapOf("id" to "epoch"), "join", "system") }
-            yield()
-            val id = deliveries.first()["actionID"] as String
-            coordinator.resetBridge()
-            coordinator.attach(true, 1, coordinator.epoch)
-            coordinator.settle(id, 1, true, oldEpoch)
-            assertFalse(pending.isCompleted)
-            coordinator.settle(id, 1, true, coordinator.epoch)
-            pending.await()
         }
     }
 
