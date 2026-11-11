@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+* **android:** allow incoming pushes to set `expiresAtMillis` for their ringing deadline,
+  ending unanswered at expiry. Omitted expiry keeps the configured default timeout.
+  Add `androidSupportsHold` to disable hold/resume in Core-Telecom and conversation capabilities.
+
 * **android:** support app-owned FCM services with `CallPushIntake`, custom decoders and typed
   admission decisions. Refusal reasons reach native media observers before any Telecom report.
   Set `androidFcmService: "app"` to keep service ownership in the app; expo-notifications is optional.

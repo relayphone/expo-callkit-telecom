@@ -258,3 +258,58 @@ test("unknown FCM owners fail before registering mods", async () => {
     /androidFcmService must be library or app/
   );
 });
+
+test("hold support defaults on and can be disabled idempotently", async () => {
+  const { withAndroidOptions } = await import(
+    "../../plugin/build/androidOptions.js"
+  );
+  const existing: AndroidManifest = {
+    manifest: {
+      $: { "xmlns:android": "http://schemas.android.com/apk/res/android" },
+      application: [
+        {
+          $: { "android:name": ".MainApplication" },
+          "meta-data": [
+            { $: { "android:name": "unrelated", "android:value": "retained" } },
+          ],
+        },
+      ],
+    },
+  };
+  let manifest = existing;
+  for (const enabled of [undefined, false, false, true, false] as const) {
+    const config: ExportedConfig = withAndroidOptions(
+      { name: "hold-test", slug: "hold-test" },
+      enabled === undefined ? {} : { androidSupportsHold: enabled }
+    );
+    manifest = await evaluate(config, config.mods?.android?.manifest, manifest);
+    const metadata = manifest.manifest.application?.[0]?.["meta-data"] ?? [];
+    assert.deepEqual(
+      metadata.filter(
+        (item) => item.$["android:name"] === "ExpoCallKitTelecomSupportsHold"
+      ),
+      [
+        {
+          $: {
+            "android:name": "ExpoCallKitTelecomSupportsHold",
+            "android:value": String(enabled ?? true),
+          },
+        },
+      ]
+    );
+    assert.deepEqual(
+      metadata.find((item) => item.$["android:name"] === "unrelated"),
+      { $: { "android:name": "unrelated", "android:value": "retained" } }
+    );
+  }
+  for (const invalid of ["false", 0, null]) {
+    assert.throws(
+      () =>
+        Reflect.apply(withAndroidOptions, undefined, [
+          { name: "hold-test", slug: "hold-test" },
+          { androidSupportsHold: invalid },
+        ]),
+      /androidSupportsHold must be a boolean/
+    );
+  }
+});

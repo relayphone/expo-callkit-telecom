@@ -68,7 +68,7 @@ class ConversationEngine(val context: Context) {
         current.endJob = work
         work.start()
     }
-    internal fun canWarmIncoming(id: String): Boolean = calls[id]?.let { !it.terminal && it.incoming?.intent == null } == true
+    internal fun canWarmIncoming(id: String): Boolean = calls[id]?.let { !it.terminal && !it.ending && !it.ringExpired && it.incoming?.intent == null } == true
     private val telecom = CallsManager(context).apply {
         registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE or CallsManager.CAPABILITY_SUPPORTS_VIDEO_CALLING)
     }
@@ -94,7 +94,8 @@ class ConversationEngine(val context: Context) {
     internal var policy = org.json.JSONObject(mapOf("media" to "livekit", "credentials" to "fromPush", "prewarm" to true))
     val mediaAdapter = metadata?.getString("VoIPConversationsMediaAdapter") ?: "webrtc"
     private enum class Placement { PENDING, SUCCEEDED, FAILED }
-    private class Call(val state: MutableMap<String, Any?>, val reservation: NativeIdentityReservations.Reservation) {
+    private class Call(val state: MutableMap<String, Any?>, val reservation: NativeIdentityReservations.Reservation,
+                       val capabilities: ConversationCapabilities, val expiresAtMillis: Long?) {
         val ready = CompletableDeferred<CallControlScope>()
         val permitted = CompletableDeferred<Boolean>()
         var job: Job? = null
@@ -110,6 +111,7 @@ class ConversationEngine(val context: Context) {
         var nonActionEnd = false
         var placement = Placement.SUCCEEDED
         var timeout: Job? = null
+        var ringExpired = false
         var endpoints: List<CallEndpointCompat> = emptyList()
         var incoming: NativeEndedIntake.Entry? = null
         var endJob: Job? = null
@@ -139,6 +141,8 @@ class ConversationEngine(val context: Context) {
         }, ContextCompat.RECEIVER_NOT_EXPORTED)
     }
     internal var incomingTimeoutMillis = (metadata?.getInt("ExpoCallKitTelecomIncomingCallTimeout", 45) ?: 45).coerceAtLeast(1).toLong()*1000
+    internal var incomingRingDeadline = IncomingRingDeadline()
+    internal var capabilities = ConversationCapabilities(metadata?.getBoolean("ExpoCallKitTelecomSupportsHold", true) ?: true)
     internal var answerTimeoutMillis = (metadata?.getInt("ExpoCallKitTelecomFulfillAnswerCallTimeout", 30) ?: 30).coerceAtLeast(1).toLong() * 1000
     private var revision = 0L
     private var publishedRevision = 0L
@@ -243,6 +247,11 @@ class ConversationEngine(val context: Context) {
             if (ownership.intent != null) {
                 current.permitted.complete(false)
                 drainEnded(current)
+                mapOf("status" to "reported", "id" to id)
+            } else if (current.admitted && current.ringExpired) {
+                // Expiry can finish while policy evaluation is suspended. Keep the report's
+                // dedupe result without presenting or warming a call that already expired.
+                current.permitted.complete(false)
                 mapOf("status" to "reported", "id" to id)
             } else if (calls[id] !== current || current.terminal) failure("conversation") else {
                 current.permitted.complete(filter == null)
@@ -357,7 +366,7 @@ class ConversationEngine(val context: Context) {
         val call = Call(linkedMapOf("id" to id, "direction" to if (incoming) "incoming" else "outgoing",
             "status" to if (incoming) "ringing" else "dialing", "members" to listOf(member),
             "isMuted" to false, "isVideo" to video, "payload" to payload?.filterKeys { it != "media" },
-            "capabilities" to mapOf("hold" to true, "merge" to false, "tones" to false, "video" to true)), reservation)
+            "capabilities" to capabilities.snapshot()), reservation, capabilities, (payload?.get("expiresAtMillis") as? Number)?.toLong())
         call.visible = !incoming
         calls[id] = call
         call.audio = NativeAudioLifecycle({ live(call) && call.active }, { audio.mode }) { event ->
@@ -383,7 +392,7 @@ class ConversationEngine(val context: Context) {
         val attributes = CallAttributesCompat((member["displayName"] ?: handle).toString(), address ?: Uri.fromParts("sip", handle, null),
             if (incoming) CallAttributesCompat.DIRECTION_INCOMING else CallAttributesCompat.DIRECTION_OUTGOING,
             if (video) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL,
-            CallAttributesCompat.SUPPORTS_SET_INACTIVE, preferredStartingCallEndpoint = preferredEndpoint)
+            call.capabilities.telecom, preferredStartingCallEndpoint = preferredEndpoint)
         call.job = jobs.launch {
             try {
                 signal(call, NativeMediaStage.CORE_ADD_REQUESTED)
@@ -400,7 +409,9 @@ class ConversationEngine(val context: Context) {
                         if (call.ending || call.incoming?.intent != null) terminal(id, call.state["endReason"] as? String ?: call.incoming?.intent?.payload?.reason ?: "failed")
                         else native(id, NativePerformedAction.End, NativeActionOrigin.SYSTEM)
                     } } },
-                    onSetActive = { withTimeout(4500) { check(call.permitted.await()); if (calls[id] === call) hold(id, false, NativeActionOrigin.SYSTEM) } },
+                    onSetActive = { withTimeout(4500) { check(call.permitted.await());
+                        // Initial activation remains valid when this call does not offer hold/resume.
+                        if (calls[id] === call && call.capabilities.supportsHold) hold(id, false, NativeActionOrigin.SYSTEM) } },
                     onSetInactive = { withTimeout(4500) { if (calls[id] === call) hold(id, true, NativeActionOrigin.SYSTEM) } }) {
                     if (calls[id] !== call || !identities.isCurrent(call.reservation) || call.terminal) {
                         launch(start = CoroutineStart.UNDISPATCHED) {
@@ -418,9 +429,12 @@ class ConversationEngine(val context: Context) {
                     publish()
                     if (!incoming) ConversationService.show(context, id, call.state)
                     call.timeout = jobs.launch {
-                        delay(if (incoming) incomingTimeoutMillis else
-                            (metadata?.getInt("ExpoCallKitTelecomOutgoingCallTimeout", 60) ?: 60).coerceAtLeast(1).toLong()*1000)
-                        if (calls[id] === call && call.state["connectedAt"] == null) terminateLater(id, "unanswered")
+                        if (incoming) incomingRingDeadline.await(call.expiresAtMillis, incomingTimeoutMillis)
+                        else delay((metadata?.getInt("ExpoCallKitTelecomOutgoingCallTimeout", 60) ?: 60).coerceAtLeast(1).toLong()*1000)
+                        if (calls[id] === call && call.state["connectedAt"] == null) {
+                            if (incoming) call.ringExpired = true
+                            terminateLater(id, "unanswered")
+                        }
                     }
                     val controls = this
                     call.collectors = jobs.launch {
@@ -544,6 +558,7 @@ class ConversationEngine(val context: Context) {
     internal suspend fun hold(id: String, held: Boolean, origin: NativeActionOrigin = NativeActionOrigin.APP) {
         val current = call(id)
         requireLive(current)
+        current.capabilities.requireHold()
         if ((current.state["status"] == "held") == held) return
         native(id, NativePerformedAction.Hold(held), origin,
             if (origin == NativeActionOrigin.APP) suspend { checked(if (held) control(id).setInactive() else control(id).setActive()) } else null)

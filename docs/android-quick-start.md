@@ -129,6 +129,20 @@ report-before-warmup behavior.
 
 ## Configure a host for native answer and audio
 
+Incoming pushes can set `IncomingCallPush.expiresAtMillis` to their absolute UTC
+expiry in Unix epoch milliseconds. The default JSON decoder reads the same
+optional `expiresAtMillis` field. It replaces the configured incoming timeout,
+so an invitation can ring for less or more than 45 seconds. An already expired
+invitation ends immediately as `unanswered`; time spent in admission or Telecom
+reporting does not extend its expiry. Omit the field to keep the configured
+`incomingCallTimeout` (45 seconds by default). Answering or ending the call
+cancels its ringing deadline; duplicate invitations do not extend it.
+
+Set `androidSupportsHold: false` in the plugin options and rebuild to disable
+hold/resume. The default is `true`. Disabled calls advertise `capabilities.hold:
+false`, omit Core-Telecom's hold flag, and reject `setHeld` with the existing
+typed `unsupported` error. Normal answer and activation remain available.
+
 Select the Android native LiveKit engine independently of the SDK's Apple audio
 adapter, then rebuild the native application:
 

@@ -18,6 +18,8 @@ export type ComposedPluginProps = VoIPConversationsPluginProps & {
   androidNativeMedia?: AndroidNativeMedia;
   /** FCM service owner. App services forward call messages to CallPushIntake. Defaults to library. */
   androidFcmService?: "library" | "app";
+  /** Advertise hold/resume to Core-Telecom. Defaults to true. */
+  androidSupportsHold?: boolean;
   outgoingCallTimeout?: number;
   defaultRingtoneAndroid?: string;
 };

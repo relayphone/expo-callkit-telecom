@@ -21,6 +21,17 @@ class CallPushIntakeTest {
         }
     }
 
+    @Test fun expirySurvivesTypedAndDefaultDecodedPushes() {
+        val expiring = invitation.copy(expiresAtMillis = 1_900_000_000_123L)
+        assertEquals(expiring.expiresAtMillis, expiring.payload()["expiresAtMillis"])
+        for (type in listOf("incomingCall", "incoming_call")) {
+            assertEquals(DecodedCallPush.Incoming(expiring), DefaultCallPushDecoder.decode(mapOf(
+                "messageType" to type, type to JSONObject(expiring.payload()).toString())))
+        }
+        assertNull((DefaultCallPushDecoder.decode(mapOf("messageType" to "incomingCall",
+            "incomingCall" to JSONObject(invitation.payload()).toString())) as DecodedCallPush.Incoming).push.expiresAtMillis)
+    }
+
     @Test fun defaultDecoderReadsEndedAliasesAndIgnoresOtherData() {
         val end = EndedCallPush("server", "end-event", "answeredElsewhere")
         for (type in listOf("callEnded", "call_ended")) {
