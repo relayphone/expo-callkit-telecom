@@ -168,7 +168,10 @@ class ConversationEngine(val context: Context) {
     }
     private fun publish() {
         val states = calls.filterValues { it.visible }.map { (id, call) -> publicState(id, call) }.sortedBy { it["id"] as String }
-        if (snapshot["conversations"] != states) snapshot = mapOf("revision" to ++revision, "conversations" to states)
+        if (snapshot["conversations"] != states) {
+            snapshot = mapOf("revision" to ++revision, "conversations" to states)
+            ConversationService.refresh(context, states)
+        }
         if (publishing) return
         publishing = true
         try {

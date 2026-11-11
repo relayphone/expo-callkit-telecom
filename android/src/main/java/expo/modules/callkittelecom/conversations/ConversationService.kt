@@ -18,7 +18,10 @@ import kotlinx.coroutines.launch
 /** CallStyle notification plus phoneCall foreground service for all supported Android versions. */
 class ConversationService : Service() {
     companion object {
-        private val notifications = linkedMapOf<String, Pair<Int, Notification>>()
+        private const val FOREGROUND_ID = 6999
+        private val roster = CallNotificationRoster()
+        private val waitingIds = linkedMapOf<String, Int>()
+        private var foreground: Notification? = null
         private var nextId = 7000
         fun incomingChannelId(context: Context): String {
             val metadata = context.packageManager.getApplicationInfo(context.packageName, android.content.pm.PackageManager.GET_META_DATA).metaData
@@ -26,6 +29,35 @@ class ConversationService : Service() {
             return "conversations-incoming-v2-${ringtone.hashCode().toUInt().toString(16)}"
         }
         fun show(context: Context, id: String, state: Map<String, Any?>) {
+            if (roster.put(id, state)) render(context)
+        }
+        internal fun refresh(context: Context, states: List<Map<String, Any?>>) {
+            if (roster.refresh(states)) render(context)
+        }
+        fun remove(context: Context, id: String) {
+            if (roster.remove(id)) render(context)
+        }
+        private fun render(context: Context) {
+            val plan = roster.plan()
+            val manager = context.getSystemService(NotificationManager::class.java)
+            val waiting = plan.waiting.map { it["id"] as String }.toSet()
+            for (id in waitingIds.keys.toList()) if (id !in waiting) manager.cancel(waitingIds.remove(id)!!)
+            foreground = plan.primary?.let { notification(context, it, plan.heldSummary) }
+            for (state in plan.waiting) {
+                val notificationId = waitingIds.getOrPut(state["id"] as String) { nextId++ }
+                manager.notify(notificationId, notification(context, state, null))
+            }
+            // Ringing can post synchronously before a filtered-call cancellation, preserving
+            // repeat-caller history. Ongoing CallStyle posts only through startForeground.
+            if (plan.primary?.get("status") == "ringing") manager.notify(FOREGROUND_ID, foreground!!)
+            val intent = Intent(context, ConversationService::class.java)
+            if (foreground == null) {
+                manager.cancel(FOREGROUND_ID)
+                context.startService(intent)
+            } else ContextCompat.startForegroundService(context, intent)
+        }
+        private fun notification(context: Context, state: Map<String, Any?>, heldSummary: String?): Notification {
+            val id = state["id"] as String
             val manager = context.getSystemService(NotificationManager::class.java)
             val metadata = context.packageManager.getApplicationInfo(context.packageName, android.content.pm.PackageManager.GET_META_DATA).metaData
             val ringtone = metadata?.getString("ExpoCallKitTelecomDefaultRingtone") ?: "default"
@@ -45,6 +77,7 @@ class ConversationService : Service() {
                 CallNotificationContent(
                     title = caller?.displayName ?: member?.get("displayName")?.toString() ?: "Caller",
                     channelId = defaultChannelId,
+                    heldSummary = heldSummary,
                     fullScreenIntent = if (ringing) PendingIntent.getActivity(context, 0,
                         Intent(context, ConversationActivity::class.java).setData(Uri.Builder().scheme("voip-conversation").authority(context.packageName).appendPath(id).build()),
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) else null,
@@ -65,28 +98,23 @@ class ConversationService : Service() {
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setFullScreenIntent(content.fullScreenIntent, ringing)
                 .setContentIntent(content.contentIntent)
+            if (heldSummary != null) {
+                builder.setContentText(content.heldSummary)
+                // Compat CallStyle reads extras directly when rendering on API 26–30.
+                builder.addExtras(Bundle().apply { putCharSequence(NotificationCompat.EXTRA_TEXT, content.heldSummary) })
+            }
             content.extraActions.forEach { builder.addAction(it) }
             builder.setStyle(if (ringing) NotificationCompat.CallStyle.forIncomingCall(person, action("end"), action("join"))
                 else NotificationCompat.CallStyle.forOngoingCall(person, action("end")))
-            val notificationId = notifications[id]?.first ?: nextId++
-            notifications[id] = notificationId to builder.build().apply {
+            return builder.build().apply {
                 if (ringing) flags = flags or Notification.FLAG_INSISTENT
             }
-            // Enqueue synchronously so a subsequent filtered-call cancellation records the
-            // caller attempt even if the foreground service has not started yet.
-            manager.notify(notificationId, notifications[id]!!.second)
-            ContextCompat.startForegroundService(context, Intent(context, ConversationService::class.java))
-        }
-        fun remove(context: Context, id: String) {
-            notifications.remove(id)?.let { context.getSystemService(NotificationManager::class.java).cancel(it.first) }
-            context.startService(Intent(context, ConversationService::class.java))
         }
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val first = notifications.values.firstOrNull()
-        if (first == null) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
-        ServiceCompat.startForeground(this, first.first, first.second, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
-        notifications.values.drop(1).forEach { getSystemService(NotificationManager::class.java).notify(it.first, it.second) }
+        val notification = foreground
+        if (notification == null) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
+        ServiceCompat.startForeground(this, FOREGROUND_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
         return START_NOT_STICKY
     }
     override fun onBind(intent: Intent?): IBinder? = null

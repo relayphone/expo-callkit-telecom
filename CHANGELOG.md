@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sound and vibration repeat until answered, ended or silenced by Android. Applies
   to both default and app-provided channels; ongoing notifications clear the flag.
 
+* **android:** use one stable foreground notification for the primary call. Held
+  calls no longer have their own cards; the primary card summarises them with
+  default text or `CallNotificationContent.heldSummary`. Call-waiting incoming
+  calls retain separate ringing cards until answered or ended.
+
 * **ios:** call notifications post "missed" only when the caller hung up or nobody answered. They're removed when the call ended on the device or was answered or declined elsewhere; failures and other end reasons keep the notification. This changes the SDK's default behavior. Native integrations that configure their own SDK notifier can restore the previous default with `CallNotifier.Options(endedWithoutJoining: { _ in .missedCall })`.
 
 ### Bug Fixes

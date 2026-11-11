@@ -10,6 +10,7 @@ import android.content.Intent
 import android.graphics.drawable.Icon
 import android.os.Looper
 import android.provider.Settings
+import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -31,10 +32,12 @@ class ConversationPresentationJourneyTest {
         val engine = ConversationEngine.get(context)
         val manager = context.getSystemService(NotificationManager::class.java)
         val id = "presentation-${System.nanoTime()}"
+        private val ids = mutableListOf(id)
         val channelId = "app-$id"
         private val previousMedia = engine.nativeMedia
         private val previousPolicy = engine.policy
         private val previousEmit = engine.emit
+        private val previousAcceptUnhandled = engine.actions.acceptUnhandled
         val actions = CopyOnWriteArrayList<ConversationAction>()
         val performed = mutableListOf<Map<*, *>>()
         var ended: Map<*, *>? = null
@@ -52,19 +55,37 @@ class ConversationPresentationJourneyTest {
             ConversationActions.configure { actions += it; ConversationActionResult.Proceed() }
         }
 
-        fun state() = (engine.snapshot["conversations"] as List<*>).filterIsInstance<Map<*, *>>().firstOrNull { it["id"] == id }
-        suspend fun incoming() {
-            assertEquals("reported", engine.incoming(IncomingCallPush(id, "incoming-$id",
-                mapOf("handleType" to "generic", "value" to id, "displayName" to id),
+        fun state(callId: String = id) = (engine.snapshot["conversations"] as List<*>).filterIsInstance<Map<*, *>>().firstOrNull { it["id"] == callId }
+        suspend fun outgoing(callId: String) {
+            if (callId !in ids) ids += callId
+            engine.actions.acceptUnhandled = true
+            assertEquals(callId, engine.start(mapOf("id" to callId, "to" to mapOf("id" to callId, "displayName" to callId))))
+        }
+        suspend fun incoming(callId: String = id) {
+            if (callId !in ids) ids += callId
+            assertEquals("reported", engine.incoming(IncomingCallPush(callId, "incoming-$callId",
+                mapOf("handleType" to "generic", "value" to callId, "displayName" to callId),
                 metadata = mapOf("card" to "app-card"), media = mapOf("token" to "private-grant")).payload())["status"])
         }
         fun activityIntent(name: String) = PendingIntent.getActivity(context, 0,
             Intent(context, ConversationActivity::class.java).setAction("$id-$name"), PendingIntent.FLAG_IMMUTABLE)
-        suspend fun notification(matches: (Notification) -> Boolean = { true }): Notification = withTimeout(5000) {
+        fun cards() = manager.activeNotifications.filter { it.notification.category == Notification.CATEGORY_CALL }
+        suspend fun card(callId: String = id, count: Int = 1, matches: (Notification) -> Boolean = { true }): StatusBarNotification = withTimeout(5000) {
+            while (true) {
+                val cards = cards()
+                val card = cards.singleOrNull { it.notification.extras
+                    .getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name?.toString() == callId }
+                if (cards.size == count && card != null && matches(card.notification)) return@withTimeout card
+                delay(10)
+            }
+            error("unreachable")
+        }
+        suspend fun notification(callId: String = id, matches: (Notification) -> Boolean = { true }): Notification = withTimeout(5000) {
             while (true) {
                 val notification = manager.activeNotifications.firstOrNull {
                     val person = it.notification.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)
-                    it.notification.category == Notification.CATEGORY_CALL && (person?.name == id || it.notification.channelId == channelId)
+                    it.notification.category == Notification.CATEGORY_CALL &&
+                        (person?.name == callId || (callId == id && it.notification.channelId == channelId))
                 }?.notification
                 if (notification != null && matches(notification)) return@withTimeout notification
                 delay(10)
@@ -72,19 +93,20 @@ class ConversationPresentationJourneyTest {
             error("unreachable")
         }
         suspend fun removed() = withTimeout(5000) {
-            while (state() != null || TelecomEvidence.calls().isNotEmpty() || manager.activeNotifications.any {
+            while (ids.any { state(it) != null } || TelecomEvidence.calls().isNotEmpty() || manager.activeNotifications.any {
                 it.notification.channelId == channelId || it.notification.extras
-                    .getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name == id
+                    .getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name?.toString() in ids
             }) delay(10)
         }
         suspend fun close() {
             try {
                 ConversationPresentation.configure(null); ConversationActions.configure(null)
-                if (state() != null) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+                for (callId in ids) if (state(callId) != null) engine.report(callId, mapOf("type" to "ended", "reason" to "remoteEnded"))
                 removed()
             } finally {
                 manager.deleteNotificationChannel(channelId)
                 engine.emit = previousEmit; engine.policy = previousPolicy; engine.nativeMedia = previousMedia
+                engine.actions.acceptUnhandled = previousAcceptUnhandled
             }
         }
     }
@@ -124,9 +146,9 @@ class ConversationPresentationJourneyTest {
         assertNotNull(ringing.extras.getParcelable(Notification.EXTRA_ANSWER_INTENT, PendingIntent::class.java))
         assertNotNull(ringing.extras.getParcelable(Notification.EXTRA_DECLINE_INTENT, PendingIntent::class.java))
         assertTrue(ringing.flags and Notification.FLAG_INSISTENT != 0)
-        assertEquals(state(), entries.single().first)
-        assertEquals(CallPhase.RINGING, entries.single().second)
-        val payload = entries.single().first["payload"] as Map<*, *>
+        assertEquals(state(), entries.last().first)
+        assertTrue(entries.all { it.second == CallPhase.RINGING })
+        val payload = entries.last().first["payload"] as Map<*, *>
         assertFalse(payload.containsKey("media")); assertEquals(mapOf("card" to "app-card"), payload["metadata"])
         val retained = manager.getNotificationChannel(channelId)
         assertEquals(channel.sound, retained.sound); assertTrue(retained.shouldVibrate())
@@ -136,7 +158,7 @@ class ConversationPresentationJourneyTest {
         val ongoing = notification { it.flags and Notification.FLAG_INSISTENT == 0 }
         assertNull(ongoing.fullScreenIntent); assertEquals(content, ongoing.contentIntent)
         assertEquals(listOf(ConversationAction.Answer(id, id, "app")), actions.toList())
-        assertEquals(listOf(CallPhase.RINGING, CallPhase.ONGOING), entries.map { it.second })
+        assertEquals(listOf(CallPhase.RINGING, CallPhase.ONGOING), entries.map { it.second }.distinct())
         assertTrue(performed.any { it["origin"] == "app" && (it["action"] as Map<*, *>)["kind"] == "answer" })
         ConversationControls.end(context, id)
         removed()
@@ -154,5 +176,71 @@ class ConversationPresentationJourneyTest {
         removed()
         assertEquals(listOf(ConversationAction.Decline(id, id, "app")), actions.toList())
         assertEquals("local", ended?.get("reason"))
+    }
+
+    @Test fun freshOutgoingCallUsesForegroundWithoutFullScreenOrInsistentFlags() = fixture {
+        outgoing(id)
+        val first = card().notification
+        assertNull(first.fullScreenIntent)
+        assertTrue(first.flags and Notification.FLAG_FOREGROUND_SERVICE != 0)
+        assertEquals(0, first.flags and Notification.FLAG_INSISTENT)
+        ConversationControls.end(context, id)
+        removed()
+    }
+
+    @Test fun activeAndHeldCallsShareOneCardAndPrimaryEndRestoresHeldOnTheSameId() = fixture {
+        outgoing(id)
+        val foregroundId = card().id
+        engine.report(id, mapOf("type" to "connected")); engine.hold(id, true)
+        val secondId = "$id-second"
+        outgoing(secondId)
+        engine.report(secondId, mapOf("type" to "connected"))
+        val second = card(secondId) { it.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "1 call on hold" }
+        assertEquals(foregroundId, second.id)
+        assertTrue(second.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0)
+        assertEquals("held", state()?.get("status"))
+        ConversationPresentation.configure { conversation, _ ->
+            assertEquals(secondId, conversation["id"])
+            CallNotificationContent(heldSummary = "A paused call")
+        }
+        engine.report(secondId, mapOf("type" to "updated", "video" to true))
+        card(secondId) { it.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "A paused call" }
+        ConversationPresentation.configure(null)
+        ConversationControls.end(context, secondId)
+        val restored = card { it.flags and Notification.FLAG_FOREGROUND_SERVICE != 0 }
+        assertEquals(foregroundId, restored.id)
+        assertEquals("held", state()?.get("status"))
+        ConversationControls.end(context, id)
+        removed()
+    }
+
+    @Test fun waitingIncomingHasItsOwnNonForegroundCardAndAnswerUsesTheStablePrimaryId() = fixture {
+        outgoing(id); engine.report(id, mapOf("type" to "connected"))
+        val foregroundId = card().id
+        var waitingId = "$id-waiting"
+        incoming(waitingId)
+        val waiting = card(waitingId, count = 2)
+        assertNotEquals(foregroundId, waiting.id)
+        assertEquals(0, waiting.notification.flags and Notification.FLAG_FOREGROUND_SERVICE)
+        assertTrue(waiting.notification.flags and Notification.FLAG_INSISTENT != 0)
+        assertNotNull(waiting.notification.fullScreenIntent)
+        assertEquals(foregroundId, card(id, count = 2).id)
+        ConversationControls.decline(context, waitingId)
+        assertEquals(foregroundId, card().id)
+        assertEquals("connected", state()?.get("status"))
+        waitingId = "$id-next-waiting"
+        incoming(waitingId)
+        card(waitingId, count = 2)
+        withContext(Dispatchers.Default) { ConversationControls.answer(context, waitingId) }
+        val answered = card(waitingId) { it.flags and Notification.FLAG_FOREGROUND_SERVICE != 0 }
+        assertEquals(foregroundId, answered.id)
+        assertEquals(0, answered.notification.flags and Notification.FLAG_INSISTENT)
+        assertNull(answered.notification.fullScreenIntent)
+        assertEquals("held", state()?.get("status"))
+        assertEquals(ConversationAction.Answer(waitingId, waitingId, "app"), actions.last { it is ConversationAction.Answer })
+        ConversationControls.end(context, waitingId)
+        assertEquals(foregroundId, card().id)
+        ConversationControls.end(context, id)
+        removed()
     }
 }

@@ -266,6 +266,20 @@ values for app actions such as Assistant. [CallStyle](https://developer.android.
 allows one custom action while ringing and up to two while ongoing, alongside its
 required controls. Extra actions beyond the platform's visible limit may be omitted.
 
+One stable foreground card shows the primary call: the active call, otherwise the
+most recently held call, otherwise the ringing call. Other held calls have no
+separate cards. The primary card keeps its End control and summarises all held calls
+with text such as "1 call on hold" or "2 calls on hold". Return a non-null
+`heldSummary` in `CallNotificationContent` to override that wording; it is shown
+only when calls are held. The primary card's customizer receives the primary
+call's public snapshot entry. Unhold calls from your app or the system UI.
+
+A waiting incoming call has its own incoming CallStyle card alongside the primary
+card. Answering removes that waiting card and presents the answered call on the
+same foreground notification ID. Ending the primary call promotes a remaining
+held call on that ID. The library never transfers foreground ownership between
+notification IDs.
+
 ## Ends your app learns about
 
 When your native server integration learns that an incoming call ended, report

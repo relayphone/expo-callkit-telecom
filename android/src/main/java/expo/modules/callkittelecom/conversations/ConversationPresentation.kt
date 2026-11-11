@@ -20,6 +20,8 @@ data class CallNotificationContent(
     val extraActions: List<NotificationCompat.Action> = emptyList(),
     /** An existing app-created channel; its sound and vibration settings are preserved. */
     val channelId: String? = null,
+    /** Wording for the primary card's held-call summary; used only when calls are held. */
+    val heldSummary: String? = null,
 )
 
 /** Runs on main; return immediately without I/O. The public snapshot entry contains no media grants. */
@@ -43,7 +45,48 @@ object ConversationPresentation {
             fullScreenIntent = if (phase == CallPhase.RINGING) content.fullScreenIntent ?: defaults.fullScreenIntent else null,
             contentIntent = content.contentIntent ?: defaults.contentIntent,
             channelId = content.channelId ?: defaults.channelId,
+            heldSummary = content.heldSummary ?: defaults.heldSummary,
         )
+    }
+}
+
+/** Main-confined public entries admitted to notification presentation, including hold recency. */
+internal class CallNotificationRoster {
+    private data class Entry(val state: Map<String, Any?>, val entered: Long)
+    private val entries = linkedMapOf<String, Entry>()
+    private var sequence = 0L
+
+    fun put(id: String, state: Map<String, Any?>): Boolean {
+        val value = state + ("id" to id)
+        val previous = entries[id]
+        if (previous?.state == value) return false
+        val entered = if (previous == null || previous.state["status"] != value["status"]) ++sequence else previous.entered
+        entries[id] = Entry(value, entered)
+        return true
+    }
+    fun refresh(states: List<Map<String, Any?>>): Boolean {
+        var changed = false
+        for (state in states) {
+            val id = state["id"] as String
+            if (id in entries && put(id, state)) changed = true
+        }
+        return changed
+    }
+    fun remove(id: String): Boolean = entries.remove(id) != null
+
+    data class Plan(val primary: Map<String, Any?>?, val waiting: List<Map<String, Any?>>, val heldCount: Int) {
+        val heldSummary: String? get() = when (heldCount) {
+            0 -> null
+            1 -> "1 call on hold"
+            else -> "$heldCount calls on hold"
+        }
+    }
+    fun plan(): Plan {
+        val active = entries.values.filter { it.state["status"] in listOf("dialing", "connecting", "connected") }
+        val held = entries.values.filter { it.state["status"] == "held" }
+        val ringing = entries.values.filter { it.state["status"] == "ringing" }
+        val primary = active.maxByOrNull { it.entered } ?: held.maxByOrNull { it.entered } ?: ringing.firstOrNull()
+        return Plan(primary?.state, ringing.filter { it !== primary }.map { it.state }, held.size)
     }
 }
 
