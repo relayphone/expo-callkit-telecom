@@ -16,16 +16,17 @@ internal enum class AndroidNativeMedia {
 internal class NativeMediaOwner(
     private val selection: AndroidNativeMedia,
     private val audio: NativeAudioLifecycle,
-    private val create: () -> NativeMediaController,
+    private val create: (Map<String, Any?>?) -> NativeMediaController,
 ) {
     private var controller: NativeMediaController? = null
     private var closed = false
     private var transition = 0L
+    internal val isPrewarmed: Boolean get() = controller?.isPrewarmed == true
 
     fun prewarm() {
         check(!closed)
         if (selection == AndroidNativeMedia.NONE || controller != null) return
-        val created = create()
+        val created = create(null)
         controller = created
         try { created.prewarm() }
         catch (error: Exception) {
@@ -36,11 +37,15 @@ internal class NativeMediaOwner(
     }
 
     /** Called after a successful native answer; the app-managed path owns no native session. */
-    fun answered() {
+    fun answered(media: Map<String, Any?>? = null) {
         check(!closed)
         transition++
         if (selection == AndroidNativeMedia.NONE) audio.coreActivated()
         else {
+            if (media != null && !isPrewarmed) {
+                controller?.close("replaced")
+                controller = create(media).also { it.prewarm() }
+            }
             prewarm()
             controller!!.answered { audio.nativeActivated() }
         }

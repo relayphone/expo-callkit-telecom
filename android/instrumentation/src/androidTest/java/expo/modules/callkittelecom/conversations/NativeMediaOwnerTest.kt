@@ -52,6 +52,17 @@ class NativeMediaOwnerTest {
         }
     }
 
+    @Test fun aPrewarmedSessionIgnoresTheAnswerGrant() = fixture {
+        val owner = owner()
+        owner.prewarm()
+        withTimeout(1000) { while (!owner.isPrewarmed) delay(10) }
+        owner.answered(mapOf("provider" to "livekit", "token" to "unused"))
+        withTimeout(1000) { activationEntered.await() }
+        assertEquals(1, creations)
+        assertEquals(1, invitations.size)
+        assertNull((invitations.single()["media"] as Map<*, *>)["token"])
+    }
+
     @Test fun nativeActivationComesFromAudioAuthorityBeforeTransportAndCannotDuplicateOnUnmute() = fixture {
         mode = AudioManager.MODE_NORMAL
         val media = owner()
@@ -220,6 +231,7 @@ class NativeMediaOwnerTest {
         val pauses = AtomicInteger()
         val modeReads = AtomicInteger()
         val events = mutableListOf<NativeAudioEvent>()
+        val invitations = java.util.concurrent.CopyOnWriteArrayList<Map<String, Any?>>()
         var onAudioEvent: (NativeAudioEvent) -> Unit = {}
         var creations = 0
         var active = true
@@ -229,6 +241,7 @@ class NativeMediaOwnerTest {
         var media: NativeMediaOwner? = null
         val session = object : NativeMediaSession {
             override suspend fun prewarm(payload: Map<String, Any?>) {
+                invitations += payload
                 preparationEntered.complete(Unit); releasePreparation.await(); prepared.complete(Unit)
             }
             override suspend fun activate() {
@@ -246,11 +259,11 @@ class NativeMediaOwnerTest {
             val audio = NativeAudioLifecycle({ active }, { modeReads.incrementAndGet(); mode }) {
                 events.add(it); onAudioEvent(it)
             }
-            return NativeMediaOwner(AndroidNativeMedia.LIVEKIT, audio) {
+            return NativeMediaOwner(AndroidNativeMedia.LIVEKIT, audio) { answerMedia ->
                 creations++
                 NativeMediaController(InstrumentationRegistry.getInstrumentation().targetContext,
-                    mapOf("serverCallId" to "owner-test", "media" to mapOf("provider" to "livekit",
-                        "expiresAt" to System.currentTimeMillis() / 1000 + 120)),
+                    mapOf("serverCallId" to "owner-test", "media" to (answerMedia ?: mapOf("provider" to "livekit",
+                        "expiresAt" to System.currentTimeMillis() / 1000 + 120))),
                     JSONObject(mapOf("media" to "livekit")), scope,
                     { failed.complete(Unit) }, { connected.complete(Unit) })
             }.also { media = it }

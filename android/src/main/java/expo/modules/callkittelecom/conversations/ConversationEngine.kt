@@ -109,6 +109,9 @@ class ConversationEngine(val context: Context) {
         val receipts = mutableMapOf<NativePerformedAction, NativeActionReceipt>()
         var holdingTerminal = false
         var nonActionEnd = false
+        var localEndPending = false
+        var holdRevision = 0L
+        var muteRevision = 0L
         var placement = Placement.SUCCEEDED
         var timeout: Job? = null
         var ringExpired = false
@@ -204,13 +207,13 @@ class ConversationEngine(val context: Context) {
         } } finally { flushingTerminals = false }
     }
     @Suppress("UNCHECKED_CAST")
-    private fun signal(current: Call, stage: NativeMediaStage, measurements: Map<String, Long> = emptyMap()) {
+    private fun signal(current: Call, stage: NativeMediaStage, measurements: Map<String, Long> = emptyMap(), reason: String? = null) {
         ((current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String)
-            ?.let { NativeMediaSignals.emit(it, stage, measurements) }
+            ?.let { NativeMediaSignals.emit(it, stage, measurements, reason = reason) }
     }
     private fun call(id: String) = calls[id] ?: error("unknown_conversation")
     private fun live(current: Call): Boolean = calls[current.state["id"] as String] === current &&
-        identities.isCurrent(current.reservation) && !current.terminal && !current.ending && current.incoming?.intent == null
+        identities.isCurrent(current.reservation) && !current.terminal && !current.ending && !current.localEndPending && current.incoming?.intent == null
     private fun requireLive(current: Call) { check(live(current)) { "unknown_conversation" } }
     private suspend fun control(id: String): CallControlScope {
         val current = call(id)
@@ -341,7 +344,7 @@ class ConversationEngine(val context: Context) {
         } catch (error: Exception) {
             current.placement = Placement.FAILED
             withContext(NonCancellable) {
-                if (calls[id] === current && identities.isCurrent(reservation)) {
+                if (calls[id] === current && identities.isCurrent(reservation) && !current.localEndPending) {
                     current.failure = EndedFailure.ofHandler(error)
                     if (current.admitted) runCatching { finish(id, "failed", current.failure) }
                     if (calls[id] === current) terminal(id, "failed")
@@ -397,14 +400,7 @@ class ConversationEngine(val context: Context) {
             try {
                 signal(call, NativeMediaStage.CORE_ADD_REQUESTED)
                 telecom.addCall(attributes,
-                    onAnswer = { withTimeout(4500) {
-                        check(call.permitted.await()) { "Incoming call filtered" }
-                        if (call.state["status"] == "ringing") {
-                            signal(call, NativeMediaStage.ANSWER_REQUESTED); call.timeout?.cancel()
-                            // A failed answer ends the Core call; record why before it does.
-                            if (calls[id] === call) native(id, NativePerformedAction.Answer, NativeActionOrigin.SYSTEM)
-                        }
-                    } },
+                    onAnswer = { if (calls[id] === call) answerFromSystem(id) },
                     onDisconnect = { withTimeout(4500) { if (calls[id] === call) {
                         if (call.ending || call.incoming?.intent != null) terminal(id, call.state["endReason"] as? String ?: call.incoming?.intent?.payload?.reason ?: "failed")
                         else native(id, NativePerformedAction.End, NativeActionOrigin.SYSTEM)
@@ -468,14 +464,15 @@ class ConversationEngine(val context: Context) {
     private fun prepareMedia(id: String, payload: Map<String, Any?>, prewarm: Boolean = true) {
         val call = call(id)
         run {
-            call.media = call.media ?: NativeMediaOwner(nativeMedia, call.audio) { NativeMediaController(context, payload,
+            call.media = call.media ?: NativeMediaOwner(nativeMedia, call.audio) { answerMedia -> NativeMediaController(context,
+                if (answerMedia == null) payload else payload + ("media" to answerMedia),
                 policy, jobs, failed = {
                 if (calls[id] === call) terminateLater(id, "failed", EndedFailure.MEDIA)
             }, connected = {
                 if (calls[id] === call) {
                     call.timeout?.cancel()
                     call.state["connectedAt"] = call.state["connectedAt"] ?: Instant.now().toString()
-                    if (call.state["status"] != "held") call.state["status"] = "connected"
+                    if (call.state["status"] != "held") markConnected(call)
                     publish()
                 }
             }) }
@@ -486,19 +483,58 @@ class ConversationEngine(val context: Context) {
     private suspend fun native(id: String, action: NativePerformedAction, origin: NativeActionOrigin,
                                request: (suspend () -> Unit)? = null) {
         val current = call(id)
-        val receipt = current.receipts.getOrPut(action) { NativeActionReceipt(id, origin, action) }
+        @Suppress("UNCHECKED_CAST") val serverId = (current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String
+        val previous = current.receipts[action]
+        val reusable = when (action) {
+            is NativePerformedAction.Hold -> previous?.controlRevision == current.holdRevision
+            is NativePerformedAction.Mute -> previous?.controlRevision == current.muteRevision
+            else -> true
+        }
+        val receipt = previous?.takeIf { reusable } ?: run {
+            val revision = when (action) {
+                is NativePerformedAction.Hold -> ++current.holdRevision
+                is NativePerformedAction.Mute -> ++current.muteRevision
+                else -> 0L
+            }
+            NativeActionReceipt(id, origin, action, serverId, current.state["status"] == "ringing", revision)
+                .also {
+                    current.receipts[action] = it
+                    if (action == NativePerformedAction.Answer) signal(current, NativeMediaStage.ANSWER_REQUESTED)
+                }
+        }
+        receipt.retain()
+        if (action == NativePerformedAction.End) { current.localEndPending = true; current.timeout?.cancel() }
+        fun latest(): Boolean = when (action) {
+            is NativePerformedAction.Hold -> receipt.controlRevision == current.holdRevision
+            is NativePerformedAction.Mute -> receipt.controlRevision == current.muteRevision
+            else -> true
+        }
         try {
+            val decision = receipt.decide(ConversationActionDecision(jobs, { stage, reason -> signal(current, stage, reason = reason) }))
+            val canRefuse = receipt.conversationAction?.canRefuse(origin.wireValue) == true
+            if (decision is ConversationActionResult.Refuse && canRefuse) {
+                if (action == NativePerformedAction.Answer) {
+                    withContext(NonCancellable) { if (live(current)) finish(id, decision.validEndReason(), EndedFailure.NOT_PLACED) }
+                }
+                throw decision.rejection()
+            }
+            if (!latest()) return
+            if (decision is ConversationActionResult.Refuse && origin == NativeActionOrigin.SYSTEM &&
+                (action is NativePerformedAction.Hold || action is NativePerformedAction.Mute)) receipt.observedFromSystem()
+            if (action != NativePerformedAction.End) requireLive(current)
             request?.invoke()
-            receipt.perform({
+            if (!latest()) return
+            receipt.performWhile(::latest, {
                 check(calls[id] === current && identities.isCurrent(current.reservation) && current.incoming?.intent == null) { "unknown_conversation" }
                 if (action != NativePerformedAction.End) requireLive(current)
                 else check(!current.nonActionEnd && (!current.terminal || current.holdingTerminal)) { "unknown_conversation" }
                 when (action) {
-                    NativePerformedAction.Answer -> { current.active = true; joined(id) }
+                    NativePerformedAction.Answer -> { current.active = true; joined(id, (decision as? ConversationActionResult.Proceed)?.media) }
                     NativePerformedAction.End -> terminal(id, "local", false)
                     is NativePerformedAction.Hold -> {
                         current.active = !action.held
-                        current.state["status"] = if (action.held) "held" else if (current.state["connectedAt"] != null) "connected" else "connecting"
+                        if (!action.held && current.state["connectedAt"] != null) markConnected(current)
+                        else current.state["status"] = if (action.held) "held" else "connecting"
                         if (action.held) { current.audio.inactive(); publish(); current.media?.pause() }
                         else if (current.media != null) current.media?.resume() else current.audio.coreActivated()
                         refreshRoutes()
@@ -506,6 +542,7 @@ class ConversationEngine(val context: Context) {
                     is NativePerformedAction.Mute -> {
                         if (action.muted) current.media?.mute() else if (current.active) current.media?.unmute() else current.media?.clearMute()
                         requireLive(current)
+                        if (!latest()) return@performWhile
                         if (current.active && origin == NativeActionOrigin.APP) audio.isMicrophoneMute = action.muted
                         current.state["isMuted"] = action.muted
                     }
@@ -516,7 +553,9 @@ class ConversationEngine(val context: Context) {
                 if (action == NativePerformedAction.End) { current.holdingTerminal = false; flushTerminals() }
             }
         } finally {
-            if (current.receipts[action] === receipt) current.receipts.remove(action)
+            val remaining = receipt.release()
+            if (remaining == 0 && current.receipts[action] === receipt) current.receipts.remove(action)
+            if (action == NativePerformedAction.End && remaining == 0) current.localEndPending = false
             if (action == NativePerformedAction.End && current.holdingTerminal) { current.holdingTerminal = false; publish() }
         }
     }
@@ -526,12 +565,28 @@ class ConversationEngine(val context: Context) {
         require(current.state["status"] == "ringing") { "invalid_arguments" }
         check(current.permitted.await()) { "Incoming call filtered" }
         requireLive(current)
-        signal(current, NativeMediaStage.ANSWER_REQUESTED)
+        current.timeout?.cancel()
         native(id, NativePerformedAction.Answer, origin) {
             checked(control(id).answer(if (current.state["isVideo"] == true) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL))
         }
     }
-    private fun joined(id: String) {
+    /** Same entry point used by Core's onAnswer callback, including app-request echoes. */
+    internal suspend fun answerFromSystem(id: String): Unit = withTimeout(4500) {
+        val current = call(id)
+        check(current.permitted.await()) { "Incoming call filtered" }
+        if (current.state["status"] == "ringing") {
+            current.timeout?.cancel()
+            native(id, NativePerformedAction.Answer, NativeActionOrigin.SYSTEM)
+        }
+    }
+    private fun markConnected(current: Call) {
+        if (current.state["status"] != "connected") {
+            current.state["status"] = "connected"
+            signal(current, NativeMediaStage.CONNECTED)
+        }
+    }
+    @Suppress("UNCHECKED_CAST")
+    private fun joined(id: String, media: Map<String, Any?>? = null) {
         val current = call(id)
         requireLive(current)
         signal(current, NativeMediaStage.ANSWER_ACCEPTED)
@@ -543,30 +598,36 @@ class ConversationEngine(val context: Context) {
         }
         ConversationService.show(context, id, current.state)
         signal(current, NativeMediaStage.AUDIO_WAIT_STARTED)
-        if (current.media != null) current.media?.answered() else current.audio.coreActivated()
+        if (current.media == null && media != null) {
+            (current.state["payload"] as? Map<String, Any?>)?.let { prepareMedia(id, it, prewarm = false) }
+        }
+        if (current.media != null) current.media?.answered(media) else current.audio.coreActivated()
         refreshRoutes()
         publish()
     }
     internal suspend fun end(id: String, origin: NativeActionOrigin = NativeActionOrigin.APP) {
         val current = call(id)
+        // Own a local end before cancelling placement can resume its failure cleanup.
+        current.localEndPending = true
         if (current.placement == Placement.PENDING) { current.placement = Placement.FAILED; actions.cancel(id) }
         native(id, NativePerformedAction.End, origin) {
+            check(calls[id] === current && identities.isCurrent(current.reservation) && !current.terminal && current.incoming?.intent == null) { "unknown_conversation" }
             current.state["endReason"] = "local"
-            if (current.admitted) checked(control(id).disconnect(DisconnectCause(DisconnectCause.LOCAL)))
+            if (current.admitted) checked(current.ready.await().disconnect(DisconnectCause(DisconnectCause.LOCAL)))
         }
     }
     internal suspend fun hold(id: String, held: Boolean, origin: NativeActionOrigin = NativeActionOrigin.APP) {
         val current = call(id)
         requireLive(current)
         current.capabilities.requireHold()
-        if ((current.state["status"] == "held") == held) return
+        if ((current.state["status"] == "held") == held && current.receipts.keys.none { it is NativePerformedAction.Hold }) return
         native(id, NativePerformedAction.Hold(held), origin,
             if (origin == NativeActionOrigin.APP) suspend { checked(if (held) control(id).setInactive() else control(id).setActive()) } else null)
     }
     internal suspend fun mute(id: String, muted: Boolean, origin: NativeActionOrigin = NativeActionOrigin.APP) {
         val current = call(id)
         requireLive(current)
-        if (current.state["isMuted"] == muted) return
+        if (current.state["isMuted"] == muted && current.receipts.keys.none { it is NativePerformedAction.Mute }) return
         native(id, NativePerformedAction.Mute(muted), origin)
     }
     @Suppress("UNUSED_PARAMETER")
@@ -583,7 +644,7 @@ class ConversationEngine(val context: Context) {
             "connecting" -> if (current.state["status"] in listOf("dialing", "connecting")) current.state["status"] = "connecting"
             "connected" -> {
                 require(current.state["status"] != "ringing") { "invalid_arguments" }
-                if (current.state["status"] != "held") { if (!current.active) checked(control(id).setActive()); requireLive(current); current.active = true; if (current.media == null) current.audio.coreActivated(); current.state["status"] = "connected" }
+                if (current.state["status"] != "held") { if (!current.active) checked(control(id).setActive()); requireLive(current); current.active = true; if (current.media == null) current.audio.coreActivated(); markConnected(current) }
                 current.timeout?.cancel()
                 current.state["connectedAt"] = current.state["connectedAt"] ?: Instant.now().toString()
             }

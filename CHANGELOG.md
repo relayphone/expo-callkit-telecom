@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
+* **android:** add `ConversationActions` for native server agreement on answer and app controls,
+  with bounded handler waits, local decline/end, and handler/connected timing signals.
+  System hold/mute notify the handler while retaining the state already applied by the OS.
+
 * **android:** allow incoming pushes to set `expiresAtMillis` for their ringing deadline,
   ending unanswered at expiry. Omitted expiry keeps the configured default timeout.
   Add `androidSupportsHold` to disable hold/resume in Core-Telecom and conversation capabilities.

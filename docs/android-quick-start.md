@@ -127,6 +127,56 @@ use `DecodedCallPush.Ended(EndedCallPush(serverCallId, eventId, reason))` and
 bypass incoming admission. Both service paths retain the engine's dedupe and
 report-before-warmup behavior.
 
+## Server actions
+
+Register a suspending native handler from `Application.onCreate` when your server
+must agree to an answer or app control before it takes effect. For example,
+`server.claim` below is your app's suspending request and returns a push-shaped
+media grant, or null when another device already claimed the call:
+
+```kotlin
+ConversationActions.configure { action ->
+    when (action) {
+        is ConversationAction.Answer -> {
+            val media = server.claim(action.serverCallId ?: action.conversationId)
+            if (media == null) ConversationActionResult.Refuse("claimLost", "answeredElsewhere")
+            else ConversationActionResult.Proceed(media)
+        }
+        is ConversationAction.Decline, is ConversationAction.End -> {
+            server.end(action.serverCallId ?: action.conversationId)
+            ConversationActionResult.Proceed()
+        }
+        is ConversationAction.Hold, is ConversationAction.Mute -> ConversationActionResult.Proceed()
+    }
+}
+```
+
+The handler runs once per shared native receipt, including app actions and their
+system callback echoes. It runs off main with a 3.5 s ceiling, reserving 1.5 s of
+Core-Telecom's 5 s callback budget for settlement. Throws become `handlerFailed`;
+timeouts become `handlerTimedOut`. Use short refusal codes without personal data
+or credentials. Answer refusal fails the callback and ends with `endReason`.
+App hold/mute refusal uses the existing typed `handler_failed` or
+`deadline_exceeded` rejection; disabled hold remains `unsupported`.
+
+System hold/mute are observations of a state the OS already applied. The handler
+is notified, but a refusal is only signalled and the SDK keeps that state.
+Decline/end always disconnect regardless of the result: their handler wait is
+capped at 2.5 s, leaving 0.5 s to request disconnection within 3 s. Late results
+are discarded after signalling the timeout, and are never retried.
+
+`Proceed.media` is used for an answer only when no prewarmed native media session
+exists; an existing prewarmed session ignores it. The native handler does not
+receive outgoing start, which keeps its JavaScript placement handler. JavaScript
+still receives the usual snapshots and `actionPerformed` events. Calling
+`ConversationActions.configure(null)` restores the existing native behavior.
+
+Observe `ANSWER_REQUESTED`, `HANDLER_STARTED`, `HANDLER_RESPONDED`,
+`ROOM_CONNECTED` and `CONNECTED` through `NativeMediaSignals` to time the answer.
+`HANDLER_RESPONDED.reason` is `proceed` or the refusal code. A room prewarmed
+before the answer can emit `ROOM_CONNECTED` earlier. Signals contain monotonic
+timings, counts and reason codes, never names, phone numbers or media grants.
+
 ## Configure a host for native answer and audio
 
 Incoming pushes can set `IncomingCallPush.expiresAtMillis` to their absolute UTC
