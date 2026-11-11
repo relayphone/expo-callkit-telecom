@@ -1,12 +1,14 @@
 import type { AndroidManifest, ExportedConfig, Mod } from "expo/config-plugins";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { test } from "node:test";
 
-import {
+const require = createRequire(import.meta.url);
+const {
   ANDROID_NATIVE_MEDIA_GRADLE_PROPERTY,
   ANDROID_NATIVE_MEDIA_METADATA,
   withAndroidNativeMedia,
-} from "../../plugin/src/androidNativeMedia.ts";
+}: typeof import("../../plugin/src/androidNativeMedia") = require("../../plugin/build/androidNativeMedia.js");
 
 type Properties = NonNullable<NonNullable<ExportedConfig["mods"]>["android"]>;
 type GradleProperties = Parameters<

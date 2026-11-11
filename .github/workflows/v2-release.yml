@@ -17,6 +17,7 @@ on:
       - ".npmignore"
       - "tsconfig*.json"
       - "tools/release*"
+      - "tools/plugin-loading*"
       - "tools/package.json"
       - "tools/sdk-evaluation*"
       - ".github/workflows/v2-release.yml"
@@ -47,16 +48,19 @@ jobs:
         with:
           bun-version: "1.4.0"
       - name: Test release controls
-        run: node --test tools/release.test.ts
+        run: node --test tools/release.test.ts tools/plugin-loading.test.ts
       - run: bun install --frozen-lockfile
       - name: Build and check TypeScript and host contracts
         run: |
           bun run build
           bun run typecheck
           node node_modules/typescript/bin/tsc -p tsconfig.release.json
+          node node_modules/typescript/bin/tsc -p tsconfig.plugin-loading.json
           bun run test:contracts
       - name: Pack and verify the CI archive and checksum
         run: node tools/release.ts pack "$RUNNER_TEMP/v2-release"
+      - name: Load the packed plugin with Expo 57 and 58
+        run: node tools/plugin-loading.ts check "$RUNNER_TEMP/v2-release"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: v2-release-controls
@@ -93,10 +97,14 @@ jobs:
           bun run build
           bun run typecheck
           node node_modules/typescript/bin/tsc -p tsconfig.release.json
+          node node_modules/typescript/bin/tsc -p tsconfig.plugin-loading.json
           bun run test:contracts
           node --test tools/release.test.ts
+          node --test tools/plugin-loading.test.ts
       - name: Pack and verify the CI archive and checksum
         run: node tools/release.ts pack "$RUNNER_TEMP/v2-release"
+      - name: Load the packed plugin with Expo 57 and 58
+        run: node tools/plugin-loading.ts check "$RUNNER_TEMP/v2-release"
       - name: Attest the archive and checksums
         id: provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

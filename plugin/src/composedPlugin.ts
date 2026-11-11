@@ -3,7 +3,7 @@ import {
   type ConfigPlugin,
   createRunOncePlugin,
   withDangerousMod,
-} from "expo/config-plugins.js";
+} from "expo/config-plugins";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -14,6 +14,8 @@ import {
 import pkg from "../../package.json";
 
 export type ComposedPluginProps = VoIPConversationsPluginProps & {
+  /** Apply the iOS SDK plugin and migration check. Defaults to true. */
+  ios?: boolean;
   /** Android native provider, independent of iOS audio integration. Defaults to none. */
   androidNativeMedia?: AndroidNativeMedia;
   /** FCM service owner. App services forward call messages to CallPushIntake. Defaults to library. */
@@ -50,6 +52,10 @@ export function composeConversationsPlugin(
   return createRunOncePlugin(
     (config, props) => {
       const options = props ?? {};
+      if (options.ios !== undefined && typeof options.ios !== "boolean")
+        throw new Error("ios must be a boolean.");
+      if (options.ios === false)
+        return withAndroidNativeMedia(android(config, options), options);
       const entry: unknown = require("@relayphone/ios-voip-sdk/app.plugin");
       const ios =
         typeof entry === "function"
