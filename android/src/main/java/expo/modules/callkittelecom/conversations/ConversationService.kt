@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.IconCompat
 import kotlinx.coroutines.launch
 
 /** CallStyle notification plus phoneCall foreground service for all supported Android versions. */
@@ -31,11 +32,7 @@ class ConversationService : Service() {
             val resource = context.resources.getIdentifier(ringtone.substringBeforeLast('.'), "raw", context.packageName)
             val sound = if (resource != 0) Uri.parse("android.resource://${context.packageName}/$resource") else Settings.System.DEFAULT_RINGTONE_URI
             val ringing = state["status"] == "ringing"
-            val channelId = if (ringing) incomingChannelId(context) else "conversations-ongoing-v2"
-            val channel = NotificationChannel(channelId, if (ringing) "Incoming calls" else "Ongoing calls",
-                if (ringing) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_LOW)
-            channel.setSound(if (ringing) sound else null, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build())
-            manager.createNotificationChannel(channel)
+            val defaultChannelId = if (ringing) incomingChannelId(context) else "conversations-ongoing-v2"
             fun action(name: String) = PendingIntent.getBroadcast(context, 0,
                 Intent(context, ConversationReceiver::class.java).setAction(name)
                     .setData(Uri.Builder().scheme("voip-conversation").authority(context.packageName).appendPath(id).appendPath(name).build()).putExtra("id", id),
@@ -44,19 +41,37 @@ class ConversationService : Service() {
             val payload = state["payload"] as? Map<*, *>
             val caller = (payload?.get("caller") as? Map<*, *>)?.let(NativeCaller::parse)
             val callerUri = caller?.address()?.toString() ?: callerAddress(context, member)?.toString()
+            val content = ConversationPresentation.resolve(state, if (ringing) CallPhase.RINGING else CallPhase.ONGOING,
+                CallNotificationContent(
+                    title = caller?.displayName ?: member?.get("displayName")?.toString() ?: "Caller",
+                    channelId = defaultChannelId,
+                    fullScreenIntent = if (ringing) PendingIntent.getActivity(context, 0,
+                        Intent(context, ConversationActivity::class.java).setData(Uri.Builder().scheme("voip-conversation").authority(context.packageName).appendPath(id).build()),
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE) else null,
+                ))
+            val channelId = checkNotNull(content.channelId)
+            if (channelId == defaultChannelId) {
+                val channel = NotificationChannel(channelId, if (ringing) "Incoming calls" else "Ongoing calls",
+                    if (ringing) NotificationManager.IMPORTANCE_HIGH else NotificationManager.IMPORTANCE_LOW)
+                channel.setSound(if (ringing) sound else null, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build())
+                manager.createNotificationChannel(channel)
+            }
             val person = Person.Builder().setUri(callerUri).setKey(caller?.hostContactID)
-                .setName(caller?.displayName ?: member?.get("displayName")?.toString() ?: "Caller")
+                .setName(content.title).setIcon(content.avatar?.let { IconCompat.createFromIcon(context, it) })
                 .setImportant(true).build()
             val builder = NotificationCompat.Builder(context, channelId)
                 .addPerson(person)
                 .setSmallIcon(android.R.drawable.sym_call_incoming).setOngoing(true).setOnlyAlertOnce(true)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
-                .setFullScreenIntent(PendingIntent.getActivity(context, 0,
-                    Intent(context, ConversationActivity::class.java).setData(Uri.Builder().scheme("voip-conversation").authority(context.packageName).appendPath(id).build()), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE), state["status"] == "ringing")
-            builder.setStyle(if (state["status"] == "ringing") NotificationCompat.CallStyle.forIncomingCall(person, action("end"), action("join"))
+                .setFullScreenIntent(content.fullScreenIntent, ringing)
+                .setContentIntent(content.contentIntent)
+            content.extraActions.forEach { builder.addAction(it) }
+            builder.setStyle(if (ringing) NotificationCompat.CallStyle.forIncomingCall(person, action("end"), action("join"))
                 else NotificationCompat.CallStyle.forOngoingCall(person, action("end")))
             val notificationId = notifications[id]?.first ?: nextId++
-            notifications[id] = notificationId to builder.build()
+            notifications[id] = notificationId to builder.build().apply {
+                if (ringing) flags = flags or Notification.FLAG_INSISTENT
+            }
             // Enqueue synchronously so a subsequent filtered-call cancellation records the
             // caller attempt even if the foreground service has not started yet.
             manager.notify(notificationId, notifications[id]!!.second)
