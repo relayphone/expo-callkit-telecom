@@ -33,7 +33,7 @@ admission; outgoing duplicate IDs and direction collisions reject on Android.
 | `fulfillIncomingCallConnected`, `failIncomingCallConnected` | Remove fulfill tokens; report actual transport progress with `reportConversation` |
 | `endCall`, `setMuted`, `setHeld` | `endConversation(id)`, `setMuted(id, muted)`, `setHeld(id, held)` |
 | `reportOutgoingCallConnected`, `reportCallEnded` | `reportConversation(id, { type: "connected" })` or `{ type: "ended", reason }` |
-| `playDTMF` | `playTones(id, digits)` when supported; Android rejects with `unsupported` |
+| `playDTMF` | `playTones(id, digits)` when supported; Android requires native LiveKit |
 | Audio-session and route listeners | `useAudioRoutes()`, `selectAudioRoute(route.id)`, audio lifecycle events |
 | VoIP push registration/listeners | Native registration at launch; `usePushToken()` returns `{ type: "apns-voip" / "fcm", value }` or `null` |
 | `addCallIntentReceivedListener` | `useConversationEvent("dialRequest", listener)` |

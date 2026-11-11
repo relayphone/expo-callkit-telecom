@@ -14,7 +14,7 @@ Configure the composed plugin with canonical SDK options and `androidNativeMedia
 
 Android audio events come from native lifecycle ownership. `audioActivated` follows successful native audio authority, or successful Core activation when media is app-managed. Hold and disconnect deactivate audio. Native authority's own 1500 ms timeout emits `audioActivationMissing`. Android never emits `providerReset`; that event is iOS-only.
 
-Android advertises `capabilities.tones = false`; `playTones` rejects `unsupported` without a performed event. Preview joining is unsupported on Android; filtered and answered-elsewhere calls terminate and remove their notification. Previews and notification-based preview joins remain iOS-only. Audio routes use canonical `bluetooth` and `other` values.
+Android advertises `capabilities.tones = true` only with native LiveKit media selected. `playTones` publishes SIP DTMF through an active native session and emits an app-origin performed event after success. App-managed media rejects tones with `unsupported` without a performed event. Preview joining is unsupported on Android; filtered and answered-elsewhere calls terminate and remove their notification. Previews and notification-based preview joins remain iOS-only. Audio routes use canonical `bluetooth` and `other` values.
 
 See the SDK's [iOS and React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md) for the shared API and iOS setup.
 

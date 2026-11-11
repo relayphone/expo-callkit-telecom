@@ -107,6 +107,11 @@ object ConversationControls {
         perform(context) { it.end(conversationId, NativeActionOrigin.APP) }
     }
 
+    /** Publish DTMF through native LiveKit media with origin `app`. */
+    @JvmStatic fun playTones(context: Context, conversationId: String, digits: String) {
+        perform(context) { it.tones(conversationId, digits) }
+    }
+
     private fun perform(context: Context, action: suspend (ConversationEngine) -> Unit) {
         val application = context.applicationContext
         scope.launch {

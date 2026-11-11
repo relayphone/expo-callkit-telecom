@@ -22,8 +22,9 @@ packages, rather than Expo Go. Follow [Getting started](./getting-started.md).
 
 Answer, end, hold and mute run natively without an action handler. Observe
 snapshots and `actionPerformed`; the handler places outgoing starts only.
-Android advertises `capabilities.tones = false`; tones and merging reject with
-`unsupported`. Filtered and answered-elsewhere calls terminate and remove their
+Android advertises tones only with native LiveKit selected; active sessions
+publish SIP DTMF. App-managed media rejects tones with `unsupported`, as does
+merging. Filtered and answered-elsewhere calls terminate and remove their
 notification. Preview joining is unsupported.
 
 `androidNativeMedia: "livekit"` selects native media and prewarm; `"none"` is the
