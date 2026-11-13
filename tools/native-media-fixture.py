@@ -100,51 +100,93 @@ class MarkerObservation:
                          "sampleRate": self.rate, "slots": [], "minimumConfidence": None, "markersWithPostRoll": 0}
 
     @staticmethod
-    def analyze(pcm, frequencies):
-        # Same 1 ms search grid, normalized Goertzel score, energy floor and >=0.8 rule.
+    def analyze(pcm, frequencies, rate=48000):
+        # Elastic tones-v2: unchanged Goertzel/energy floor, +/-15 ms per step, +/-60 ms drift.
         # Cache overlapping slot scores; never alter, stitch or repair received PCM.
+        if rate not in (8000, 48000) or len(frequencies) != 12:
+            raise ValueError("Invalid analysis format")
+        window, slot_samples = rate // 50, rate // 50 * 3
+        length, cap = slot_samples * 12, slot_samples
         scores = {}
+        shifts = [0] + [shift for distance in range(1, 16) for shift in (-distance, distance)]
+        epsilon = 1e-12  # SDK tie rule only; the >=0.8 acceptance threshold is unchanged.
         def confidence(start, frequency):
+            if start < window or start - window + slot_samples > len(pcm):
+                return -1
             key = (start, frequency)
             if key in scores:
                 return scores[key]
-            coefficient = 2 * math.cos(2 * math.pi * frequency / 48000)
+            coefficient = 2 * math.cos(2 * math.pi * frequency / rate)
             previous = before = energy = 0.0
-            for index in range(start, start + 960):
+            for index in range(start, start + window):
                 value = pcm[index] / 32768
                 current = value + coefficient * previous - before
                 before, previous = previous, current
                 energy += value * value
-            result = 0 if energy < 960 * .0001 else min(1, max(0, 2 * (
-                previous * previous + before * before - coefficient * previous * before) / (960 * energy)))
+            result = 0 if energy < window * .0001 else min(1, max(0, 2 * (
+                previous * previous + before * before - coefficient * previous * before) / (window * energy)))
             scores[key] = result
             return result
         best = None
+        cap_rejected = None
         detections = []
         candidate = None
         search_end = None
-        for offset in range(0, len(pcm) - 34560 + 1, 48):
-            slots = [confidence(offset + slot * 2880 + 960, frequency) for slot, frequency in enumerate(frequencies)]
-            minimum = min(slots)
-            if best is None or minimum > best[0]:
-                best = (minimum, offset, slots)
-            if detections and offset < detections[-1][1] + 34560:
+        for offset in range(0, max(0, len(pcm) - length + 1), rate // 1000):
+            if candidate is not None and offset > search_end:
+                detections.append(candidate)
+                candidate = None
+            if detections and offset < detections[-1][3][-1] + slot_samples:
                 continue
+            starts = [offset]
+            slots = [confidence(offset + window, frequencies[0])]
+            if slots[0] < .8:
+                continue
+            for index, frequency in enumerate(frequencies[1:], 1):
+                expected = starts[-1] + slot_samples
+                start, score = expected, -1
+                for ms in shifts:
+                    alternative = expected + ms * rate // 1000
+                    value = confidence(alternative + window, frequency)
+                    if value > score + epsilon or score < .8 <= value:
+                        start, score = alternative, value
+                    if score >= 1 - epsilon:
+                        break
+                starts.append(start)
+                slots.append(score)
+            minimum = min(slots)
+            item = (minimum, offset, slots, starts)
+            if starts[-1] + slot_samples > len(pcm):
+                continue
+            if abs(starts[-1] - offset - 11 * slot_samples) > cap:
+                if minimum >= .8 and (cap_rejected is None or minimum > cap_rejected[0] + epsilon):
+                    cap_rejected = item
+                continue
+            if best is None or minimum > best[0] + epsilon:
+                best = item
             if minimum >= .8:
                 if candidate is None:
-                    search_end = offset + 2880
-                if candidate is None or minimum > candidate[0]:
-                    candidate = (minimum, offset, slots)
+                    search_end = offset + slot_samples
+                if candidate is None or minimum > candidate[0] + epsilon:
+                    candidate = item
             if candidate is not None and offset >= search_end:
                 detections.append(candidate)
                 candidate = None
         if candidate is not None:
             detections.append(candidate)
         chosen = detections[0] if detections else best
+        def receipt(item):
+            minimum, offset, values, starts = item
+            return {"offsetSamples": offset, "endSamples": starts[-1] + slot_samples,
+                    "minimumConfidence": minimum,
+                    "slots": [{"index": index, "frequencyHz": frequency, "confidence": score, "margin": score - .8,
+                               "startSamples": start, "driftSamples": start - offset - index * slot_samples,
+                               "driftMs": (start - offset - index * slot_samples) * 1000 / rate}
+                              for index, (frequency, score, start) in enumerate(zip(frequencies, values, starts))]}
         return {"markers": len(detections), "detectionOffsets": [item[1] for item in detections], "minimumConfidence": chosen[0] if chosen else None,
                 "offsetSamples": chosen[1] if chosen else None,
-                "slots": [{"index": index, "frequencyHz": frequency, "confidence": score, "margin": score - .8}
-                          for index, (frequency, score) in enumerate(zip(frequencies, chosen[2] if chosen else []))]}
+                "slots": receipt(chosen)["slots"] if chosen else [], "detections": [receipt(item) for item in detections],
+                "driftCapRejected": receipt(cap_rejected) if cap_rejected else None}
 
     async def measure(self):
         # Score any complete 720 ms window, including a short leak or the final partial second.
@@ -157,19 +199,31 @@ class MarkerObservation:
             if epoch == self.epoch:
                 self.analyzed = frames
                 base = frames - len(pcm)
-                for offset in result["detectionOffsets"]:
-                    start = base + offset
-                    end = start + 34560
-                    if not any(start < previous_end and end > previous_start for previous_start, previous_end in self.detections):
+                for item in result["detections"]:
+                    start = base + item["offsetSamples"]
+                    end = base + item["endSamples"]
+                    if not any(start < previous["endSamples"] and end > previous["offsetSamples"] for previous in self.detections):
                         if len(self.detections) >= 32:
                             raise ValueError("Phase detection limit exceeded")
-                        self.detections.append((start, end))
+                        self.detections.append({**item, "offsetSamples": start, "endSamples": end,
+                                                "slots": [{**slot, "startSamples": base + slot["startSamples"]} for slot in item["slots"]]})
                 result["windowStartSamples"] = base
                 if not self.evidence["markers"] or result["markers"]:
                     self.evidence.update(result)
                 self.evidence["markers"] = len(self.detections)
                 # The guarded detector can place onset 20 ms early; preserve the full 150 ms tail.
-                self.evidence["markersWithPostRoll"] = sum(end + 8160 <= frames for _, end in self.detections)
+                self.evidence["markersWithPostRoll"] = sum(item["endSamples"] + 8160 <= frames for item in self.detections)
+        phase = []
+        for item in self.detections:
+            before = next((sample for sample in reversed(self.stats) if sample["frame"] <= item["offsetSamples"] and sample["inbound"]), None)
+            after = next((sample for sample in self.stats if sample["frame"] >= item["endSamples"] and sample["inbound"]), None)
+            delta = None if before is None or after is None else {
+                name: after["inbound"][0][name] - before["inbound"][0][name]
+                if before["inbound"][0][name] is not None and after["inbound"][0][name] is not None else None
+                for name in ("inserted_samples_for_deceleration", "removed_samples_for_acceleration", "concealed_samples", "packets_lost")}
+            phase.append({**item, "receiveStats": {"beforeFrame": before["frame"] if before else None,
+                                                  "afterFrame": after["frame"] if after else None, "delta": delta}})
+        self.evidence["phaseDetections"] = phase
         return {**self.evidence, "receiveClock": "host.monotonic_ns", "arrivals": self.arrivals,
                 "rtc": self.stats, "statsError": self.stats_error, "diagnosticsOverflow": self.diagnostics_overflow}
 

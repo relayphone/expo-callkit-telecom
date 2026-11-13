@@ -17,7 +17,7 @@ function samples(rate: number) {
 }
 const pcm = samples(48_000);
 const receiver = `
-import array, asyncio, hashlib, importlib.util, json, sys, types
+import array, asyncio, hashlib, importlib.util, json, math, random, sys, types
 spec = importlib.util.spec_from_file_location("fixture", "tools/native-media-fixture.py")
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
@@ -52,6 +52,30 @@ async def check():
     central = [value if 960 <= i % 2880 < 1920 else 0 for i, value in enumerate(pcm)]
     central_only = receiver.analyze(central, receiver.frequencies)["markers"]
     zero = receiver.analyze([0] * len(pcm), receiver.frequencies)["markers"]
+    # Synthetic receive timing changes preserve pitch; the emitted source stays canonical.
+    def timing_capture(factor, central=False):
+        length = round(2880 * factor)
+        values = [0] * 7200
+        for frequency in receiver.frequencies:
+            for local in range(length):
+                fade = min(1, min(local, length - local) / 240)
+                value = .2 * .5 * (1 - math.cos(math.pi * fade)) * math.sin(2 * math.pi * frequency * local / 48000)
+                values.append(math.floor(value * 32767 + .5) if not central or 960 <= local < 1920 else 0)
+        return values + [0] * 9600
+    elastic = {str(factor): receiver.analyze(timing_capture(factor), receiver.frequencies)
+               for factor in [.96, 1.04, 1.08, 1.3]}
+    cap_rejected = receiver.analyze(timing_capture(1.12, central=True), receiver.frequencies)
+    aligned = fixture.MarkerObservation("parity-v2")
+    aligned.pcm = timing_capture(1.08)
+    aligned.frames = len(aligned.pcm)
+    def stats(frame, inserted, removed):
+        return {"frame": frame, "inbound": [{"inserted_samples_for_deceleration": inserted,
+            "removed_samples_for_acceleration": removed, "concealed_samples": 5, "packets_lost": 0}]}
+    aligned.stats = [stats(0, 100, 20), stats(aligned.frames, 157, 29)]
+    aligned_receipt = dict(await aligned.measure())
+    noise = random.Random(42)
+    noise_rejected = receiver.analyze([noise.randrange(-6553, 6554) for _ in pcm], receiver.frequencies)["markers"]
+    tone_rejected = receiver.analyze([round(6553 * math.sin(2 * math.pi * 400 * i / 48000)) for i in range(len(pcm))], receiver.frequencies)["markers"]
     receiver.reset()
     reset = (await receiver.measure())["markers"]
     late = fixture.MarkerObservation("parity-v2")
@@ -80,7 +104,9 @@ async def check():
     result = dict(hashes=hashes, partial=partial, full=full, tail=tail, postRoll=post_roll,
                 truncatedCoverage=truncated_coverage, first=first, centralOnly=central_only,
                 wrongId=wrong_id, missing=missing, zero=zero, reset=reset,
-                lateMarkers=late_markers, retained=len(late.pcm), remembered=remembered)
+                lateMarkers=late_markers, retained=len(late.pcm), remembered=remembered,
+                elastic=elastic, capRejected=cap_rejected, alignedReceipt=aligned_receipt,
+                noiseRejected=noise_rejected, toneRejected=tone_rejected)
     await fixture.analysis_worker.close()
     now = 0.0
     class Source:
@@ -121,6 +147,26 @@ test("the real fixture requires complete tones-v2 slots, detects short leaks and
   assert.equal(result.lateMarkers, 2, "late markers must stay observable during the existing five-second phase");
   assert.equal(result.retained, 144_000, "the capture remains capped at three seconds");
   assert.ok(Math.abs(result.publisherElapsed - 1) < 1e-9, "100 ten-millisecond frames must not accrue callback work time");
+  for (const factor of ["0.96", "1.04", "1.08"]) {
+    const detection = result.elastic[factor];
+    assert.equal(detection.markers, 1, factor);
+    assert.equal(detection.detections[0].slots.length, 12);
+    assert.ok(detection.slots.every((slot: { confidence: number; driftMs: number }) =>
+      slot.confidence >= .8 && Math.abs(slot.driftMs) <= 60));
+  }
+  assert.ok(result.elastic["1.08"].slots.some((slot: { driftMs: number }) => slot.driftMs !== 0));
+  assert.equal(result.elastic["1.3"].markers, 0, "cumulative drift outside the cap must fail");
+  assert.equal(result.capRejected.markers, 0);
+  assert.ok(result.capRejected.driftCapRejected.minimumConfidence >= .8,
+    "the cap control must clear every tone score and fail specifically on cumulative drift");
+  assert.ok(Math.abs(result.capRejected.driftCapRejected.slots[11].driftMs) > 60);
+  assert.equal(result.alignedReceipt.markersWithPostRoll, 1);
+  assert.deepEqual(result.alignedReceipt.phaseDetections[0].receiveStats.delta, {
+    inserted_samples_for_deceleration: 57, removed_samples_for_acceleration: 9,
+    concealed_samples: 0, packets_lost: 0,
+  });
+  assert.equal(result.noiseRejected, 0);
+  assert.equal(result.toneRejected, 0);
   assert.equal(result.remembered, 2, "a leak cannot disappear when older PCM rolls out");
   for (const control of ["partial", "wrongId", "missing", "zero", "reset"])
     assert.equal(result[control], 0, control);
