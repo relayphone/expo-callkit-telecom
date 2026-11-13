@@ -70,7 +70,16 @@ limits audible alerts from one app to one per second. v2 therefore keeps
 apart, including the initial alert. Close requests merge into one trailing update
 with the latest content; it is dropped if the call leaves ringing first.
 Dialing, connecting, connected and held cards retain quiet updates. Refreshing
-never re-customizes retained “Ending call…” cards or changes call state.
+never re-customizes retained “Ending call…” cards or changes call state. Unchanged
+resolved content is not re-posted; unrelated snapshots with avatars or extra actions
+do not restart ringing. Avatar replacement is applied on an explicit app refresh.
+
+Foreground-service starts publish a valid notification immediately, including a
+brief ongoing placeholder when a queued start arrives after the call ended. Empty
+rosters stop the service without requesting another start. If a ringing start falls
+inside the alert window, its initial card is followed by a scheduled alerting update.
+The window is measured from Android's observed notification publication, since
+foreground promotion can return before its notification appears.
 
 On the API 35 emulator, with full-screen permission granted and the screen off,
 the initial ringing notification delivered its full-screen intent once. An

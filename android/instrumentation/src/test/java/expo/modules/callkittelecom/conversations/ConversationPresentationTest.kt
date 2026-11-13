@@ -46,6 +46,21 @@ class ConversationPresentationTest {
         assertEquals("Another call is paused", ConversationPresentation.resolve(emptyMap(), CallPhase.ONGOING, withHeld).heldSummary)
     }
 
+    @Test fun endingTitleUsesItsOwnOverrideAndFallsBackForNullOrThrowingCustomizers() {
+        val ending = CallNotificationContent(endingTitle = "Ending call…")
+        val entry = mapOf("id" to "call", "status" to "ending")
+        assertEquals("Ending call…", ConversationPresentation.resolve(entry, CallPhase.ENDING, ending).endingTitle)
+        ConversationPresentation.configure { received, phase ->
+            assertSame(entry, received); assertEquals(CallPhase.ENDING, phase)
+            CallNotificationContent(endingTitle = "Zakończenie połączenia…")
+        }
+        assertEquals("Zakończenie połączenia…", ConversationPresentation.resolve(entry, CallPhase.ENDING, ending).endingTitle)
+        ConversationPresentation.configure { _, _ -> CallNotificationContent(title = "Caller title") }
+        assertEquals("Ending call…", ConversationPresentation.resolve(entry, CallPhase.ENDING, ending).endingTitle)
+        ConversationPresentation.configure { _, _ -> error("Unavailable localization") }
+        assertEquals("Ending call…", ConversationPresentation.resolve(entry, CallPhase.ENDING, ending).endingTitle)
+    }
+
     @Test fun primaryPrefersActiveThenMostRecentHeldAndWaitingHasSeparateEntries() {
         val roster = CallNotificationRoster()
         fun put(id: String, status: String) = roster.put(id, mapOf("id" to id, "status" to status))
@@ -101,15 +116,43 @@ class ConversationPresentationTest {
 
     @Test fun ringingAlertsIncludeTheInitialPostAndShareThePackageCooldown() {
         val schedule = RingingAlertSchedule()
-        assertEquals(0L, schedule.delayMillis(100))
-        schedule.posted(100)
-        assertEquals(900L, schedule.delayMillis(300))
-        assertEquals(700L, schedule.delayMillis(500))
-        assertEquals(1L, schedule.delayMillis(1199))
-        assertEquals(0L, schedule.delayMillis(1200))
+        assertEquals(0L, schedule.delayMillis(100_000_000L))
+        schedule.requested(1); schedule.posted(1, 100_000_000L)
+        assertEquals(900L, schedule.delayMillis(300_000_000L))
+        assertEquals(700L, schedule.delayMillis(500_000_000L))
+        assertEquals(1L, schedule.delayMillis(1199_000_000L))
+        assertEquals(0L, schedule.delayMillis(1200_000_000L))
         // Another card's alert starts the same package-wide window.
-        schedule.posted(1200)
-        assertEquals(1100L, schedule.delayMillis(1200))
-        assertEquals(0L, schedule.delayMillis(2300))
+        schedule.requested(2); schedule.posted(2, 1200_000_000L)
+        assertEquals(1100L, schedule.delayMillis(1200_000_000L))
+        assertEquals(0L, schedule.delayMillis(2300_000_000L))
+    }
+
+    @Test fun aForegroundRequestDoesNotOpenTheGateBeforeItsPlatformPostIsObserved() {
+        val schedule = RingingAlertSchedule()
+        schedule.requested(1); schedule.posted(1, 100_000_000L)
+        schedule.requested(2)
+        assertEquals(1100L, schedule.delayMillis(5000_000_000L))
+        schedule.posted(2, 5000_000_000L)
+        assertEquals(1100L, schedule.delayMillis(5000_000_000L))
+        assertEquals(1L, schedule.delayMillis(6099_000_000L))
+        assertEquals(0L, schedule.delayMillis(6100_000_000L))
+    }
+
+    @Test fun aNewForegroundPostCannotBeUnlockedByAnOlderObservation() {
+        val schedule = RingingAlertSchedule()
+        schedule.requested(1)
+        schedule.requested(2)
+        schedule.posted(1, 100_000_000L)
+        assertEquals(1100L, schedule.delayMillis(5000_000_000L))
+        schedule.posted(2, 5000_000_000L)
+        assertEquals(1100L, schedule.delayMillis(5000_000_000L))
+    }
+
+    @Test fun fractionalMillisecondsRoundUpUntilTheEntireIntervalHasElapsed() {
+        val schedule = RingingAlertSchedule()
+        schedule.requested(1); schedule.posted(1, 100_500_000L)
+        assertEquals(1L, schedule.delayMillis(1200_499_999L))
+        assertEquals(0L, schedule.delayMillis(1200_500_000L))
     }
 }

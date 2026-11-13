@@ -242,11 +242,25 @@ class ActiveCallEndTest {
         duplicatesDoNothing()
     }
 
-    @Test fun refreshLeavesRetainedEndingCardAndSignalsUnchanged() = fixture {
+    @Test fun refreshLeavesRetainedEndingCardAndSignalsUnchanged() = retainedEndingTitle(null, "Ending call…")
+
+    @Test fun endingTitleCanBeLocalizedOnceAndRefreshKeepsTheRetainedCard() =
+        retainedEndingTitle("Zakończenie połączenia…", "Zakończenie połączenia…")
+
+    private fun retainedEndingTitle(endingTitle: String?, expected: String) = fixture {
         answer()
+        var endingCustomizations = 0
+        ConversationPresentation.configure { entry, phase ->
+            if (phase == CallPhase.ENDING) {
+                assertEquals(id, entry["id"]); assertEquals("ending", entry["status"])
+                endingCustomizations++
+            }
+            CallNotificationContent(title = "Must not replace ending title", endingTitle = endingTitle)
+        }
         disconnectFailures = Int.MAX_VALUE
         ConversationEnds.report(context, id, "remoteEnded")
-        withTimeout(5000) { while (notification()?.notification?.extras?.getString(Notification.EXTRA_TITLE) != "Ending call…") delay(10) }
+        withTimeout(5000) { while (notification()?.notification?.extras?.getString(Notification.EXTRA_TITLE) != expected) delay(10) }
+        assertEquals(1, endingCustomizations)
         val original = notification()!!
         var customizations = 0
         ConversationPresentation.configure { _, _ -> customizations++; CallNotificationContent(title = "Must not appear") }
@@ -260,7 +274,7 @@ class ActiveCallEndTest {
             }
             val after = notification()!!
             assertEquals(original.id, after.id); assertEquals(original.postTime, after.postTime)
-            assertEquals("Ending call…", after.notification.extras.getString(Notification.EXTRA_TITLE))
+            assertEquals(expected, after.notification.extras.getString(Notification.EXTRA_TITLE))
             assertEquals(listOf("End"), after.notification.actions.map { it.title.toString() })
             assertTrue(service()?.foreground == true)
             assertEquals(0, customizations)

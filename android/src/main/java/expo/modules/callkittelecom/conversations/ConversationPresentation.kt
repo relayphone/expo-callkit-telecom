@@ -6,18 +6,28 @@ import android.graphics.drawable.Icon
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 
-/** The notification's ringing or ongoing presentation. */
-enum class CallPhase { RINGING, ONGOING }
+/** The notification's ringing, ongoing or retained ending presentation. */
+enum class CallPhase { RINGING, ONGOING, ENDING }
 
 internal const val RINGING_ALERT_INTERVAL_MILLIS = 1100L
 
 /** Android rate-limits audible alerts per package, including alerts for different calls. */
 internal class RingingAlertSchedule {
-    private var lastPostMillis: Long? = null
-    fun delayMillis(nowMillis: Long): Long = lastPostMillis?.let {
-        (it + RINGING_ALERT_INTERVAL_MILLIS - nowMillis).coerceAtLeast(0)
-    } ?: 0
-    fun posted(nowMillis: Long) { lastPostMillis = nowMillis }
+    private var awaitingPost = false
+    private var lastPostNanos: Long? = null
+    private var latestSequence = 0L
+    fun requested(sequence: Long) { latestSequence = sequence; awaitingPost = true }
+    fun delayMillis(nowNanos: Long): Long {
+        if (awaitingPost) return RINGING_ALERT_INTERVAL_MILLIS
+        val remaining = lastPostNanos?.let {
+            (it + RINGING_ALERT_INTERVAL_MILLIS * 1_000_000 - nowNanos).coerceAtLeast(0)
+        } ?: 0
+        return (remaining + 999_999) / 1_000_000
+    }
+    fun posted(sequence: Long, nowNanos: Long) {
+        if (sequence != latestSequence) return
+        lastPostNanos = nowNanos; awaitingPost = false
+    }
 }
 
 /** App content for the library-owned CallStyle notification. Null fields keep the defaults. */
@@ -33,6 +43,8 @@ data class CallNotificationContent(
     val channelId: String? = null,
     /** Wording for the primary card's held-call summary; used only when calls are held. */
     val heldSummary: String? = null,
+    /** Used in the ENDING phase; null keeps "Ending call…". Other content is ignored there. */
+    val endingTitle: String? = null,
 )
 
 /** Runs on main; return immediately without I/O. The public snapshot entry contains no media grants. */
@@ -50,8 +62,9 @@ object ConversationPresentation {
 
     /**
      * Re-run app content for live calls and update existing cards in place. Safe from any thread;
-     * customization runs on main. Ringing updates restart the ring and are coalesced at least
-     * 1.1 seconds apart. Updates queued for a call that leaves ringing are discarded.
+     * customization runs on main. Unchanged content posts nothing. Changed ringing content
+     * restarts the ring and is coalesced at least 1.1 seconds apart. Updates queued for a call
+     * that leaves ringing are discarded. Ringing avatar replacements require an explicit refresh.
      * Retained ending cards and calls without a posted notification are left unchanged.
      */
     @JvmStatic fun refresh(context: Context) {
@@ -69,6 +82,7 @@ object ConversationPresentation {
             contentIntent = content.contentIntent ?: defaults.contentIntent,
             channelId = content.channelId ?: defaults.channelId,
             heldSummary = content.heldSummary ?: defaults.heldSummary,
+            endingTitle = content.endingTitle ?: defaults.endingTitle,
         )
     }
 }

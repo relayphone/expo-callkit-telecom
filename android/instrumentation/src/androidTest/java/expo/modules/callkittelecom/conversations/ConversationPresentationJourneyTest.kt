@@ -9,6 +9,9 @@ import android.app.PendingIntent
 import android.app.Person
 import android.content.Intent
 import android.content.ComponentName
+import android.content.Context
+import android.content.ContextWrapper
+import android.graphics.Bitmap
 import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.AudioManager
@@ -37,6 +40,17 @@ class ConversationPresentationJourneyTest {
     @get:Rule val permissions = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.RECORD_AUDIO)
 
     private data class Attention(val sound: Boolean, val vibration: Boolean)
+
+    private class ServiceRequests(context: Context) : ContextWrapper(context) {
+        var starts = 0
+        var foregroundStarts = 0
+        var stops = 0
+        override fun startService(service: Intent): ComponentName? { starts++; return super.startService(service) }
+        override fun startForegroundService(service: Intent): ComponentName? {
+            foregroundStarts++; return super.startForegroundService(service)
+        }
+        override fun stopService(service: Intent): Boolean { stops++; return super.stopService(service) }
+    }
 
     private suspend fun attention(key: String): Attention = withContext(Dispatchers.IO) {
         val command = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("dumpsys -t 5 notification")
@@ -108,6 +122,15 @@ class ConversationPresentationJourneyTest {
             ConversationPresentation.refresh(context)
             withContext(Dispatchers.Main) { }
         }
+        suspend fun alertingRefresh(notificationId: Int, title: String): StatusBarNotification {
+            // Establish a completed alert, beyond a possibly muted mandatory startup card.
+            refreshPresentation()
+            val updated = posted(notificationId) {
+                it.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name == title
+            }
+            withTimeout(5000) { while (alerts(notificationId).none { it.postTime == updated.postTime }) delay(10) }
+            return updated
+        }
         private suspend fun shell(command: String) = withContext(Dispatchers.IO) {
             val result = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
             ParcelFileDescriptor.AutoCloseInputStream(result).use { it.readBytes() }
@@ -135,6 +158,11 @@ class ConversationPresentationJourneyTest {
             withTimeout(5000) { while (context.getSystemService(PowerManager::class.java).isInteractive) delay(10) }
         }
         suspend fun wakeScreen() { shell("input keyevent 224"); shell("input keyevent 82") }
+        suspend fun backgroundApp() {
+            shell("input keyevent KEYCODE_HOME")
+            withTimeout(5000) { while (InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow
+                ?.packageName?.toString().let { it == null || it == context.packageName }) delay(10) }
+        }
         suspend fun withFullScreenPermission(body: suspend () -> Unit) {
             val alreadyAllowed = manager.canUseFullScreenIntent()
             if (!alreadyAllowed) shell("appops set ${context.packageName} USE_FULL_SCREEN_INTENT allow")
@@ -176,7 +204,10 @@ class ConversationPresentationJourneyTest {
         suspend fun close() {
             try {
                 ConversationPresentation.configure(null); ConversationActions.configure(null)
-                for (callId in ids) if (state(callId) != null) engine.report(callId, mapOf("type" to "ended", "reason" to "remoteEnded"))
+                for (callId in ids) {
+                    if (state(callId) != null) engine.report(callId, mapOf("type" to "ended", "reason" to "remoteEnded"))
+                    ConversationService.remove(context, callId)
+                }
                 removed()
             } finally {
                 manager.deleteNotificationChannel(channelId)
@@ -241,6 +272,77 @@ class ConversationPresentationJourneyTest {
         removed()
         assertEquals(ConversationAction.End(id, id, "app"), actions.last())
         assertEquals("local", ended?.get("reason"))
+    }
+
+    @Test fun removingTheRosterBeforeTheStartCallbackLeavesNoServiceOrCard() = fixture {
+        withTimeout(5000) { while (service() != null) delay(10) }
+        val requests = ServiceRequests(context)
+        // No suspension between show/remove: the main-thread service callback cannot run yet.
+        ConversationService.show(requests, id, mapOf("status" to "ringing"))
+        ConversationService.remove(requests, id)
+        assertEquals(0, requests.starts)
+        assertEquals(1, requests.foregroundStarts)
+        delay(6000)
+        assertNull(service()); assertTrue(cards().isEmpty())
+    }
+
+    @Test fun aDeliveredEmptyForegroundStartStopsWithoutLeavingItsPlaceholder() = fixture {
+        withTimeout(5000) { while (service() != null) delay(10) }
+        // Simulate delivery of a previously requested start after its roster disappeared.
+        androidx.core.content.ContextCompat.startForegroundService(context, Intent(context, ConversationService::class.java))
+        delay(6000)
+        assertNull(service()); assertTrue(cards().isEmpty())
+    }
+
+    @Test fun endingTheLastCallInTheBackgroundNeverRequestsStartService() = fixture {
+        ConversationPresentation.configure { conversation, _ -> CallNotificationContent(title = conversation["id"] as String) }
+        val requests = ServiceRequests(context)
+        ConversationService.show(requests, id, mapOf("status" to "ringing"))
+        notification()
+        withTimeout(5000) { while (service()?.foreground != true) delay(10) }
+        backgroundApp()
+        ConversationService.remove(requests, id)
+        withTimeout(5000) { while (service() != null || cards().isNotEmpty()) delay(10) }
+        assertEquals(0, requests.starts)
+        assertEquals(1, requests.foregroundStarts)
+    }
+
+    @Test fun anInCooldownRingingStartEntersForegroundBeforeItsTrailingAudibleAlert() = fixture {
+        val audio = context.getSystemService(AudioManager::class.java)
+        val oldRinger = audio.ringerMode
+        val oldVolume = audio.getStreamVolume(AudioManager.STREAM_RING)
+        audio.ringerMode = AudioManager.RINGER_MODE_NORMAL
+        audio.setStreamVolume(AudioManager.STREAM_RING, audio.getStreamMaxVolume(AudioManager.STREAM_RING), 0)
+        manager.createNotificationChannel(NotificationChannel(channelId, "Foreground ringing", NotificationManager.IMPORTANCE_HIGH).apply {
+            setSound(Uri.parse("android.resource://${context.packageName}/raw/refresh_ringtone"),
+                AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE).build())
+            enableVibration(true); vibrationPattern = longArrayOf(0, 200, 200, 200)
+        })
+        ConversationPresentation.configure { conversation, _ ->
+            CallNotificationContent(title = conversation["id"] as String, channelId = channelId)
+        }
+        val secondId = "$id-second"
+        try { observePosts {
+            ConversationService.show(context, id, mapOf("status" to "ringing"))
+            val first = card()
+            ConversationService.remove(context, id)
+            ConversationService.show(context, secondId, mapOf("status" to "ringing"))
+            val initial = card(secondId)
+            assertTrue("The mandatory foreground post must not wait for the ringing gate",
+                initial.postTime - first.postTime < 1100)
+            assertTrue(initial.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0)
+            assertTrue(service()?.foreground == true)
+            fun secondPosts() = alerts(initial.id).filter { it.notification.extras
+                .getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name == secondId }
+            withTimeout(5000) { while (secondPosts().size < 2) delay(10) }
+            assertEquals(2, secondPosts().size)
+            assertTrue(secondPosts()[1].postTime - secondPosts()[0].postTime >= 1100)
+            withTimeout(750) { while (attention(initial.key) != Attention(true, true)) delay(10) }
+        } } finally {
+            ConversationService.remove(context, secondId); ConversationService.remove(context, id)
+            audio.setStreamVolume(AudioManager.STREAM_RING, oldVolume, 0)
+            audio.ringerMode = oldRinger
+        }
     }
 
     @Test fun appDeclineRemovesDefaultRingingNotificationAndTelecomCall() = fixture {
@@ -383,6 +485,220 @@ class ConversationPresentationJourneyTest {
         assertSame(snapshot, engine.snapshot)
     }
 
+    @Test fun otherCallSnapshotsDoNotRepostUnchangedWaitingContent() = fixture {
+        ConversationPresentation.configure { conversation, _ -> CallNotificationContent(
+            title = conversation["id"] as String,
+            avatar = Icon.createWithResource(context, android.R.drawable.sym_def_app_icon),
+            extraActions = listOf(NotificationCompat.Action(0, "Assistant", activityIntent("assistant")))) }
+        outgoing(id)
+        engine.report(id, mapOf("type" to "connected"))
+        card()
+        observePosts {
+            val waitingId = "$id-waiting"
+            incoming(waitingId)
+            val original = card(waitingId, 2)
+            withTimeout(5000) { while (alerts(original.id).isEmpty()) delay(10) }
+            engine.mute(id, true)
+            engine.mute(id, false)
+            delay(1400)
+            assertEquals("Other calls must not restart this ring", 1, alerts(original.id).size)
+            assertEquals(original.postTime, posted(original.id).postTime)
+        }
+    }
+
+    @Test fun anotherRingingCardDoesNotRepostTheExistingRingingCard() = fixture {
+        var title = id
+        ConversationPresentation.configure { conversation, _ -> CallNotificationContent(
+            title = if (conversation["id"] == id) title else conversation["id"] as String,
+            avatar = Icon.createWithResource(context, android.R.drawable.sym_def_app_icon),
+            extraActions = listOf(NotificationCompat.Action(0, "Assistant", activityIntent("assistant")))) }
+        val secondId = "$id-second"
+        try { observePosts {
+            ConversationService.show(context, id, mapOf("status" to "ringing"))
+            val initial = card()
+            title = "Ready caller"
+            val original = alertingRefresh(initial.id, title)
+            val before = alerts(original.id).size
+            // Exercise the real presentation roster independently of Telecom's admission limit.
+            ConversationService.show(context, secondId, mapOf("status" to "ringing"))
+            card(secondId, 2)
+            delay(1400)
+            assertEquals(before, alerts(original.id).size)
+            assertEquals(original.postTime, posted(original.id).postTime)
+        } } finally {
+            ConversationService.remove(context, secondId)
+            ConversationService.remove(context, id)
+        }
+    }
+
+    @Test fun refreshWithEquivalentActionsAndResourceAvatarPostsNothing() = fixture {
+        var title = id
+        ConversationPresentation.configure { _, _ -> CallNotificationContent(title = title,
+            avatar = Icon.createWithResource(context, android.R.drawable.sym_def_app_icon),
+            extraActions = listOf(NotificationCompat.Action(0, "Assistant", activityIntent("assistant")))) }
+        observePosts {
+            incoming()
+            val initial = card()
+            title = "Ready caller"
+            val original = alertingRefresh(initial.id, title)
+            val before = alerts(original.id).size
+            repeat(2) { refreshPresentation(); delay(200) }
+            delay(1200)
+            assertEquals(before, alerts(original.id).size)
+            assertEquals(original.postTime, posted(original.id).postTime)
+        }
+    }
+
+    @Test fun changedTitleRefreshAlertsExactlyOnceAndAnEquivalentRefreshDoesNot() = fixture {
+        var title = id
+        ConversationPresentation.configure { _, _ -> CallNotificationContent(title = title) }
+        observePosts {
+            incoming()
+            val original = card()
+            withTimeout(5000) { while (alerts(original.id).isEmpty()) delay(10) }
+            title = "Resolved caller"
+            refreshPresentation()
+            posted(original.id) { it.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name == title }
+            refreshPresentation()
+            delay(1400)
+            assertEquals(2, alerts(original.id).size)
+            assertEquals("Resolved caller", alerts(original.id).last().notification.extras
+                .getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name)
+        }
+    }
+
+    @Test fun ringingRefreshComparesActionAndScreenIntentsChannelsAndUriAvatars() = fixture {
+        val secondChannel = "$channelId-second"
+        for (channel in listOf(channelId, secondChannel)) manager.createNotificationChannel(
+            NotificationChannel(channel, "App ringing", NotificationManager.IMPORTANCE_HIGH).apply { setSound(null, null) })
+        var action = activityIntent("assistant")
+        var actionTitle = "Assistant"
+        var screen = activityIntent("screen")
+        var channel = channelId
+        var avatar: Icon? = null
+        ConversationPresentation.configure { _, _ -> CallNotificationContent(title = id, avatar = avatar,
+            extraActions = listOf(NotificationCompat.Action(0, actionTitle, action)),
+            fullScreenIntent = screen, channelId = channel) }
+        try { observePosts {
+            incoming()
+            val original = card()
+            withTimeout(5000) { while (alerts(original.id).isEmpty()) delay(10) }
+            suspend fun change(update: () -> Unit) {
+                val before = alerts(original.id).size
+                update(); refreshPresentation()
+                withTimeout(5000) { while (alerts(original.id).size == before) delay(10) }
+                assertEquals(before + 1, alerts(original.id).size)
+            }
+            change { action = activityIntent("listen") }
+            change { actionTitle = "Listen" }
+            change { screen = activityIntent("updated-screen") }
+            change { channel = secondChannel }
+            val uri = Uri.parse("android.resource://android/${android.R.drawable.sym_def_app_icon}")
+            change { avatar = Icon.createWithContentUri(uri) }
+            avatar = Icon.createWithContentUri(uri)
+            refreshPresentation()
+            delay(1400)
+            assertEquals(6, alerts(original.id).size)
+            val updated = posted(original.id).notification
+            assertEquals(secondChannel, updated.channelId); assertEquals(screen, updated.fullScreenIntent)
+            assertEquals(action, updated.actions.single { it.title == "Listen" }.actionIntent)
+        } } finally {
+            engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+            removed()
+            withTimeout(5000) { while (service() != null) delay(10) }
+            manager.deleteNotificationChannel(secondChannel)
+        }
+    }
+
+    @Test fun bitmapAvatarReplacementRequiresRefreshAndTheSameIconDoesNotRepost() = fixture {
+        fun bitmapIcon() = Icon.createWithBitmap(Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888))
+        var avatar = bitmapIcon()
+        var title = id
+        ConversationPresentation.configure { _, _ -> CallNotificationContent(title = title, avatar = avatar) }
+        observePosts {
+            incoming()
+            val initial = card()
+            title = "Ready caller"
+            val original = alertingRefresh(initial.id, title)
+            val before = alerts(original.id).size
+            avatar = bitmapIcon()
+            engine.report(id, mapOf("type" to "updated", "video" to true))
+            delay(1400)
+            assertEquals(before, alerts(original.id).size)
+            refreshPresentation()
+            withTimeout(5000) { while (alerts(original.id).size < before + 1) delay(10) }
+            refreshPresentation()
+            delay(1400)
+            assertEquals(before + 1, alerts(original.id).size)
+        }
+    }
+
+    @Test fun revertingAQueuedRefreshToThePostedContentDropsTheAlert() = fixture {
+        var title = id
+        ConversationPresentation.configure { _, _ -> CallNotificationContent(title = title) }
+        observePosts {
+            incoming()
+            val initial = card()
+            title = "Ready caller"
+            val original = alertingRefresh(initial.id, title)
+            val before = alerts(original.id).size
+            title = "Temporary resolution"
+            refreshPresentation()
+            delay(200)
+            title = "Ready caller"
+            refreshPresentation()
+            delay(1400)
+            assertEquals(before, alerts(original.id).size)
+            assertEquals(original.postTime, posted(original.id).postTime)
+        }
+    }
+
+    @Test fun revertedSnapshotsWithNewBitmapIconsKeepThePostedRingingAvatar() = fixture {
+        var title = id
+        ConversationPresentation.configure { _, _ -> CallNotificationContent(title = title,
+            avatar = Icon.createWithBitmap(Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888))) }
+        observePosts {
+            incoming()
+            val initial = card()
+            title = "Ready caller"
+            val original = alertingRefresh(initial.id, title)
+            val before = alerts(original.id).size
+            title = "Temporary snapshot title"
+            engine.report(id, mapOf("type" to "updated", "video" to true))
+            delay(200)
+            title = "Ready caller"
+            engine.report(id, mapOf("type" to "updated", "video" to false))
+            delay(1400)
+            assertEquals(before, alerts(original.id).size)
+            assertEquals(original.postTime, posted(original.id).postTime)
+        }
+    }
+
+    @Test fun queuedActionsFreezeMutableTextAndIntentUntilTheNextRefresh() = fixture {
+        val label = StringBuilder("Assistant")
+        val originalIntent = activityIntent("assistant")
+        val action = NotificationCompat.Action(0, label, originalIntent)
+        ConversationPresentation.configure { _, _ -> CallNotificationContent(title = id, extraActions = listOf(action)) }
+        observePosts {
+            incoming()
+            val original = card()
+            withTimeout(5000) { while (alerts(original.id).isEmpty()) delay(10) }
+            label.replace(0, label.length, "Queued action")
+            refreshPresentation()
+            label.replace(0, label.length, "Latest action")
+            val latestIntent = activityIntent("latest")
+            action.actionIntent = latestIntent
+            val queued = posted(original.id) { it.actions.any { action -> action.title == "Queued action" } }
+            assertEquals(originalIntent, queued.notification.actions.single { it.title == "Queued action" }.actionIntent)
+            refreshPresentation()
+            val latest = posted(original.id) { it.actions.any { action -> action.title == "Latest action" } }
+            assertEquals(latestIntent, latest.notification.actions.single { it.title == "Latest action" }.actionIntent)
+            refreshPresentation()
+            delay(1400)
+            assertEquals(3, alerts(original.id).size)
+        }
+    }
+
     @Test fun twoRingingRefreshesMergeIntoOneTrailingLatestContentPost() = fixture {
         observePosts {
             var title = id
@@ -401,7 +717,8 @@ class ConversationPresentationJourneyTest {
             delay(1200)
             val posts = alerts(original.id)
             assertEquals("Two close requests must produce one trailing alert", 2, posts.size)
-            assertTrue("The initial alert participates in the cooldown", posts[1].postTime - posts[0].postTime >= 1100)
+            assertTrue("The initial alert participates in the cooldown: ${posts.map { it.postTime }}",
+                posts[1].postTime - posts[0].postTime >= 1100)
             assertEquals("Latest refresh", posts[1].notification.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name)
             assertEquals(original.id, updated.id)
             assertEquals(original.notification.channelId, updated.notification.channelId)
