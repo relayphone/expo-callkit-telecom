@@ -290,9 +290,15 @@ ConversationPresentation.configure { conversation, phase ->
 
 When your app resolves a name or avatar, or changes an extra action, call `refresh`
 from any thread. It refreshes existing live-call cards with the same IDs and
-foreground ownership. Ringing updates do not re-alert or launch another full-screen
-activity; an existing insistent ring keeps playing on its posted channel. Ended calls and retained
+foreground ownership. Refreshing a ringing call restarts its ring once; updates
+are spaced at least 1.1 seconds apart. Requests during that window merge into one
+trailing update with the latest content, cancelled if the call is answered or ends.
+The ringing card keeps its channel and full-screen intent. Non-ringing cards update
+quietly. Ended calls and retained
 “Ending call…” cards are unchanged, and missing cards are not created.
+In the API 35 screen-off observation, the initial full-screen intent opened the
+activity once; an alerting refresh did not open it again. See
+[Android 15 presentation notes](./platform-notes.md#refreshing-call-content-on-android-15).
 
 ```kotlin
 val callerNames = java.util.concurrent.ConcurrentHashMap<String, String>()

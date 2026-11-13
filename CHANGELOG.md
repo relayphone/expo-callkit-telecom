@@ -13,8 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **android:** refresh app-provided call notification content with
   `ConversationPresentation.refresh(context)`. Update resolved names, avatars and
-  extra actions in place without changing notification IDs or foreground ownership,
-  re-alerting a ringing call, or changing retained “Ending call…” cards.
+  extra actions without changing notification IDs or foreground ownership.
+  Refreshing a ringing call restarts its ring once; alerting updates are spaced at
+  least 1.1 seconds apart and close requests merge into one latest-content update.
+  Pending updates are dropped when ringing ends. Ongoing and retained “Ending
+  call…” cards remain quiet.
 
 ## 2.0.0-alpha.3 (2026-11-11)
 

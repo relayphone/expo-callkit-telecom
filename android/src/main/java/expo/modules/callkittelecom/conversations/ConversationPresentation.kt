@@ -9,6 +9,17 @@ import kotlinx.coroutines.*
 /** The notification's ringing or ongoing presentation. */
 enum class CallPhase { RINGING, ONGOING }
 
+internal const val RINGING_ALERT_INTERVAL_MILLIS = 1100L
+
+/** Android rate-limits audible alerts per package, including alerts for different calls. */
+internal class RingingAlertSchedule {
+    private var lastPostMillis: Long? = null
+    fun delayMillis(nowMillis: Long): Long = lastPostMillis?.let {
+        (it + RINGING_ALERT_INTERVAL_MILLIS - nowMillis).coerceAtLeast(0)
+    } ?: 0
+    fun posted(nowMillis: Long) { lastPostMillis = nowMillis }
+}
+
 /** App content for the library-owned CallStyle notification. Null fields keep the defaults. */
 data class CallNotificationContent(
     val title: String? = null,
@@ -39,7 +50,8 @@ object ConversationPresentation {
 
     /**
      * Re-run app content for live calls and update existing cards in place. Safe from any thread;
-     * customization runs on main. Ringing updates do not re-alert or relaunch full screen.
+     * customization runs on main. Ringing updates restart the ring and are coalesced at least
+     * 1.1 seconds apart. Updates queued for a call that leaves ringing are discarded.
      * Retained ending cards and calls without a posted notification are left unchanged.
      */
     @JvmStatic fun refresh(context: Context) {

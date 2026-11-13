@@ -20,6 +20,8 @@
       <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
     </service>
     <activity android:name="expo.modules.callkittelecom.conversations.ConversationActivity" android:exported="false" />
+    <activity android:name="expo.modules.callkittelecom.conversations.PresentationRingingActivity" android:exported="false"
+      android:launchMode="singleTop" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
     <service android:name="expo.modules.callkittelecom.conversations.ConversationService" android:exported="false" android:foregroundServiceType="phoneCall" />
     <receiver android:name="expo.modules.callkittelecom.conversations.ConversationReceiver" android:exported="false" />
   </application>

@@ -5,6 +5,7 @@ import android.app.Person
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import android.app.Activity
 import android.content.ComponentName
 import android.os.Bundle
@@ -17,10 +18,14 @@ class DndObservationService : NotificationListenerService() {
             val channelBypass: Boolean? = null, val importance: Int? = null)
         val observations = ConcurrentHashMap<String, Observation>()
         @Volatile var connected = false
+        val posts = CopyOnWriteArrayList<StatusBarNotification>()
     }
     override fun onListenerConnected() { connected = true }
     override fun onListenerDisconnected() { connected = false }
-    override fun onNotificationPosted(notification: StatusBarNotification, rankingMap: RankingMap) { record(notification, rankingMap) }
+    override fun onNotificationPosted(notification: StatusBarNotification, rankingMap: RankingMap) {
+        if (notification.packageName == packageName && notification.notification.category == Notification.CATEGORY_CALL) posts += notification
+        record(notification, rankingMap)
+    }
     override fun onNotificationRankingUpdate(rankingMap: RankingMap) {
         activeNotifications?.forEach { record(it, rankingMap) }
     }
