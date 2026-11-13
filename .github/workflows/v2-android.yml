@@ -3,10 +3,10 @@ name: v2 Android
 on:
   pull_request:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
+    paths: ['tools/android-emulator-budget*', 'tsconfig.executor.json', 'tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
   push:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
+    paths: ['tools/android-emulator-budget*', 'tsconfig.executor.json', 'tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
 
 permissions:
   contents: read
@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
-      - run: node --test tools/run-native-media-journey.test.ts tools/prepare-native-media-fixture.test.ts tools/run-android-dnd.test.ts tools/native-media-fixture-log.test.ts tools/check-native-media.test.ts tools/check-android-journey.test.ts tools/check-answered-elsewhere.test.ts tools/check-android-dnd*.test.ts
+      - run: node --test tools/android-emulator-budget.test.ts tools/run-native-media-journey.test.ts tools/prepare-native-media-fixture.test.ts tools/run-android-dnd.test.ts tools/native-media-fixture-log.test.ts tools/check-native-media.test.ts tools/check-android-journey.test.ts tools/check-answered-elsewhere.test.ts tools/check-android-dnd*.test.ts
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.0'
@@ -61,9 +61,12 @@ jobs:
           arch: x86_64
           target: google_apis
           profile: pixel_6
+          cores: 2
+          ram-size: 2048M
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048 -qemu -m 2048
           script: |
+            node tools/android-emulator-budget.ts
             node tools/run-native-media-journey.ts
             node tools/run-android-dnd.ts
       - name: Stop native media fixture
