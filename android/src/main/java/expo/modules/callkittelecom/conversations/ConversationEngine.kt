@@ -280,7 +280,10 @@ class ConversationEngine(val context: Context) {
                 current.permitted.complete(filter == null)
                 // A DND-suppressed notification still records repeat-caller history when cancelled.
                 // App block-list/other rejections are never presented.
-                if (appFilter == null) ConversationService.show(context, id, publicState(id, current))
+                if (appFilter == null) {
+                    if (filter == null) ConversationService.show(context, id, publicState(id, current))
+                    else ConversationService.recordFiltered(context, publicState(id, current))
+                }
                 if (filter != null && current.state["status"] == "ringing") {
                     closeFiltered(id, filter.reason)
                     filtered(filter)

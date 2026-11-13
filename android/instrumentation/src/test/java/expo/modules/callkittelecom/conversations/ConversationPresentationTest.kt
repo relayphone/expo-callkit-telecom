@@ -83,4 +83,33 @@ class ConversationPresentationTest {
         roster.remove("ending")
         assertNull(roster.plan().primary)
     }
+
+    @Test fun refreshIncludesEveryLiveStateWithoutChangingThePresentationPlan() {
+        val roster = CallNotificationRoster()
+        for (status in listOf("ringing", "dialing", "connecting", "connected", "held", "ending", "ended")) {
+            roster.put(status, mapOf("status" to status))
+        }
+        val before = roster.plan("ending")
+        assertEquals(listOf("ringing", "dialing", "connecting", "connected", "held"),
+            roster.liveStates().map { it["id"] })
+        assertEquals(before, roster.plan("ending"))
+        assertEquals("ending", before.primary?.get("id"))
+        assertEquals(listOf("ringing", "dialing", "connecting", "connected", "held"), before.waiting.map { it["id"] })
+        roster.remove("ringing")
+        assertFalse(roster.liveStates().any { it["id"] == "ringing" })
+    }
+
+    @Test fun ringingAlertsIncludeTheInitialPostAndShareThePackageCooldown() {
+        val schedule = RingingAlertSchedule()
+        assertEquals(0L, schedule.delayMillis(100))
+        schedule.posted(100)
+        assertEquals(900L, schedule.delayMillis(300))
+        assertEquals(700L, schedule.delayMillis(500))
+        assertEquals(1L, schedule.delayMillis(1199))
+        assertEquals(0L, schedule.delayMillis(1200))
+        // Another card's alert starts the same package-wide window.
+        schedule.posted(1200)
+        assertEquals(1100L, schedule.delayMillis(1200))
+        assertEquals(0L, schedule.delayMillis(2300))
+    }
 }

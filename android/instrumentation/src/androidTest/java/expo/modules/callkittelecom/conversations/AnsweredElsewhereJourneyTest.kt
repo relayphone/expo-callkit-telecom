@@ -456,9 +456,10 @@ class AnsweredElsewhereJourneyTest {
                     val before = TelecomEvidence.calls()
                     assertEquals(1, before.size); assertTrue(before.single().contains("state=RINGING"))
                     val platformId = Regex("\\[Call id=([^,\\]]+)").find(before.single())!!.groupValues[1]
-                    assertTrue(notificationPresent(key))
                     phase = "$source/$index visible-ring"
                     val uiBefore = showRing(key)
+                    // Admission returns before the foreground service posts its initial card.
+                    assertTrue(notificationPresent(key))
                     val visibleBefore = now()
                     val end = mapOf("eventId" to currentEvent, "serverCallId" to key, "reason" to "answeredElsewhere")
                     signalWallMillis = System.currentTimeMillis()

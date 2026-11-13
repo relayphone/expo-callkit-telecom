@@ -3,7 +3,7 @@
 Install the v2 prerelease from the GitHub release asset in your `package.json`:
 
 ```json
-"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.3/expo-callkit-telecom-2.0.0-alpha.3.tgz"
+"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.4/expo-callkit-telecom-2.0.0-alpha.4.tgz"
 ```
 
 See [release verification](./releases.md). Prerelease versions can change APIs.
@@ -252,7 +252,8 @@ timings, counts and reason codes, never names, phone numbers or media grants.
 Configure notification content from `Application.onCreate`. The library keeps the
 CallStyle notification, foreground service, and native Answer/Decline controls.
 The customizer receives the public conversation snapshot entry (including members,
-status and `payload.metadata`), with media credentials removed. It runs on main:
+status and `payload.metadata`), with media credentials removed. It runs on state
+changes and when you call `ConversationPresentation.refresh(context)`. It runs on main:
 use already-loaded content and do no I/O. Null fields retain the library defaults;
 `ConversationPresentation.configure(null)` restores them for subsequent notifications.
 
@@ -284,6 +285,30 @@ ConversationPresentation.configure { conversation, phase ->
         contentIntent = screen,
         channelId = if (phase == CallPhase.RINGING) "app-ringing" else null,
     )
+}
+```
+
+When your app resolves a name or avatar, or changes an extra action, call `refresh`
+from any thread. It refreshes existing live-call cards with the same IDs and
+foreground ownership. Refreshing a ringing call restarts its ring once; updates
+are spaced at least 1.1 seconds apart. Requests during that window merge into one
+trailing update with the latest content, cancelled if the call is answered or ends.
+The ringing card keeps its channel and full-screen intent. Non-ringing cards update
+quietly. Ended calls and retained
+“Ending call…” cards are unchanged, and missing cards are not created.
+In the API 35 screen-off observation, the initial full-screen intent opened the
+activity once; an alerting refresh did not open it again. See
+[Android 15 presentation notes](./platform-notes.md#refreshing-call-content-on-android-15).
+
+```kotlin
+val callerNames = java.util.concurrent.ConcurrentHashMap<String, String>()
+ConversationPresentation.configure { conversation, _ ->
+    CallNotificationContent(title = callerNames[conversation["id"] as String])
+}
+// In your app's existing coroutine scope, resolve the name outside the customizer:
+scope.launch {
+    callerNames[conversationId] = contacts.resolveName(conversationId)
+    ConversationPresentation.refresh(applicationContext)
 }
 ```
 

@@ -61,6 +61,22 @@ show the app's call UI from conversation snapshots. Android controls DND,
 notification presentation and visible dismissal timing. Admission alone does
 not prove audible ringing. See [incoming policy](./contracts/android-incoming-policy.md).
 
+### Refreshing call content on Android 15
+
+Android 15 treats an update with `FLAG_ONLY_ALERT_ONCE` as muted. For an insistent
+notification, that muted update can stop the sound already playing. Android also
+limits audible alerts from one app to one per second. v2 therefore keeps
+`FLAG_INSISTENT` and posts ringing refreshes as alerting updates, at least 1.1 seconds
+apart, including the initial alert. Close requests merge into one trailing update
+with the latest content; it is dropped if the call leaves ringing first.
+Dialing, connecting, connected and held cards retain quiet updates. Refreshing
+never re-customizes retained “Ending call…” cards or changes call state.
+
+On the API 35 emulator, with full-screen permission granted and the screen off,
+the initial ringing notification delivered its full-screen intent once. An
+alerting refresh retained the same intent but did not re-deliver it. This is an
+observation of that Android 15 image; full-screen launch remains system policy.
+
 ### Declined calls without JavaScript
 
 Native decline closes the call and native media without waiting for JavaScript.

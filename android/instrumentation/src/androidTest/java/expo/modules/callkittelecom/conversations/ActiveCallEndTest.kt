@@ -242,6 +242,38 @@ class ActiveCallEndTest {
         duplicatesDoNothing()
     }
 
+    @Test fun refreshLeavesRetainedEndingCardAndSignalsUnchanged() = fixture {
+        answer()
+        disconnectFailures = Int.MAX_VALUE
+        ConversationEnds.report(context, id, "remoteEnded")
+        withTimeout(5000) { while (notification()?.notification?.extras?.getString(Notification.EXTRA_TITLE) != "Ending call…") delay(10) }
+        val original = notification()!!
+        var customizations = 0
+        ConversationPresentation.configure { _, _ -> customizations++; CallNotificationContent(title = "Must not appear") }
+        try {
+            val snapshot = engine.snapshot
+            val beforeEvents = events.toList()
+            val beforeSignals = signals.toList()
+            withContext(Dispatchers.Default) {
+                ConversationPresentation.refresh(context)
+                withContext(Dispatchers.Main) { }
+            }
+            val after = notification()!!
+            assertEquals(original.id, after.id); assertEquals(original.postTime, after.postTime)
+            assertEquals("Ending call…", after.notification.extras.getString(Notification.EXTRA_TITLE))
+            assertEquals(listOf("End"), after.notification.actions.map { it.title.toString() })
+            assertTrue(service()?.foreground == true)
+            assertEquals(0, customizations)
+            assertSame(snapshot, engine.snapshot)
+            assertEquals(beforeEvents, events); assertEquals(beforeSignals, signals)
+        } finally {
+            ConversationPresentation.configure(null)
+            disconnectFailures = 0
+            engine.retryPlatformRemoval(id)
+        }
+        removedWithin(SystemClock.elapsedRealtime(), 3000)
+    }
+
     @Test fun permanentFailureKeepsEndingCardUntilDeadlineThenSignalsAndCleansUpLocally() = fixture {
         engine.platformRemovalDeadlineMillis = 2000
         // The deadline is captured when the call is created.
