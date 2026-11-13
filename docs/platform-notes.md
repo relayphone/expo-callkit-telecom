@@ -70,7 +70,9 @@ limits audible alerts from one app to one per second. v2 therefore keeps
 apart, including the initial alert. Close requests merge into one trailing update
 with the latest content; it is dropped if the call leaves ringing first.
 Dialing, connecting, connected and held cards retain quiet updates. Refreshing
-never re-customizes retained “Ending call…” cards or changes call state.
+never re-customizes retained “Ending call…” cards or changes call state. Unchanged
+resolved content is not re-posted; unrelated snapshots with avatars or extra actions
+do not restart ringing. Avatar replacement is applied on an explicit app refresh.
 
 On the API 35 emulator, with full-screen permission granted and the screen off,
 the initial ringing notification delivered its full-screen intent once. An

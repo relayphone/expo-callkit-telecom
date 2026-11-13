@@ -6,8 +6,8 @@ import android.graphics.drawable.Icon
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 
-/** The notification's ringing or ongoing presentation. */
-enum class CallPhase { RINGING, ONGOING }
+/** The notification's ringing, ongoing or retained ending presentation. */
+enum class CallPhase { RINGING, ONGOING, ENDING }
 
 internal const val RINGING_ALERT_INTERVAL_MILLIS = 1100L
 
@@ -33,6 +33,8 @@ data class CallNotificationContent(
     val channelId: String? = null,
     /** Wording for the primary card's held-call summary; used only when calls are held. */
     val heldSummary: String? = null,
+    /** Used in the ENDING phase; null keeps "Ending call…". Other content is ignored there. */
+    val endingTitle: String? = null,
 )
 
 /** Runs on main; return immediately without I/O. The public snapshot entry contains no media grants. */
@@ -50,8 +52,9 @@ object ConversationPresentation {
 
     /**
      * Re-run app content for live calls and update existing cards in place. Safe from any thread;
-     * customization runs on main. Ringing updates restart the ring and are coalesced at least
-     * 1.1 seconds apart. Updates queued for a call that leaves ringing are discarded.
+     * customization runs on main. Unchanged content posts nothing. Changed ringing content
+     * restarts the ring and is coalesced at least 1.1 seconds apart. Updates queued for a call
+     * that leaves ringing are discarded. Ringing avatar replacements require an explicit refresh.
      * Retained ending cards and calls without a posted notification are left unchanged.
      */
     @JvmStatic fun refresh(context: Context) {
@@ -69,6 +72,7 @@ object ConversationPresentation {
             contentIntent = content.contentIntent ?: defaults.contentIntent,
             channelId = content.channelId ?: defaults.channelId,
             heldSummary = content.heldSummary ?: defaults.heldSummary,
+            endingTitle = content.endingTitle ?: defaults.endingTitle,
         )
     }
 }

@@ -3,7 +3,7 @@
 Install the v2 prerelease from the GitHub release asset in your `package.json`:
 
 ```json
-"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.4/expo-callkit-telecom-2.0.0-alpha.4.tgz"
+"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.5/expo-callkit-telecom-2.0.0-alpha.5.tgz"
 ```
 
 See [release verification](./releases.md). Prerelease versions can change APIs.
@@ -290,15 +290,36 @@ ConversationPresentation.configure { conversation, phase ->
 
 When your app resolves a name or avatar, or changes an extra action, call `refresh`
 from any thread. It refreshes existing live-call cards with the same IDs and
-foreground ownership. Refreshing a ringing call restarts its ring once; updates
-are spaced at least 1.1 seconds apart. Requests during that window merge into one
-trailing update with the latest content, cancelled if the call is answered or ends.
-The ringing card keeps its channel and full-screen intent. Non-ringing cards update
+foreground ownership. Unchanged content posts nothing. A changed ringing card
+restarts its ring once; updates are spaced at least 1.1 seconds apart. Requests
+during that window merge into one trailing update with the latest content,
+cancelled if the call is answered or ends.
+Title, held summary, action titles and intents, channel, screen and content intents
+are compared by value. Avatar replacements require `refresh`; resource and URI icons
+use stable keys, and bitmap/data icons use `Icon` identity. Reuse the same bitmap
+`Icon` until its image changes. Unrelated snapshots do not restart a ring just
+because the customizer returns a new avatar or action object. Non-ringing cards update
 quietly. Ended calls and retained
 “Ending call…” cards are unchanged, and missing cards are not created.
 In the API 35 screen-off observation, the initial full-screen intent opened the
 activity once; an alerting refresh did not open it again. See
 [Android 15 presentation notes](./platform-notes.md#refreshing-call-content-on-android-15).
+
+To localize the retained ending card, return `endingTitle` in `CallPhase.ENDING`.
+That phase receives the call's `id` and `status = "ending"`; other content fields
+are ignored. The title is resolved once when the card is retained, defaults to
+“Ending call…”, and is unchanged by later renders or `refresh`. For example, with
+an app-defined `call_ending` string resource:
+
+```kotlin
+ConversationPresentation.configure { _, phase ->
+    if (phase == CallPhase.ENDING) {
+        CallNotificationContent(endingTitle = getString(R.string.call_ending))
+    } else {
+        CallNotificationContent()
+    }
+}
+```
 
 ```kotlin
 val callerNames = java.util.concurrent.ConcurrentHashMap<String, String>()

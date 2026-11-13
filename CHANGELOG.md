@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.5 (2026-11-13)
+
+### Features
+
+* **android:** localize retained ending cards with `CallNotificationContent.endingTitle`
+  in the new `CallPhase.ENDING`. The default remains “Ending call…”.
+
+### Fixes
+
+* **android:** compare displayed ringing content before re-posting. Unrelated
+  snapshots and unchanged app refreshes no longer restart ringing for cards with
+  avatars or extra actions. Queued changes reverted to the posted content are
+  dropped. Avatar replacements are applied by an explicit refresh.
+
 ## 2.0.0-alpha.4 (2026-11-13)
 
 ### Features

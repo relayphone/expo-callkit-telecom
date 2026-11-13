@@ -46,6 +46,21 @@ class ConversationPresentationTest {
         assertEquals("Another call is paused", ConversationPresentation.resolve(emptyMap(), CallPhase.ONGOING, withHeld).heldSummary)
     }
 
+    @Test fun endingTitleUsesItsOwnOverrideAndFallsBackForNullOrThrowingCustomizers() {
+        val ending = CallNotificationContent(endingTitle = "Ending call…")
+        val entry = mapOf("id" to "call", "status" to "ending")
+        assertEquals("Ending call…", ConversationPresentation.resolve(entry, CallPhase.ENDING, ending).endingTitle)
+        ConversationPresentation.configure { received, phase ->
+            assertSame(entry, received); assertEquals(CallPhase.ENDING, phase)
+            CallNotificationContent(endingTitle = "Zakończenie połączenia…")
+        }
+        assertEquals("Zakończenie połączenia…", ConversationPresentation.resolve(entry, CallPhase.ENDING, ending).endingTitle)
+        ConversationPresentation.configure { _, _ -> CallNotificationContent(title = "Caller title") }
+        assertEquals("Ending call…", ConversationPresentation.resolve(entry, CallPhase.ENDING, ending).endingTitle)
+        ConversationPresentation.configure { _, _ -> error("Unavailable localization") }
+        assertEquals("Ending call…", ConversationPresentation.resolve(entry, CallPhase.ENDING, ending).endingTitle)
+    }
+
     @Test fun primaryPrefersActiveThenMostRecentHeldAndWaitingHasSeparateEntries() {
         val roster = CallNotificationRoster()
         fun put(id: String, status: String) = roster.put(id, mapOf("id" to id, "status" to status))
