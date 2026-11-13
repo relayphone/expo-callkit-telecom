@@ -37,7 +37,7 @@ test("runs the complete functional suite once and checks all four results", () =
   const f = fixture();
   try {
     runNativeMediaJourney(f.output, f.run);
-    assert.equal(f.calls.length, 9);
+    assert.equal(f.calls.length, 11);
     assert.deepEqual(f.calls[0], {
       program: "gradle",
       args: [
@@ -85,10 +85,38 @@ test("runs the complete functional suite once and checks all four results", () =
       });
     }
     assert.equal(readdirSync(f.output).length, 4);
+    assert.deepEqual(f.calls.slice(9), [
+      { program: "gradle", args: [
+        "-p", "android/instrumentation", ":connectedEmulatorTestAndroidTest", "-PmediaTestBuildType=emulatorTest",
+        "-Pandroid.testInstrumentationRunnerArguments.class=expo.modules.callkittelecom.conversations.MediaHookFeasibilityTest,expo.modules.callkittelecom.conversations.MediaTestIsolationTest",
+        "--no-daemon", "--max-workers=2", "--stacktrace",
+      ], timeout: 300_000 },
+      { program: "gradle", args: [
+        "-p", "android/instrumentation", ":connectedReleaseAndroidTest", "-PmediaTestBuildType=release",
+        "-Pandroid.testInstrumentationRunnerArguments.class=expo.modules.callkittelecom.conversations.MediaTestIsolationTest",
+        "--no-daemon", "--max-workers=2", "--stacktrace",
+      ], timeout: 300_000 },
+    ]);
   } finally {
     f.close();
   }
 });
+
+for (const build of ["EmulatorTest", "Release"])
+  test(`a failed ${build} qualification remains fatal and preserves the ordinary journey evidence`, () => {
+    const f = fixture();
+    const failure = new Error(`${build} failed`);
+    try {
+      assert.throws(() => runNativeMediaJourney(f.output, (command) => {
+        const result = f.run(command);
+        if (command.args.includes(`:connected${build}AndroidTest`)) throw failure;
+        return result;
+      }), (error) => error === failure);
+      assert.equal(readdirSync(f.output).length, 4);
+      assert.equal(f.calls.filter((command) => command.program === "gradle").length,
+        build === "EmulatorTest" ? 2 : 3);
+    } finally { f.close(); }
+  });
 
 test("retains available media diagnostics after a failed suite and propagates its failure", () => {
   const f = fixture();

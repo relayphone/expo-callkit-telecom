@@ -26,6 +26,54 @@ raw_peers = {}
 closed_negotiations = set()
 terminal_gates = {}
 terminal_times = {}
+uplinks = {}
+uplink_tasks = set()
+
+
+class MarkerObservation:
+    """Independently check the device's six-symbol uplink, rather than just its room presence."""
+    frequencies = (1000, 1800, 1200, 2200, 1400, 2000)
+
+    def __init__(self):
+        self.running = True
+        self.reset()
+
+    def reset(self):
+        self.frames = 0
+        self.markers = 0
+        self.previous = None
+        self.symbols = []
+
+    async def receive(self, track):
+        stream = rtc.AudioStream(track, sample_rate=48000, num_channels=1)
+        try:
+            async for event in stream:
+                values = memoryview(event.frame.data).cast("B").cast("h")
+                self.frames += len(values)
+                energy = sum(value * value for value in values)
+                if not energy:
+                    self.previous = None
+                    self.symbols.clear()
+                    continue
+                scores = []
+                for frequency in self.frequencies:
+                    coefficient = 2 * math.cos(2 * math.pi * frequency / 48000)
+                    first = second = 0.0
+                    for value in values:
+                        current = value + coefficient * first - second
+                        second, first = first, current
+                    scores.append((first * first + second * second - coefficient * first * second) / (len(values) * energy))
+                symbol = scores.index(max(scores)) if max(scores) > .15 else None
+                if symbol is None:
+                    self.symbols.clear()
+                elif symbol != self.previous:
+                    self.symbols = (self.symbols + [symbol])[-len(self.frequencies):]
+                    if self.symbols == list(range(len(self.frequencies))):
+                        self.markers += 1
+                self.previous = symbol
+        finally:
+            self.running = False
+            await stream.aclose()
 
 
 class ToneTrack(AudioStreamTrack):
@@ -56,6 +104,17 @@ def token(room, identity):
 
 async def publish(room_name):
     room = rtc.Room()
+
+    @room.on("track_subscribed")
+    def received(track, publication, participant):
+        if track.kind == rtc.TrackKind.KIND_AUDIO and participant.identity.startswith("device-"):
+            observation = MarkerObservation()
+            uplinks[room_name] = observation
+            task = asyncio.create_task(observation.receive(track))
+            uplink_tasks.add(task)
+            task.add_done_callback(uplink_tasks.discard)
+            # Consume receiver failures without logging private SDK exception details.
+            task.add_done_callback(lambda finished: None if finished.cancelled() else finished.exception())
 
     await room.connect("ws://127.0.0.1:7880", token(room_name, "fixture-publisher"))
     source = rtc.AudioSource(48000, 1)
@@ -138,6 +197,24 @@ async def observations(request):
         terminal_times[server_id]["releasedNanos"] = time.monotonic_ns()
         gate.set()
     return response
+
+
+async def markers(request):
+    if not authenticated(request):
+        return web.Response(status=401)
+    room_name = "native-ci-" + request.match_info["server_id"]
+    observation = uplinks.get(room_name)
+    if observation is None:
+        return web.json_response({"running": False, "frames": 0, "markers": 0})
+    if request.method == "POST":
+        observation.reset()
+    room = bots[room_name][0]
+    publications = [publication for participant in room.remote_participants.values()
+                    if participant.identity.startswith("device-")
+                    for publication in participant.track_publications.values()
+                    if publication.kind == rtc.TrackKind.KIND_AUDIO]
+    return web.json_response({"running": observation.running, "frames": observation.frames,
+                             "markers": observation.markers, "muted": bool(publications) and all(p.muted for p in publications)})
 
 
 async def raw_signaling(request):
@@ -240,6 +317,7 @@ app = web.Application(middlewares=[sanitized_errors])
 app.router.add_get("/health", lambda _: web.json_response({"ready": True}))
 app.router.add_get("/fixture/invitation/{server_id}", invitation)
 app.router.add_get("/fixture/observations/{server_id}", observations)
+app.router.add_route("*", "/fixture/markers/{server_id}", markers)
 app.router.add_post("/v1/calls/{server_id}/media-credentials", media_credentials)
 app.router.add_post("/fixture/webrtc/{server_id}", raw_signaling)
 app.router.add_route("*", "/{rest:.*}", proxy)

@@ -73,6 +73,23 @@ export function runNativeMediaJourney(
         timeout: 15_000,
       });
     }
+    // Keep the ordinary journeys unchanged, then qualify the isolated hooks and a real Release refusal.
+    for (const [build, classes] of [
+      ["EmulatorTest", "MediaHookFeasibilityTest,MediaTestIsolationTest"],
+      ["Release", "MediaTestIsolationTest"],
+    ] as const) {
+      run({
+        program: "gradle",
+        args: [
+          "-p", "android/instrumentation", `:connected${build}AndroidTest`,
+          `-PmediaTestBuildType=${build.charAt(0).toLowerCase()}${build.slice(1)}`,
+          `-Pandroid.testInstrumentationRunnerArguments.class=${classes.split(",")
+            .map((name) => `expo.modules.callkittelecom.conversations.${name}`).join(",")}`,
+          "--no-daemon", "--max-workers=2", "--stacktrace",
+        ],
+        timeout: 5 * 60_000,
+      });
+    }
   } finally {
     for (const [name] of checks.slice(1)) {
       if (!saved.has(name)) {

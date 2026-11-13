@@ -15,12 +15,29 @@ android {
     minSdk 26
     targetSdk 35
     testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    buildConfigField 'boolean', 'MEDIA_TEST_BUILD', 'false'
   }
+  buildFeatures { buildConfig true }
+  buildTypes {
+    emulatorTest {
+      initWith debug
+      matchingFallbacks = ['debug']
+      buildConfigField 'boolean', 'MEDIA_TEST_BUILD', 'true'
+    }
+    release { signingConfig signingConfigs.debug }
+  }
+  def selectedTestBuild = providers.gradleProperty('mediaTestBuildType').getOrElse('debug')
+  if (!(selectedTestBuild in ['debug', 'emulatorTest', 'release'])) {
+    throw new GradleException('Unsupported media test build type')
+  }
+  testBuildType selectedTestBuild
   sourceSets {
     // The module's sources with the engine selected by androidNativeMedia: "livekit".
     main.java.srcDirs = ['../src/main/java/expo/modules/callkittelecom/conversations',
       '../src/livekit/java/expo/modules/callkittelecom/conversations', 'src/main/java']
     androidTest.assets.srcDirs = ['src/androidTest/assets']
+    emulatorTest.java.srcDirs = ['src/emulatorTest/java']
+    androidTestEmulatorTest.java.srcDirs = ['src/androidTestEmulatorTest/java']
   }
 }
 
