@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.4 (2026-11-13)
+
+### Features
+
+* **android:** refresh app-provided call notification content with
+  `ConversationPresentation.refresh(context)`. Update resolved names, avatars and
+  extra actions in place without changing notification IDs or foreground ownership,
+  re-alerting a ringing call, or changing retained “Ending call…” cards.
+
 ## 2.0.0-alpha.3 (2026-11-11)
 
 ### Fixes

@@ -32,9 +32,20 @@ fun interface CallNotificationCustomizer {
 /** Customizes subsequent notifications while the library retains CallStyle, service and controls. */
 object ConversationPresentation {
     @Volatile private var customizer: CallNotificationCustomizer? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     /** Configure from Application.onCreate; null restores the library's content. */
     @JvmStatic fun configure(customizer: CallNotificationCustomizer?) { this.customizer = customizer }
+
+    /**
+     * Re-run app content for live calls and update existing cards in place. Safe from any thread;
+     * customization runs on main. Ringing updates do not re-alert or relaunch full screen.
+     * Retained ending cards and calls without a posted notification are left unchanged.
+     */
+    @JvmStatic fun refresh(context: Context) {
+        val application = context.applicationContext
+        scope.launch { ConversationService.refreshPresentation(application) }
+    }
 
     internal fun resolve(conversation: Map<String, Any?>, phase: CallPhase,
                          defaults: CallNotificationContent): CallNotificationContent {
@@ -74,6 +85,9 @@ internal class CallNotificationRoster {
     }
     fun remove(id: String): Boolean = entries.remove(id) != null
     fun ending(id: String): Boolean = if (id in entries) put(id, mapOf("status" to "ending")) else false
+    fun liveStates(): List<Map<String, Any?>> = entries.values.map { it.state }.filter {
+        it["status"] in listOf("ringing", "dialing", "connecting", "connected", "held")
+    }
 
     data class Plan(val primary: Map<String, Any?>?, val waiting: List<Map<String, Any?>>, val heldCount: Int) {
         val heldSummary: String? get() = when (heldCount) {

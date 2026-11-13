@@ -43,6 +43,34 @@ class ConversationService : Service() {
         internal fun refresh(context: Context, states: List<Map<String, Any?>>) {
             if (roster.refresh(states)) render(context)
         }
+        internal fun refreshPresentation(context: Context) {
+            val states = roster.liveStates()
+            if (states.isEmpty()) return
+            val manager = context.getSystemService(NotificationManager::class.java)
+            val posted = manager.activeNotifications.filter { it.tag == null }.associateBy { it.id }
+            val heldSummary = roster.plan(foregroundCard?.id).heldSummary
+            for (state in states) {
+                val id = state["id"] as String
+                var refreshed = card(context, state, if (foregroundCard?.id == id) heldSummary else null)
+                val primary = foregroundCard?.let { it.id == id && !it.ending } == true
+                val waiting = waitingCards[id]
+                val notificationId = if (primary) foregroundId else waiting?.takeUnless { it.card.ending }?.notificationId
+                val previous = posted[notificationId] ?: continue
+                // Keep the playing ring's channel, including its sound and vibration.
+                if (refreshed.phase == CallPhase.RINGING) refreshed = refreshed.copy(
+                    content = refreshed.content.copy(channelId = previous.notification.channelId,
+                        fullScreenIntent = previous.notification.fullScreenIntent))
+                // Preserve CallStyle eligibility without changing foreground ownership.
+                val update = notification(context, refreshed).apply {
+                    flags = flags or (previous.notification.flags and Notification.FLAG_FOREGROUND_SERVICE)
+                }
+                if (primary) {
+                    foregroundCard = refreshed
+                    foreground = update
+                } else waitingCards[id] = checkNotNull(waiting).copy(card = refreshed)
+                manager.notify(checkNotNull(notificationId), update)
+            }
+        }
         fun remove(context: Context, id: String) {
             endingIds.remove(id)
             if (roster.remove(id)) render(context)

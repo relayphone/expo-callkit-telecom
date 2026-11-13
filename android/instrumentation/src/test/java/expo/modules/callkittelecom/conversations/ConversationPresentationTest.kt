@@ -83,4 +83,19 @@ class ConversationPresentationTest {
         roster.remove("ending")
         assertNull(roster.plan().primary)
     }
+
+    @Test fun refreshIncludesEveryLiveStateWithoutChangingThePresentationPlan() {
+        val roster = CallNotificationRoster()
+        for (status in listOf("ringing", "dialing", "connecting", "connected", "held", "ending", "ended")) {
+            roster.put(status, mapOf("status" to status))
+        }
+        val before = roster.plan("ending")
+        assertEquals(listOf("ringing", "dialing", "connecting", "connected", "held"),
+            roster.liveStates().map { it["id"] })
+        assertEquals(before, roster.plan("ending"))
+        assertEquals("ending", before.primary?.get("id"))
+        assertEquals(listOf("ringing", "dialing", "connecting", "connected", "held"), before.waiting.map { it["id"] })
+        roster.remove("ringing")
+        assertFalse(roster.liveStates().any { it["id"] == "ringing" })
+    }
 }
