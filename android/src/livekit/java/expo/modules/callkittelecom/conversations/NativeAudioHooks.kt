@@ -11,6 +11,5 @@ internal interface NativeAudioHooks {
     fun capture(pacing: AudioBufferCallback): AudioBufferCallback
     fun configureOutput(builder: JavaAudioDeviceModule.Builder, observer: JavaAudioDeviceModule.PlaybackSamplesReadyCallback)
     fun published(publication: LocalTrackPublication)
-    fun recording(device: JavaAudioDeviceModule)
     fun close()
 }

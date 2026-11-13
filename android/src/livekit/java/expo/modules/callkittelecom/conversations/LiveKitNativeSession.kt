@@ -73,7 +73,6 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         // Set before any capture thread starts: recordingless RTP negotiation cannot open the microphone.
         device.setAudioRecordEnabled(false)
         recording = device
-        audioHooks?.recording(device)
         candidate.setSpeakerMute(true); heat.muteOutput()
         val publisherReady = CompletableDeferred<Unit>()
         val subscriberReady = CompletableDeferred<Unit>()

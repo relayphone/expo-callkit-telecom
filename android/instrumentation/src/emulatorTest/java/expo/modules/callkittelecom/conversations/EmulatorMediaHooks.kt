@@ -4,7 +4,6 @@ import android.content.Context
 import android.media.AudioFormat
 import io.livekit.android.audio.AudioBufferCallback
 import io.livekit.android.room.track.LocalTrackPublication
-import io.livekit.android.room.track.LocalAudioTrack
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
@@ -14,12 +13,19 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.roundToInt
 import livekit.org.webrtc.AudioTrackSink
-import livekit.org.webrtc.audio.AudioProcessingOptions
 import livekit.org.webrtc.audio.JavaAudioDeviceModule
 
 /** Software PCM qualification only. This implementation exists solely in the emulatorTest source set. */
-internal class EmulatorMediaHooks(context: Context, tapEnabled: Boolean = true) : NativeAudioHooks {
+internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled: Boolean = true) : NativeAudioHooks {
+    // Match SDK testing/marker.ts: UTF-8 FNV-1a, four sync slots, sixteen low-to-high identity slots.
+    private val frequencies = run {
+        var hash = 2166136261L
+        for (byte in markerId.toByteArray(Charsets.UTF_8)) hash = ((hash xor (byte.toLong() and 255)) * 16777619L) and 0xffffffffL
+        val tones = doubleArrayOf(650.0, 950.0, 1350.0, 1850.0)
+        tones + DoubleArray(16) { tones[((hash ushr (it * 2)) and 3).toInt()] }
+    }
     enum class Stimulus { MARKER, ZERO, WRONG }
     @Volatile var stimulus = Stimulus.MARKER
     data class Observation(val blocks: Long, val frames: Long, val nonzero: Long, val tones: Long)
@@ -42,8 +48,6 @@ internal class EmulatorMediaHooks(context: Context, tapEnabled: Boolean = true) 
         private set
     val recordinglessCallbacks = AtomicLong()
     private var publication: LocalTrackPublication? = null
-    private var recording: JavaAudioDeviceModule? = null
-    private var ownsRecording = false
     val directArrayVerified: Boolean
 
     init {
@@ -74,7 +78,7 @@ internal class EmulatorMediaHooks(context: Context, tapEnabled: Boolean = true) 
             // Always retain the production recordingless pump's pacing and lifecycle observations.
             val result = pacing.onBuffer(buffer, format, channels, rate, bytesRead, timestamp)
             if (!closed.get()) {
-                if (format != AudioFormat.ENCODING_PCM_16BIT || channels !in 1..2 || rate <= 0 ||
+                if (format != AudioFormat.ENCODING_PCM_16BIT || channels !in 1..2 || rate !in 8000..96000 || rate % 50 != 0 ||
                     buffer.capacity() % (2 * channels) != 0) {
                     failure.set(MediaHookFailure.UNSUPPORTED_PCM)
                 } else {
@@ -87,8 +91,10 @@ internal class EmulatorMediaHooks(context: Context, tapEnabled: Boolean = true) 
                         val index = first + frame
                         val frequency = if (stimulus == Stimulus.WRONG) 440.0 else
                             frequencies[((index * 1000 / rate / SYMBOL_MILLIS) % frequencies.size).toInt()]
+                        // Float32 normalization and PCM16 conversion match the SDK's host source.
+                        val normalized = (0.2 * sin(2 * PI * frequency * index / rate)).toFloat()
                         val sample = if (stimulus == Stimulus.ZERO) 0.toShort() else
-                            (6000 * sin(2 * PI * frequency * index / rate)).toInt().toShort()
+                            (normalized.toDouble() * 32767).roundToInt().toShort()
                         repeat(channels) { pcm.putShort(sample) }
                     }
                     injectedFrames.addAndGet(frames.toLong())
@@ -115,35 +121,7 @@ internal class EmulatorMediaHooks(context: Context, tapEnabled: Boolean = true) 
     }
 
     override fun published(publication: LocalTrackPublication) { this.publication = publication }
-    override fun recording(device: JavaAudioDeviceModule) { recording = device }
-    fun publicationMuted(muted: Boolean) {
-        available()
-        val publication = checkNotNull(publication)
-        val device = checkNotNull(recording)
-        if (muted) {
-            // Keep the real ADM input alive when disabling the sender, so silence cannot
-            // be explained by the source callback stopping with the last enabled track.
-            val options = (publication.track as LocalAudioTrack).options
-            ownsRecording = true
-            try {
-                if (!device.requestStartRecording(AudioProcessingOptions(options.echoCancellation, options.noiseSuppression,
-                    options.autoGainControl, options.highPassFilter)))
-                    throw MediaHookUnavailable(MediaHookFailure.CAPTURE_UNAVAILABLE)
-            } catch (error: Exception) {
-                releaseRecording()
-                throw error
-            }
-        }
-        publication.muted = muted
-    }
-
-    /** Release the client lease only after the peer acknowledges resumed native RTP capture. */
-    fun releaseCaptureLease() { available(); releaseRecording() }
-
-    private fun releaseRecording() {
-        try { if (ownsRecording) recording?.requestStopRecording() }
-        finally { ownsRecording = false }
-    }
+    fun publicationIdentity() = checkNotNull(publication)
 
     private fun observe(window: Window, pcm: ByteBuffer, rate: Int, channels: Int) {
         if (closed.get()) return
@@ -173,14 +151,10 @@ internal class EmulatorMediaHooks(context: Context, tapEnabled: Boolean = true) 
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        try { releaseRecording() }
-        finally { publication = null; recording = null }
+        publication = null
     }
 
     private companion object {
-        // Six ordered symbols over four voice-band tones.
-        // The far end must recognize the entire sequence, including repeated symbols.
-        val frequencies = doubleArrayOf(1000.0, 1800.0, 1400.0, 2000.0, 1000.0, 1400.0)
-        const val SYMBOL_MILLIS = 160L
+        const val SYMBOL_MILLIS = 20L
     }
 }

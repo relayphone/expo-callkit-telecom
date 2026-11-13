@@ -16,8 +16,8 @@ from aiortc import AudioStreamTrack, RTCConfiguration, RTCPeerConnection, RTCSes
 from aiortc.contrib.media import MediaBlackhole
 from av import AudioFrame
 
-directory = Path(sys.argv[1])
-settings = json.loads((directory / "settings.json").read_text())
+directory = Path(sys.argv[1]) if __name__ == "__main__" else None
+settings = json.loads((directory / "settings.json").read_text()) if directory else {}
 bots = {}
 fetches = {}
 states = {}
@@ -31,75 +31,101 @@ uplink_tasks = set()
 
 
 class MarkerObservation:
-    """Independently check the device's six-symbol uplink, rather than just its room presence."""
-    frequencies = (1000, 1800, 1400, 2000)
-    sequence = (0, 1, 2, 3, 0, 2)
+    """Bounded real uplink PCM; tones-v1 matches SDK testing/marker.ts without relaxed slots."""
+    next_generation = 0
+    rate = 48000
+    slot_samples = 960
 
-    def __init__(self):
+    def __init__(self, identity):
+        MarkerObservation.next_generation += 1
+        self.generation = MarkerObservation.next_generation
+        self.identity = identity
+        tones = (650, 950, 1350, 1850)
+        hash_value = 2166136261
+        for byte in identity.encode("utf-8"):
+            hash_value = ((hash_value ^ byte) * 16777619) & 0xffffffff
+        self.frequencies = tones + tuple(tones[(hash_value >> shift) & 3] for shift in range(0, 32, 2))
         self.running = True
         self.error = None
+        self.epoch = 0
         self.reset()
 
     def reset(self):
+        self.epoch += 1
         self.frames = 0
-        self.markers = 0
-        self.previous = None
-        self.candidate = None
-        self.candidate_frames = 0
-        self.unknown_frames = 0
-        self.last_raw = None
-        self.symbols = []
-        self.seen = [0] * len(self.frequencies)
-        self.transitions = []
+        self.pcm = []
+        self.analyzed = 0
+        self.evidence = {"markers": 0, "profile": "tones-v1", "markerId": self.identity,
+                         "sampleRate": self.rate, "slots": [], "minimumConfidence": None}
+
+    @staticmethod
+    def analyze(pcm, frequencies):
+        # Same 1 ms search grid, normalized Goertzel score, energy floor and >=0.8 rule.
+        # Cache overlapping slot scores; never alter, stitch or repair received PCM.
+        scores = {}
+        def confidence(start, frequency):
+            key = (start, frequency)
+            if key in scores:
+                return scores[key]
+            coefficient = 2 * math.cos(2 * math.pi * frequency / 48000)
+            previous = before = energy = 0.0
+            for index in range(start, start + 960):
+                value = pcm[index] / 32768
+                current = value + coefficient * previous - before
+                before, previous = previous, current
+                energy += value * value
+            result = 0 if energy < 960 * .0001 else min(1, max(0, 2 * (
+                previous * previous + before * before - coefficient * previous * before) / (960 * energy)))
+            scores[key] = result
+            return result
+        best = None
+        detections = []
+        candidate = None
+        search_end = None
+        for offset in range(0, len(pcm) - 19200 + 1, 48):
+            slots = [confidence(offset + slot * 960, frequency) for slot, frequency in enumerate(frequencies)]
+            minimum = min(slots)
+            if best is None or minimum > best[0]:
+                best = (minimum, offset, slots)
+            if detections and offset < detections[-1][1] + 19200:
+                continue
+            if minimum >= .8:
+                if candidate is None:
+                    search_end = offset + 960
+                if candidate is None or minimum > candidate[0] + .0001:
+                    candidate = (minimum, offset, slots)
+            if candidate is not None and offset >= search_end:
+                detections.append(candidate)
+                candidate = None
+        if candidate is not None:
+            detections.append(candidate)
+        chosen = detections[0] if detections else best
+        return {"markers": len(detections), "minimumConfidence": chosen[0] if chosen else None,
+                "offsetSamples": chosen[1] if chosen else None,
+                "slots": [{"index": index, "frequencyHz": frequency, "confidence": score, "margin": score - .8}
+                          for index, (frequency, score) in enumerate(zip(frequencies, chosen[2] if chosen else []))]}
+
+    async def measure(self):
+        # Analyze each fresh second at most once; retain only the first three seconds per reset.
+        if len(self.pcm) >= 57600 and len(self.pcm) >= self.analyzed + 48000:
+            epoch = self.epoch
+            pcm = self.pcm[:]
+            result = await asyncio.to_thread(self.analyze, pcm, self.frequencies)
+            if epoch == self.epoch:
+                self.analyzed = len(pcm)
+                self.evidence.update(result)
+        return self.evidence
 
     async def receive(self, track):
         stream = None
         try:
-            stream = rtc.AudioStream(track, sample_rate=48000, num_channels=1)
+            stream = rtc.AudioStream(track, sample_rate=self.rate, num_channels=1)
             async for event in stream:
+                if event.frame.sample_rate != self.rate or event.frame.num_channels != 1:
+                    raise ValueError("Uplink PCM format changed")
                 values = memoryview(event.frame.data).cast("B").cast("h")
                 self.frames += len(values)
-                energy = sum(value * value for value in values)
-                if not energy:
-                    self.previous = None
-                    self.candidate = None
-                    self.candidate_frames = 0
-                    self.symbols.clear()
-                    continue
-                scores = []
-                for frequency in self.frequencies:
-                    coefficient = 2 * math.cos(2 * math.pi * frequency / 48000)
-                    first = second = 0.0
-                    for value in values:
-                        current = value + coefficient * first - second
-                        second, first = first, current
-                    scores.append((first * first + second * second - coefficient * first * second) / (len(values) * energy))
-                symbol = scores.index(max(scores)) if max(scores) > .15 else None
-                if symbol is not None:
-                    self.seen[symbol] += 1
-                if symbol != self.last_raw:
-                    self.transitions = (self.transitions + [-1 if symbol is None else symbol])[-24:]
-                self.last_raw = symbol
-                if symbol is None:
-                    self.unknown_frames += len(values)
-                    self.candidate = None
-                    self.candidate_frames = 0
-                    if self.unknown_frames >= 2880:
-                        self.symbols.clear()
-                        self.previous = None
-                    continue
-                self.unknown_frames = 0
-                if symbol != self.candidate:
-                    self.candidate = symbol
-                    self.candidate_frames = 0
-                self.candidate_frames += len(values)
-                # Confirm 40 ms of a symbol, independent of the decoder's frame size.
-                # Transitional codec windows never become extra symbols or fabricated PCM.
-                if self.candidate_frames >= 1920 and symbol != self.previous:
-                    self.symbols = (self.symbols + [symbol])[-len(self.sequence):]
-                    if self.symbols == list(self.sequence):
-                        self.markers += 1
-                    self.previous = symbol
+                self.pcm.extend(values[:max(0, self.rate * 3 - len(self.pcm))])
         except Exception as error:
             self.error = type(error).__name__
         finally:
@@ -140,7 +166,7 @@ async def publish(room_name):
     @room.on("track_subscribed")
     def received(track, publication, participant):
         if track.kind == rtc.TrackKind.KIND_AUDIO and participant.identity.startswith("device-"):
-            observation = MarkerObservation()
+            observation = MarkerObservation(room_name.removeprefix("native-ci-") + ":fromDevice")
             uplinks[room_name] = observation
             task = asyncio.create_task(observation.receive(track))
             uplink_tasks.add(task)
@@ -246,8 +272,8 @@ async def markers(request):
                     for publication in participant.track_publications.values()
                     if publication.kind == rtc.TrackKind.KIND_AUDIO]
     return web.json_response({"running": observation.running, "frames": observation.frames,
-                             "markers": observation.markers, "symbols": observation.symbols, "seen": observation.seen,
-                             "transitions": observation.transitions, "error": observation.error,
+                             "generation": observation.generation,
+                             **(await observation.measure()), "error": observation.error,
                              "muted": bool(publications) and all(p.muted for p in publications)})
 
 
@@ -347,14 +373,15 @@ async def sanitized_errors(request, handler):
         return web.json_response({"error": "fixture-operation-failed"}, status=500)
 
 
-app = web.Application(middlewares=[sanitized_errors])
-app.router.add_get("/health", lambda _: web.json_response({"ready": True}))
-app.router.add_get("/fixture/invitation/{server_id}", invitation)
-app.router.add_get("/fixture/observations/{server_id}", observations)
-app.router.add_route("*", "/fixture/markers/{server_id}", markers)
-app.router.add_post("/v1/calls/{server_id}/media-credentials", media_credentials)
-app.router.add_post("/fixture/webrtc/{server_id}", raw_signaling)
-app.router.add_route("*", "/{rest:.*}", proxy)
-tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-tls.load_cert_chain(directory / "server.crt", directory / "server.key")
-web.run_app(app, host="0.0.0.0", port=9443, ssl_context=tls, access_log=None, print=None)
+if __name__ == "__main__":
+    app = web.Application(middlewares=[sanitized_errors])
+    app.router.add_get("/health", lambda _: web.json_response({"ready": True}))
+    app.router.add_get("/fixture/invitation/{server_id}", invitation)
+    app.router.add_get("/fixture/observations/{server_id}", observations)
+    app.router.add_route("*", "/fixture/markers/{server_id}", markers)
+    app.router.add_post("/v1/calls/{server_id}/media-credentials", media_credentials)
+    app.router.add_post("/fixture/webrtc/{server_id}", raw_signaling)
+    app.router.add_route("*", "/{rest:.*}", proxy)
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(directory / "server.crt", directory / "server.key")
+    web.run_app(app, host="0.0.0.0", port=9443, ssl_context=tls, access_log=None, print=None)
