@@ -203,7 +203,7 @@ class MarkerObservation:
 
     async def receive(self, track):
         stream = None
-        stats_task = asyncio.create_task(self.poll_stats(track)) if track is not None else None
+        stats_task = asyncio.create_task(self.poll_stats(track)) if track is not None and self.identity.startswith("hooks-") else None
         try:
             stream = rtc.AudioStream(track, sample_rate=self.rate, num_channels=1)
             async for event in stream:
