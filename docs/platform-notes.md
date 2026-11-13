@@ -74,6 +74,13 @@ never re-customizes retained “Ending call…” cards or changes call state. U
 resolved content is not re-posted; unrelated snapshots with avatars or extra actions
 do not restart ringing. Avatar replacement is applied on an explicit app refresh.
 
+Foreground-service starts publish a valid notification immediately, including a
+brief ongoing placeholder when a queued start arrives after the call ended. Empty
+rosters stop the service without requesting another start. If a ringing start falls
+inside the alert window, its initial card is followed by a scheduled alerting update.
+The window is measured from Android's observed notification publication, since
+foreground promotion can return before its notification appears.
+
 On the API 35 emulator, with full-screen permission granted and the screen off,
 the initial ringing notification delivered its full-screen intent once. An
 alerting refresh retained the same intent but did not re-deliver it. This is an

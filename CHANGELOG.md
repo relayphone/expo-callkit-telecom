@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixes
 
+* **android:** enter foreground synchronously for every foreground-service start,
+  including a start delivered after its call ended. Empty rosters stop the service
+  without starting it again. A ringing start inside the alert window gets a trailing
+  alert. Measure that window after Android publishes the notification, avoiding
+  early ringing updates caused by asynchronous foreground publication.
 * **android:** compare displayed ringing content before re-posting. Unrelated
   snapshots and unchanged app refreshes no longer restart ringing for cards with
   avatars or extra actions. Queued changes reverted to the posted content are

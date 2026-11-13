@@ -39,6 +39,8 @@ class ConversationService : Service() {
     private data class NotificationCard(val notificationId: Int, val card: Card)
     companion object {
         private const val FOREGROUND_ID = 6999
+        private const val RINGING_POST_SEQUENCE = "expo.modules.callkittelecom.ringingPostSequence"
+        private var nextRingingPost = 0L
         private val roster = CallNotificationRoster()
         private val endingIds = mutableMapOf<String, Int>()
         private val endingCards = mutableMapOf<String, Card>()
@@ -52,6 +54,7 @@ class ConversationService : Service() {
         private val pendingRinging = mutableMapOf<String, Job>()
         private val lastAlertedCards = mutableMapOf<String, NotificationCard>()
         private var instance: ConversationService? = null
+        private var foregroundStartPending = false
         fun incomingChannelId(context: Context): String {
             val metadata = context.packageManager.getApplicationInfo(context.packageName, android.content.pm.PackageManager.GET_META_DATA).metaData
             val ringtone = metadata?.getString("ExpoCallKitTelecomDefaultRingtone") ?: "default"
@@ -102,7 +105,7 @@ class ConversationService : Service() {
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
                     while (true) {
-                        val wait = ringingSchedule.delayMillis(SystemClock.elapsedRealtime())
+                        val wait = ringingSchedule.delayMillis(SystemClock.elapsedRealtimeNanos())
                         if (wait > 0) { delay(wait); continue }
                         if (roster.liveStates().none { it["id"] == id && it["status"] == "ringing" }) return@launch
                         val primary = foregroundCard?.takeIf { it.id == id && it.phase == CallPhase.RINGING }
@@ -116,15 +119,13 @@ class ConversationService : Service() {
                         val last = lastAlertedCards[id]
                         if (previous != null && last?.notificationId == notificationId && last.card.sameDisplay(card) &&
                             (primary == null || previous.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0)) return@launch
+                        val sequence = ++nextRingingPost
                         val update = notification(application, card).apply {
                             flags = flags or ((previous?.notification?.flags ?: 0) and Notification.FLAG_FOREGROUND_SERVICE)
+                            extras.putLong(RINGING_POST_SEQUENCE, sequence)
                         }
-                        if (primary != null && allowCreate &&
-                            (previous == null || previous.notification.flags and Notification.FLAG_FOREGROUND_SERVICE == 0)) {
-                            val service = instance ?: return@launch
-                            service.postForeground(notificationId, update)
-                        } else application.getSystemService(NotificationManager::class.java).notify(notificationId, update)
-                        ringingSchedule.posted(SystemClock.elapsedRealtime())
+                        application.getSystemService(NotificationManager::class.java).notify(notificationId, update)
+                        observeRingingPost(application.getSystemService(NotificationManager::class.java), notificationId, sequence)
                         lastAlertedCards[id] = NotificationCard(notificationId, card)
                         if (primary != null) foreground = update
                         return@launch
@@ -135,6 +136,22 @@ class ConversationService : Service() {
             }
             pendingRinging[id] = job
             job.start()
+        }
+        private fun observeRingingPost(manager: NotificationManager, notificationId: Int, sequence: Long) {
+            // startForeground returns before Android publishes its notification. Keep the package
+            // gate closed until this exact post is visible, then measure the interval in elapsed time.
+            ringingSchedule.requested(sequence)
+            scope.launch {
+                try {
+                    withTimeoutOrNull(RINGING_ALERT_INTERVAL_MILLIS) {
+                        while (manager.activeNotifications.none { it.tag == null && it.id == notificationId &&
+                            it.notification.extras.getLong(RINGING_POST_SEQUENCE) == sequence }) delay(10)
+                    }
+                } finally {
+                    // Dropped or immediately removed posts also get a conservative elapsed anchor.
+                    ringingSchedule.posted(sequence, SystemClock.elapsedRealtimeNanos())
+                }
+            }
         }
         fun remove(context: Context, id: String) {
             endingIds.remove(id)
@@ -162,6 +179,8 @@ class ConversationService : Service() {
             foregroundId?.takeIf { it != nextForegroundId && it !in endingIds.values }?.let {
                 manager.cancel(it)
             }
+            val previousPrimary = foregroundCard
+            val previousForegroundId = foregroundId
             val primary = plan.primary?.let { card(context, it, plan.heldSummary) }
             val primaryChanged = if (primary == null) foregroundCard != null else foregroundCard?.sameDisplay(primary) != true
             if (primaryChanged) {
@@ -182,11 +201,31 @@ class ConversationService : Service() {
             }
             // Snapshot-only changes still reach the customizer, but must not exhaust
             // Android's update quota and cause a later primary switch to be dropped.
-            if (!primaryChanged) return
             val intent = Intent(context, ConversationService::class.java)
-            if (foreground == null) {
-                context.startService(intent)
-            } else ContextCompat.startForegroundService(context, intent)
+            if (primary == null) {
+                // A pending foreground start must reach onStartCommand and fulfill its deadline.
+                if (foregroundStartPending) return
+                val running = instance
+                if (running != null) running.stopPresentation() else context.stopService(intent)
+                return
+            }
+            if (!primaryChanged) return
+            if (primary.phase == CallPhase.RINGING && previousPrimary?.id == primary.id &&
+                previousForegroundId == foregroundId && instance?.postedForeground != null) {
+                requestRingingPost(context, primary.id, allowCreate = false)
+            } else if (!foregroundStartPending) {
+                foregroundStartPending = true
+                try { ContextCompat.startForegroundService(context, intent) }
+                catch (error: Exception) { foregroundStartPending = false; throw error }
+            }
+        }
+        private fun placeholder(context: Context): Notification {
+            val channelId = "conversations-ongoing-v2"
+            context.getSystemService(NotificationManager::class.java).createNotificationChannel(
+                NotificationChannel(channelId, "Ongoing calls", NotificationManager.IMPORTANCE_LOW).apply { setSound(null, null) })
+            return NotificationCompat.Builder(context, channelId).setSmallIcon(android.R.drawable.sym_call_incoming)
+                .setContentTitle("Call").setCategory(NotificationCompat.CATEGORY_CALL)
+                .setOngoing(true).setOnlyAlertOnce(true).build()
         }
         private fun card(context: Context, state: Map<String, Any?>, heldSummary: String?, refreshAvatar: Boolean = false): Card {
             val id = state["id"] as String
@@ -283,17 +322,28 @@ class ConversationService : Service() {
         ServiceCompat.startForeground(this, id, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
         postedForeground = notification
     }
+    private fun stopPresentation() { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        foregroundStartPending = false
         val notification = foreground
-        if (notification == null) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
         val card = foregroundCard
-        if (card?.phase == CallPhase.RINGING) {
-            if (lastAlertedCards[card.id]?.card !== card) requestRingingPost(this, card.id, allowCreate = true)
+        if (notification == null || card == null) {
+            postForeground(FOREGROUND_ID, placeholder(this))
+            stopPresentation()
             return START_NOT_STICKY
         }
-        if (postedForeground !== notification) {
+        if (card.phase == CallPhase.RINGING) {
+            val canAlert = ringingSchedule.delayMillis(SystemClock.elapsedRealtimeNanos()) == 0L
+            val sequence = ++nextRingingPost
+            notification.extras.putLong(RINGING_POST_SEQUENCE, sequence)
             postForeground(checkNotNull(foregroundId), notification)
-        }
+            observeRingingPost(getSystemService(NotificationManager::class.java), checkNotNull(foregroundId), sequence)
+            if (canAlert) lastAlertedCards[card.id] = NotificationCard(checkNotNull(foregroundId), card)
+            else {
+                lastAlertedCards.remove(card.id)
+                requestRingingPost(this, card.id, allowCreate = false)
+            }
+        } else postForeground(checkNotNull(foregroundId), notification)
         return START_NOT_STICKY
     }
     override fun onBind(intent: Intent?): IBinder? = null

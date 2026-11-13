@@ -13,11 +13,21 @@ internal const val RINGING_ALERT_INTERVAL_MILLIS = 1100L
 
 /** Android rate-limits audible alerts per package, including alerts for different calls. */
 internal class RingingAlertSchedule {
-    private var lastPostMillis: Long? = null
-    fun delayMillis(nowMillis: Long): Long = lastPostMillis?.let {
-        (it + RINGING_ALERT_INTERVAL_MILLIS - nowMillis).coerceAtLeast(0)
-    } ?: 0
-    fun posted(nowMillis: Long) { lastPostMillis = nowMillis }
+    private var awaitingPost = false
+    private var lastPostNanos: Long? = null
+    private var latestSequence = 0L
+    fun requested(sequence: Long) { latestSequence = sequence; awaitingPost = true }
+    fun delayMillis(nowNanos: Long): Long {
+        if (awaitingPost) return RINGING_ALERT_INTERVAL_MILLIS
+        val remaining = lastPostNanos?.let {
+            (it + RINGING_ALERT_INTERVAL_MILLIS * 1_000_000 - nowNanos).coerceAtLeast(0)
+        } ?: 0
+        return (remaining + 999_999) / 1_000_000
+    }
+    fun posted(sequence: Long, nowNanos: Long) {
+        if (sequence != latestSequence) return
+        lastPostNanos = nowNanos; awaitingPost = false
+    }
 }
 
 /** App content for the library-owned CallStyle notification. Null fields keep the defaults. */
