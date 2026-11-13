@@ -99,7 +99,7 @@ class ActiveCallEndTest {
             override fun setFailureListener(listener: () -> Unit) { failed = listener }
             override suspend fun prewarm(payload: Map<String, Any?>) {
                 isPrepared = true
-                connection = NativeRoomConnection(scope, {}, {
+                connection = NativeRoomConnection(scope, { _, _ -> }, {
                     isPrepared = false; failed()
                 }, reconnectTimeoutMillis = reconnectTimeoutMillis).also { it.observe(room) }
             }

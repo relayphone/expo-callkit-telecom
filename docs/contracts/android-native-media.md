@@ -19,7 +19,9 @@ instrumentation APK and retains HTTPS, identity, cancellation and HTTP404/410
 failure controls. It is not shipped in either library media variant.
 
 `NativeMediaSignals.observers` is a native main-thread lifecycle hook. Signals
-carry a serverCallId, a monotonic timestamp and numeric measurements. Audio
+carry a serverCallId, a monotonic timestamp and numeric measurements. The
+`ROOM_DISCONNECTED` signal instead has an empty serverCallId and the LiveKit
+reason name in `reason`, with no room or participant identifiers. Audio
 callbacks enqueue observations without running app code on the audio thread.
 `firstAudio` means the first decoded remote PCM16 frame with peak at least128
 (-48dBFS), after native activation; it is not a hardware/acoustic measurement.

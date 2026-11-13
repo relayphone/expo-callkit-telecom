@@ -7,7 +7,7 @@ import java.util.concurrent.CopyOnWriteArraySet
 
 enum class NativeMediaStage(val value: String) {
     PUSH_RECEIVED("pushReceived"), PUSH_REFUSED("pushRefused"), REPORTED("reported"), PREWARM_STARTED("prewarmStarted"),
-    ROOM_CONNECTED("roomConnected"), PREJOINED("prejoined"), PREWARM_LOST("prewarmLost"),
+    ROOM_CONNECTED("roomConnected"), ROOM_DISCONNECTED("roomDisconnected"), PREJOINED("prejoined"), PREWARM_LOST("prewarmLost"),
     JS_WARM_STARTED("jsWarmStarted"), ANSWER_REQUESTED("answerRequested"),
     HANDLER_STARTED("handlerStarted"), HANDLER_RESPONDED("handlerResponded"), CONNECTED("connected"),
     MEDIA_PROVIDED("mediaProvided"), MEDIA_IGNORED("mediaIgnored"),
@@ -37,7 +37,7 @@ enum class NativeMediaStage(val value: String) {
     OUTPUT_RELEASED("outputReleased")
 }
 
-/** Native lifecycle observations contain timings/counts and optional app refusal reasons, never credentials or audio samples. */
+/** Native observations contain no credentials/audio. ROOM_DISCONNECTED has an empty serverCallId and a provider reason name. */
 data class NativeMediaSignal(val serverCallId: String, val stage: NativeMediaStage,
     val elapsedRealtimeNanos: Long, val measurements: Map<String, Long> = emptyMap(), val reason: String? = null)
 
@@ -49,7 +49,8 @@ object NativeMediaSignals {
     private val main = Handler(Looper.getMainLooper())
     fun emit(serverCallId: String, stage: NativeMediaStage, measurements: Map<String, Long> = emptyMap(),
         observedAtNanos: Long = SystemClock.elapsedRealtimeNanos(), reason: String? = null) {
-        val signal = NativeMediaSignal(serverCallId, stage, observedAtNanos, measurements, reason)
+        val signal = NativeMediaSignal(if (stage == NativeMediaStage.ROOM_DISCONNECTED) "" else serverCallId,
+            stage, observedAtNanos, measurements, reason)
         main.post { observers.forEach { observer -> runCatching { observer.onSignal(signal) } } }
     }
 }

@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import java.util.concurrent.CopyOnWriteArrayList
+import io.livekit.android.events.DisconnectReason
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import org.json.JSONObject
@@ -30,8 +31,10 @@ class ConversationMediaTest {
         val signals = mutableListOf<NativeMediaSignal>()
         val performed = mutableListOf<Map<*, *>>()
         var preparationGate: CompletableDeferred<Unit>? = null
+        var roomConnectGate: CompletableDeferred<Unit>? = null
         var ended: Map<*, *>? = null
-        private val observer = NativeMediaObserver { if (it.serverCallId == id) signals += it }
+        var terminalSnapshots = 0
+        private val observer = NativeMediaObserver { if (it.serverCallId == id || it.stage == NativeMediaStage.ROOM_DISCONNECTED) signals += it }
         init {
             engine.nativeMedia = AndroidNativeMedia.LIVEKIT
             engine.policy = JSONObject(mapOf("media" to "livekit", "credentials" to "fromPush", "prewarm" to false))
@@ -41,7 +44,7 @@ class ConversationMediaTest {
                 if (name == "conversationsChanged") {
                 (body["conversations"] as List<*>).filterIsInstance<Map<*, *>>().firstOrNull {
                     it["id"] == id && it["status"] == "ended"
-                }?.let { ended = it["ended"] as Map<*, *> }
+                }?.let { ended = it["ended"] as Map<*, *>; terminalSnapshots++ }
             } }
             NativeMediaSignals.observers += observer
             NativeMediaRegistry.factories["livekit"] = { Session().also { sessions += it } }
@@ -50,8 +53,10 @@ class ConversationMediaTest {
             private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
             val room = MutableSharedFlow<NativeRoomState>()
             private var failure: () -> Unit = {}
+            private var disconnection: (NativeMediaDisconnection) -> Unit = {}
             private var connection: NativeRoomConnection? = null
             val entered = CompletableDeferred<Unit>()
+            val observing = CompletableDeferred<Unit>()
             val closed = CompletableDeferred<Unit>()
             var payload: Map<String, Any?>? = null
             var activations = 0
@@ -66,11 +71,15 @@ class ConversationMediaTest {
             var failTones = false
             @Volatile var held = false
             override fun setFailureListener(listener: () -> Unit) { failure = listener }
+            override fun setDisconnectListener(listener: (NativeMediaDisconnection) -> Unit) { disconnection = listener }
             fun disconnect() { roomLive = false; failure() }
             override suspend fun prewarm(payload: Map<String, Any?>) {
                 this.payload = payload; entered.complete(Unit); preparationGate?.await()
                 roomLive = true
-                connection = NativeRoomConnection(scope, { NativeMediaSignals.emit(id, it) }, ::disconnect).also { it.observe(room) }
+                connection = NativeRoomConnection(scope, { stage, reason -> NativeMediaSignals.emit(id, stage, reason = reason) }, { reason ->
+                    roomLive = false; disconnection(reason?.disconnection() ?: NativeMediaDisconnection.FAILURE)
+                }).also { it.observe(room) }
+                observing.complete(Unit); roomConnectGate?.await()
                 NativeMediaSignals.emit(id, NativeMediaStage.ROOM_CONNECTED)
             }
             override suspend fun activate() { mutedAtActivation = muted; activations++ }
@@ -81,7 +90,7 @@ class ConversationMediaTest {
                 check(!failTones) { "DTMF publication failed" }
                 tones += digits
             }
-            override suspend fun close(reason: String) { closes++; connection?.close(); scope.cancel(); closed.complete(Unit) }
+            override suspend fun close(reason: String) { closes++; connection?.close(DisconnectReason.CLIENT_INITIATED.takeIf { roomLive }); scope.cancel(); closed.complete(Unit) }
         }
         fun state() = (engine.snapshot["conversations"] as List<*>).filterIsInstance<Map<*, *>>().firstOrNull { it["id"] == id }
         suspend fun stage(kind: NativeMediaStage, count: Int = 1) = withTimeout(5000) {
@@ -96,7 +105,7 @@ class ConversationMediaTest {
                 removed()
                 withTimeout(5000) { sessions.forEach { it.closed.await() } }
             } finally {
-                preparationGate?.complete(Unit)
+                preparationGate?.complete(Unit); roomConnectGate?.complete(Unit)
                 NativeMediaSignals.observers -= observer
                 if (previousFactory == null) NativeMediaRegistry.factories.remove("livekit") else NativeMediaRegistry.factories["livekit"] = previousFactory
                 engine.nativeMedia = previousMedia; engine.policy = previousPolicy
@@ -218,7 +227,7 @@ class ConversationMediaTest {
         assertEquals("reported", engine.incoming(incoming.payload() + ("media" to grant))["status"])
         stage(NativeMediaStage.ROOM_CONNECTED)
         val old = sessions.single()
-        old.room.emit(NativeRoomState.DISCONNECTED)
+        old.room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.UNKNOWN_REASON))
         stage(NativeMediaStage.PREWARM_LOST)
         withTimeout(3000) { old.closed.await() }
         assertEquals("ringing", state()?.get("status")); assertNull(ended)
@@ -323,10 +332,33 @@ class ConversationMediaTest {
         assertEquals("held", state()?.get("status")); assertNull(ended)
         session.room.emit(NativeRoomState.RECONNECTED); stage(NativeMediaStage.RECONNECTED, 2)
         assertEquals("held", state()?.get("status"))
-        session.room.emit(NativeRoomState.DISCONNECTED)
+        session.room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.UNKNOWN_REASON))
         removed()
         assertEquals("failed", ended?.get("reason"))
         assertEquals("media", (ended?.get("failure") as Map<*, *>)["kind"])
+        withTimeout(3000) { session.closed.await() }
+        assertEquals(1, session.closes)
+    }
+
+    @Test fun answeredRoomDeletedEndsRemotelyAndRemovesTelecom() = fixture {
+        val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+        assertEquals("reported", engine.incoming(incoming.payload())["status"])
+        engine.join(id); stage(NativeMediaStage.CONNECTED)
+        assertTrue(TelecomEvidence.calls().single().contains("state=ACTIVE"))
+        val session = sessions.single()
+        session.room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.ROOM_DELETED))
+        removed()
+        assertEquals("remoteEnded", ended?.get("reason"))
+        assertNull(ended?.get("failure"))
+        stage(NativeMediaStage.ROOM_DISCONNECTED)
+        val signal = signals.single { it.stage == NativeMediaStage.ROOM_DISCONNECTED }
+        assertEquals("ROOM_DELETED", signal.reason); assertEquals("", signal.serverCallId)
+        assertTrue(signal.measurements.isEmpty())
+        val snapshots = terminalSnapshots
+        ConversationEnds.report(context, id, "remoteEnded")
+        engine.remoteEnd(EndedCallPush(id, "$id-later-end", "remoteEnded").payload())
+        yield()
+        assertNull(state()); assertEquals(snapshots, terminalSnapshots)
         withTimeout(3000) { session.closed.await() }
         assertEquals(1, session.closes)
     }
@@ -348,7 +380,7 @@ class ConversationMediaTest {
         ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.ROOM_CONNECTED)
         val session = sessions.single()
         assertEquals(0, session.activations); assertEquals("held", state()?.get("status"))
-        session.room.emit(NativeRoomState.DISCONNECTED)
+        session.room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.UNKNOWN_REASON))
         removed()
         assertEquals("failed", ended?.get("reason"))
         withTimeout(3000) { session.closed.await() }
@@ -367,5 +399,80 @@ class ConversationMediaTest {
         stage(NativeMediaStage.CONNECTED)
         assertEquals("connected", state()?.get("status"))
         assertEquals(1, sessions.single().activations)
+    }
+
+    @Test fun participantRemovalEndsAnActiveCallRemotely() = fixture {
+        start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
+        sessions.single().room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.PARTICIPANT_REMOVED))
+        removed()
+        assertEquals("remoteEnded", ended?.get("reason")); assertNull(ended?.get("failure"))
+        assertFalse(performed.any { (it["action"] as Map<*, *>)["kind"] == "end" })
+    }
+
+    @Test fun clientInitiatedRoomDisconnectDoesNotChangeLogicalState() = fixture {
+        start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
+        sessions.single().room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.CLIENT_INITIATED))
+        stage(NativeMediaStage.ROOM_DISCONNECTED)
+        assertEquals("connected", state()?.get("status")); assertNull(ended)
+        assertEquals("CLIENT_INITIATED", signals.single { it.stage == NativeMediaStage.ROOM_DISCONNECTED }.reason)
+    }
+
+    @Test fun localEndKeepsItsReasonAndSignalsTheLocalRoomReleaseOnce() = fixture {
+        start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
+        val session = sessions.single()
+        engine.end(id); removed(); stage(NativeMediaStage.ROOM_DISCONNECTED)
+        session.room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.CLIENT_INITIATED)); yield()
+        assertEquals("local", ended?.get("reason")); assertNull(ended?.get("failure"))
+        assertEquals(1, terminalSnapshots)
+        assertEquals(listOf("CLIENT_INITIATED"), signals.filter { it.stage == NativeMediaStage.ROOM_DISCONNECTED }.map { it.reason })
+    }
+
+    private fun serverEndBeforeRoomDeletion(push: Boolean) = fixture {
+        val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+        assertEquals("reported", engine.incoming(incoming.payload())["status"])
+        engine.join(id); stage(NativeMediaStage.CONNECTED)
+        val session = sessions.single()
+        if (push) engine.remoteEnd(EndedCallPush(id, "$id-earlier-end", "remoteEnded").payload())
+        else ConversationEnds.report(context, id, "remoteEnded")
+        session.room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.ROOM_DELETED))
+        removed()
+        assertEquals("remoteEnded", ended?.get("reason")); assertNull(ended?.get("failure"))
+        assertEquals(1, terminalSnapshots)
+        withTimeout(3000) { session.closed.await() }
+        assertEquals(1, session.closes)
+    }
+
+    @Test fun earlierServerReportIsIdempotentWithRoomDeletion() = serverEndBeforeRoomDeletion(false)
+    @Test fun earlierCallEndedPushIsIdempotentWithRoomDeletion() = serverEndBeforeRoomDeletion(true)
+
+    @Test fun everyDisconnectReasonOnlyDiscardsTheRingingPrejoin() {
+        for (reason in DisconnectReason.entries) fixture {
+            engine.policy.put("prewarm", true)
+            val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+            assertEquals("reported", engine.incoming(incoming.payload())["status"])
+            stage(NativeMediaStage.ROOM_CONNECTED)
+            sessions.single().room.emit(NativeRoomState.DISCONNECTED(reason))
+            stage(NativeMediaStage.PREWARM_LOST); stage(NativeMediaStage.ROOM_DISCONNECTED)
+            assertEquals(reason.name, "ringing", state()?.get("status")); assertNull(ended)
+            assertTrue(TelecomEvidence.calls().single().contains("state=RINGING"))
+            assertEquals(reason.name, signals.single { it.stage == NativeMediaStage.ROOM_DISCONNECTED }.reason)
+            assertTrue(signals.filter { it.stage == NativeMediaStage.ROOM_DISCONNECTED }.all { it.serverCallId.isEmpty() })
+        }
+    }
+
+    @Test fun remoteEndDuringRoomConnectEndsWithoutAMediaFailure() {
+        for (reason in listOf(DisconnectReason.ROOM_DELETED, DisconnectReason.PARTICIPANT_REMOVED)) fixture {
+            roomConnectGate = CompletableDeferred()
+            start(); ConversationMedia.provide(context, id, grant)
+            withTimeout(3000) { while (sessions.isEmpty()) delay(10); sessions.single().observing.await() }
+            assertEquals("connecting", state()?.get("status"))
+            assertEquals(0, sessions.single().activations)
+            sessions.single().room.emit(NativeRoomState.DISCONNECTED(reason))
+            removed()
+            assertEquals(reason.name, "remoteEnded", ended?.get("reason")); assertNull(ended?.get("failure"))
+            assertEquals(1, terminalSnapshots)
+            stage(NativeMediaStage.ROOM_DISCONNECTED)
+            assertEquals(reason.name, signals.single { it.stage == NativeMediaStage.ROOM_DISCONNECTED }.reason)
+        }
     }
 }
