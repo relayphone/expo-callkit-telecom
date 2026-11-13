@@ -16,7 +16,7 @@ from aiortc import AudioStreamTrack, RTCConfiguration, RTCPeerConnection, RTCSes
 from aiortc.contrib.media import MediaBlackhole
 from av import AudioFrame
 
-directory = Path(sys.argv[1]) if __name__ == "__main__" else None
+directory = Path(sys.argv[1]) if __name__ == "__main__" and sys.argv[1] != "--analyze" else None
 settings = json.loads((directory / "settings.json").read_text()) if directory else {}
 bots = {}
 fetches = {}
@@ -91,6 +91,11 @@ class MarkerObservation:
         self.pcm = []
         self.analyzed = 0
         self.detections = []
+        self.started_ns = time.monotonic_ns()
+        self.arrivals = []
+        self.stats = []
+        self.stats_error = None
+        self.diagnostics_overflow = False
         self.evidence = {"markers": 0, "profile": "tones-v2", "markerId": self.identity,
                          "sampleRate": self.rate, "slots": [], "minimumConfidence": None, "markersWithPostRoll": 0}
 
@@ -148,7 +153,7 @@ class MarkerObservation:
             epoch = self.epoch
             frames = self.frames
             pcm = self.pcm[:]
-            result = await asyncio.to_thread(self.analyze, pcm, self.frequencies)
+            result = await analysis_worker.analyze(pcm, self.frequencies)
             if epoch == self.epoch:
                 self.analyzed = frames
                 base = frames - len(pcm)
@@ -165,16 +170,50 @@ class MarkerObservation:
                 self.evidence["markers"] = len(self.detections)
                 # The guarded detector can place onset 20 ms early; preserve the full 150 ms tail.
                 self.evidence["markersWithPostRoll"] = sum(end + 8160 <= frames for _, end in self.detections)
-        return self.evidence
+        return {**self.evidence, "receiveClock": "host.monotonic_ns", "arrivals": self.arrivals,
+                "rtc": self.stats, "statsError": self.stats_error, "diagnosticsOverflow": self.diagnostics_overflow}
+
+    async def poll_stats(self, track):
+        while True:
+            epoch = self.epoch
+            try:
+                reports = await asyncio.wait_for(track.get_stats(), 2)
+                values = []
+                for report in reports:
+                    if report.HasField("inbound_rtp"):
+                        item = report.inbound_rtp
+                        counters = {name: getattr(item.inbound, name) if item.inbound.HasField(name) else None
+                                    for name in ("total_samples_received", "concealed_samples", "silent_concealed_samples",
+                                                 "concealment_events", "inserted_samples_for_deceleration",
+                                                 "removed_samples_for_acceleration", "jitter_buffer_delay",
+                                                 "jitter_buffer_emitted_count", "packets_discarded")}
+                        counters.update({name: getattr(item.received, name) if item.received.HasField(name) else None
+                                         for name in ("packets_received", "packets_lost", "jitter")})
+                        values.append(counters)
+                if epoch == self.epoch:
+                    if len(self.stats) < 128:
+                        self.stats.append({"atNs": time.monotonic_ns() - self.started_ns,
+                                           "frame": self.frames, "inbound": values})
+                    else:
+                        self.diagnostics_overflow = True
+            except Exception as error:
+                if epoch == self.epoch:
+                    self.stats_error = type(error).__name__
+            await asyncio.sleep(.25)
 
     async def receive(self, track):
         stream = None
+        stats_task = asyncio.create_task(self.poll_stats(track)) if track is not None else None
         try:
             stream = rtc.AudioStream(track, sample_rate=self.rate, num_channels=1)
             async for event in stream:
                 if event.frame.sample_rate != self.rate or event.frame.num_channels != 1:
                     raise ValueError("Uplink PCM format changed")
                 values = memoryview(event.frame.data).cast("B").cast("h")
+                if len(self.arrivals) < 4096:
+                    self.arrivals.append([time.monotonic_ns() - self.started_ns, self.frames, len(values)])
+                else:
+                    self.diagnostics_overflow = True
                 self.frames += len(values)
                 self.pcm.extend(values)
                 del self.pcm[:max(0, len(self.pcm) - self.rate * 3)]
@@ -182,8 +221,63 @@ class MarkerObservation:
             self.error = type(error).__name__
         finally:
             self.running = False
+            if stats_task:
+                stats_task.cancel()
+                await asyncio.gather(stats_task, return_exceptions=True)
             if stream is not None:
                 await stream.aclose()
+
+
+class AnalysisWorker:
+    """CPU-heavy detection must not hold the GIL needed by real-time RTC callbacks."""
+    def __init__(self):
+        self.process = None
+        self.lock = asyncio.Lock()
+
+    async def close(self, *_):
+        if self.process is not None:
+            if self.process.returncode is None:
+                self.process.kill()
+            await asyncio.wait_for(self.process.wait(), 2)
+            self.process = None
+
+    async def analyze(self, pcm, frequencies):
+        async with self.lock:
+            try:
+                if self.process is None:
+                    self.process = await asyncio.create_subprocess_exec(
+                        sys.executable, str(Path(__file__).resolve()), "--analyze",
+                        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL)
+                async def exchange():
+                    header = json.dumps({"frames": len(pcm), "frequencies": frequencies}).encode() + b"\n"
+                    self.process.stdin.write(header + struct.pack("<" + str(len(pcm)) + "h", *pcm))
+                    await self.process.stdin.drain()
+                    line = await self.process.stdout.readline()
+                    if not line:
+                        raise RuntimeError("Analyzer exited")
+                    return json.loads(line)
+                return await asyncio.wait_for(exchange(), 3)
+            except BaseException:
+                await self.close()
+                raise
+
+
+analysis_worker = AnalysisWorker()
+
+
+def analyze_stdin():
+    import signal
+    signal.signal(signal.SIGALRM, lambda *_: __import__("os")._exit(124))
+    signal.alarm(540)
+    for line in sys.stdin.buffer:
+        request = json.loads(line)
+        count = request["frames"]
+        if not 34560 <= count <= 144000 or len(request["frequencies"]) != 12:
+            raise ValueError("Invalid analysis window")
+        data = sys.stdin.buffer.read(count * 2)
+        pcm = struct.unpack("<" + str(count) + "h", data)
+        print(json.dumps(MarkerObservation.analyze(pcm, request["frequencies"])), flush=True)
 
 
 class ToneTrack(AudioStreamTrack):
@@ -234,15 +328,18 @@ async def publish(room_name):
 
     signal = TonesV2Signal(room_name.removeprefix("native-ci-") + ":toDevice", 48000) if room_name.startswith("native-ci-hooks-") else None
 
-    async def frames():
-        index = 0
-        while True:
-            pcm = signal.pcm(480, index) if signal else struct.pack("<480h", *[int(6000 * math.sin(2 * math.pi * 440 * (index + i) / 48000)) for i in range(480)])
-            index += 480
-            await source.capture_frame(rtc.AudioFrame(pcm, 48000, 1, 480))
-            await asyncio.sleep(.01)
+    return room, asyncio.create_task(publish_frames(source, signal))
 
-    return room, asyncio.create_task(frames())
+
+async def publish_frames(source, signal, clock=None, pause=asyncio.sleep, limit=None):
+    clock = clock or asyncio.get_running_loop().time
+    started = clock()
+    index = 0
+    while limit is None or index < limit * 480:
+        pcm = signal.pcm(480, index) if signal else struct.pack("<480h", *[int(6000 * math.sin(2 * math.pi * 440 * (index + i) / 48000)) for i in range(480)])
+        index += 480
+        await source.capture_frame(rtc.AudioFrame(pcm, 48000, 1, 480))
+        await pause(max(0, started + index / 48000 - clock()) if signal else .01)
 
 
 async def credentials(server_id):
@@ -428,7 +525,11 @@ async def sanitized_errors(request, handler):
 
 
 if __name__ == "__main__":
+    if sys.argv[1] == "--analyze":
+        analyze_stdin()
+        sys.exit(0)
     app = web.Application(middlewares=[sanitized_errors])
+    app.on_cleanup.append(analysis_worker.close)
     app.router.add_get("/health", lambda _: web.json_response({"ready": True}))
     app.router.add_get("/fixture/invitation/{server_id}", invitation)
     app.router.add_get("/fixture/observations/{server_id}", observations)

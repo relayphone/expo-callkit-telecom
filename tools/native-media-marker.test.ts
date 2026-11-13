@@ -77,10 +77,23 @@ async def check():
     late.pcm = [0] * 144000
     late.frames += 144000
     remembered = (await late.measure())["markers"]
-    return dict(hashes=hashes, partial=partial, full=full, tail=tail, postRoll=post_roll,
+    result = dict(hashes=hashes, partial=partial, full=full, tail=tail, postRoll=post_roll,
                 truncatedCoverage=truncated_coverage, first=first, centralOnly=central_only,
                 wrongId=wrong_id, missing=missing, zero=zero, reset=reset,
                 lateMarkers=late_markers, retained=len(late.pcm), remembered=remembered)
+    await fixture.analysis_worker.close()
+    now = 0.0
+    class Source:
+        async def capture_frame(self, frame):
+            nonlocal now
+            now += .003
+    async def pause(seconds):
+        nonlocal now
+        now += seconds
+    await fixture.publish_frames(Source(), fixture.TonesV2Signal("parity-v2", 48000),
+                                 clock=lambda: now, pause=pause, limit=100)
+    result["publisherElapsed"] = now
+    return result
 print(json.dumps(asyncio.run(check())))
 `;
 
@@ -107,6 +120,7 @@ test("the real fixture requires complete tones-v2 slots, detects short leaks and
   assert.equal(result.centralOnly, 1);
   assert.equal(result.lateMarkers, 2, "late markers must stay observable during the existing five-second phase");
   assert.equal(result.retained, 144_000, "the capture remains capped at three seconds");
+  assert.ok(Math.abs(result.publisherElapsed - 1) < 1e-9, "100 ten-millisecond frames must not accrue callback work time");
   assert.equal(result.remembered, 2, "a leak cannot disappear when older PCM rolls out");
   for (const control of ["partial", "wrongId", "missing", "zero", "reset"])
     assert.equal(result[control], 0, control);

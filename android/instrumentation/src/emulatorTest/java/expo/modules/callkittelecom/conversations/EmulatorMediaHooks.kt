@@ -2,6 +2,7 @@ package expo.modules.callkittelecom.conversations
 
 import android.content.Context
 import android.media.AudioFormat
+import android.os.SystemClock
 import io.livekit.android.audio.AudioBufferCallback
 import io.livekit.android.room.track.LocalTrackPublication
 import java.nio.ByteBuffer
@@ -9,6 +10,7 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import java.util.zip.CRC32
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -19,7 +21,8 @@ import livekit.org.webrtc.audio.JavaAudioDeviceModule
 
 /** Software PCM qualification only. This implementation exists solely in the emulatorTest source set. */
 internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled: Boolean = true,
-    private val requestedRate: Int? = null, private val emission: Boolean = true) : NativeAudioHooks {
+    private val requestedRate: Int = 48000, private val emission: Boolean = true) : NativeAudioHooks {
+    val trace = MediaCaptureTrace()
     // Match SDK testing/marker.ts: UTF-8 FNV-1a, four sync slots, low sixteen hash bits.
     private val frequencies = run {
         var hash = 2166136261L
@@ -27,6 +30,8 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
         val tones = doubleArrayOf(650.0, 950.0, 1350.0, 1850.0)
         tones + DoubleArray(8) { tones[((hash ushr (it * 2)) and 3).toInt()] }
     }
+    private val signals: Map<Int, ShortArray>
+    private val wrongSignals: Map<Int, ShortArray>
     enum class Stimulus { MARKER, ZERO, WRONG }
     @Volatile var stimulus = Stimulus.MARKER
     data class Observation(val blocks: Long, val frames: Long, val nonzero: Long, val tones: Long)
@@ -48,7 +53,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     @Volatile var captureSampleRate = 0
         private set
     val recordinglessCallbacks = AtomicLong()
-    private var publication: LocalTrackPublication? = null
+    @Volatile private var publication: LocalTrackPublication? = null
     val directArrayVerified: Boolean
 
     init {
@@ -59,6 +64,14 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
             buffer.array()[buffer.arrayOffset()] == buffer.get(0)
         }.getOrDefault(false)
         if (!tapEnabled || !directArrayVerified) throw MediaHookUnavailable(MediaHookFailure.OUTPUT_TAP_UNAVAILABLE)
+        // Real-time capture only copies already-qualified PCM; generation must not stall AudioRecord.
+        signals = listOf(8000, 48000).associateWith { rate ->
+            ShortArray(rate / 50 * if (emission) 51 else 36) { sample(rate, it) }
+        }
+        wrongSignals = listOf(8000, 48000).associateWith { rate -> ShortArray(rate) {
+            ((0.2 * sin(2 * PI * 440 * it / rate)).toFloat().toDouble() * 32767).roundToInt().toShort()
+        } }
+
     }
 
     fun beginPhase() { decoded.set(Window()); output.set(Window()) }
@@ -76,10 +89,11 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
 
     override fun capture(pacing: AudioBufferCallback) = object : AudioBufferCallback {
         override fun onBuffer(buffer: ByteBuffer, format: Int, channels: Int, rate: Int, bytesRead: Int, timestamp: Long): Long {
+            val entered = SystemClock.elapsedRealtimeNanos()
             // Always retain the production recordingless pump's pacing and lifecycle observations.
             val result = pacing.onBuffer(buffer, format, channels, rate, bytesRead, timestamp)
             if (!closed.get()) {
-                if (format != AudioFormat.ENCODING_PCM_16BIT || channels !in 1..2 || rate !in 8000..96000 || rate % 50 != 0 ||
+                if (format != AudioFormat.ENCODING_PCM_16BIT || channels !in 1..2 || rate !in signals ||
                     buffer.capacity() % (2 * channels) != 0) {
                     failure.set(MediaHookFailure.UNSUPPORTED_PCM)
                 } else {
@@ -90,23 +104,8 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
                     val stimulus = this@EmulatorMediaHooks.stimulus
                     for (frame in 0 until frames) {
                         val index = first + frame
-                        val slotFrames = rate / 50 * 3
-                        val pre = (rate * 3 / 20.0).roundToInt()
-                        val post = pre + slotFrames * frequencies.size
-                        val cycle = rate / 50 * 51
-                        val position = index % if (emission) cycle else slotFrames * frequencies.size
-                        val inMarker = !emission || (position >= pre && position < post)
-                        val markerPosition = if (emission) position - pre else position
-                        val local = if (inMarker) markerPosition % slotFrames else if (position < pre) position else position - post
-                        val frequency = if (inMarker) frequencies[(markerPosition / slotFrames).toInt()] else 400.0
-                        val edge = if (inMarker) minOf(local, slotFrames - local) else if (position < pre) local else cycle - position
-                        val fade = minOf(1.0, edge / (rate / 200.0))
-                        val envelope = 0.5 * (1 - cos(PI * fade))
-                        // Float32 normalization and PCM16 conversion match the SDK's host source.
-                        val normalized = (if (stimulus == Stimulus.WRONG) 0.2 * sin(2 * PI * 440 * index / rate)
-                            else 0.2 * envelope * sin(2 * PI * frequency * local / rate)).toFloat()
-                        val sample = if (stimulus == Stimulus.ZERO) 0.toShort() else
-                            (normalized.toDouble() * 32767).roundToInt().toShort()
+                        val signal = if (stimulus == Stimulus.WRONG) wrongSignals.getValue(rate) else signals.getValue(rate)
+                        val sample = if (stimulus == Stimulus.ZERO) 0.toShort() else signal[(index % signal.size).toInt()]
                         repeat(channels) { pcm.putShort(sample) }
                     }
                     injectedFrames.addAndGet(frames.toLong())
@@ -115,16 +114,35 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
                         generatedWords.addAndGet((first + frames) / wordFrames - first / wordFrames)
                     }
                     if (bytesRead == 0) recordinglessCallbacks.incrementAndGet()
+                    val crc = CRC32().apply { update(buffer.duplicate().apply { clear() }) }.value
+                    trace.returned(entered, first, frames, rate, bytesRead, publication?.muted, crc)
                 }
             }
             return result
         }
     }
 
+    private fun sample(rate: Int, index: Int): Short {
+        val slotFrames = rate / 50 * 3
+        val pre = (rate * 3 / 20.0).roundToInt()
+        val post = pre + slotFrames * frequencies.size
+        val cycle = rate / 50 * 51
+        val position = index % if (emission) cycle else slotFrames * frequencies.size
+        val inMarker = !emission || (position >= pre && position < post)
+        val markerPosition = if (emission) position - pre else position
+        val local = if (inMarker) markerPosition % slotFrames else if (position < pre) position else position - post
+        val frequency = if (inMarker) frequencies[markerPosition / slotFrames] else 400.0
+        val edge = if (inMarker) minOf(local, slotFrames - local) else if (position < pre) local else cycle - position
+        val envelope = 0.5 * (1 - cos(PI * minOf(1.0, edge / (rate / 200.0))))
+        val normalized = (0.2 * envelope * sin(2 * PI * frequency * local / rate)).toFloat()
+        return (normalized.toDouble() * 32767).roundToInt().toShort()
+    }
+
     override fun configureOutput(builder: JavaAudioDeviceModule.Builder,
         observer: JavaAudioDeviceModule.PlaybackSamplesReadyCallback) {
         available()
-        requestedRate?.let { require(it == 8000 || it == 48000); builder.setSampleRate(it) }
+        require(requestedRate == 48000)
+        builder.setSampleRate(requestedRate)
         builder.setPlaybackSamplesReadyCallback { samples ->
             observer.onWebRtcAudioTrackSamplesReady(samples)
             if (samples.audioFormat != AudioFormat.ENCODING_PCM_16BIT) failure.set(MediaHookFailure.UNSUPPORTED_PCM)

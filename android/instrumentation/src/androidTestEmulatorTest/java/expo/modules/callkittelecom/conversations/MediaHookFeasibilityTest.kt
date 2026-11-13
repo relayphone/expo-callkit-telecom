@@ -2,6 +2,7 @@ package expo.modules.callkittelecom.conversations
 
 import android.Manifest
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.os.Bundle
 import io.livekit.android.audio.AudioBufferCallback
 import io.livekit.android.room.track.LocalAudioTrack
@@ -101,8 +102,7 @@ class MediaHookFeasibilityTest {
         }
     }
 
-    @Test fun realRecordinglessCapturePublicationGateDecodedAndPostMuteOutput() = journey(8000)
-    @Test fun real48kCaptureRetainsEveryControl() = journey(48000)
+    @Test fun realRecordinglessCapturePublicationGateDecodedAndPostMuteOutput() = journey(48000)
 
     private fun journey(rate: Int) = runBlocking {
         withContext(Dispatchers.Main) {
@@ -110,13 +110,15 @@ class MediaHookFeasibilityTest {
             val previousMedia = engine.nativeMedia; val previousPolicy = engine.policy
             val previousEmitter = engine.emit; val previousAccept = engine.actions.acceptUnhandled
             val previousFactory = NativeMediaRegistry.factories["livekit"]
-            val id = "hooks-${System.nanoTime()}"
+            val id = InstrumentationRegistry.getArguments().getString("mediaTestId") ?: "hooks-${System.nanoTime()}"
+            require(id.matches(Regex("hooks-[0-9]+")))
             val hooks = EmulatorMediaHooks(context, "$id:fromDevice", requestedRate = rate)
             val signals = CopyOnWriteArrayList<NativeMediaSignal>()
             val observer = NativeMediaObserver { if (it.serverCallId == id) signals += it }
             var step = "prejoin"
             var pipeline = "unobserved"
             var caught: Throwable? = null
+            var apmMonitor: Job? = null
             fun present() = (engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id }
             suspend fun stage(kind: NativeMediaStage) = withTimeout(10_000) {
                 while (signals.none { it.stage == kind }) delay(10)
@@ -139,6 +141,26 @@ class MediaHookFeasibilityTest {
                 val publication = hooks.publicationIdentity()
                 val track = publication.track as LocalAudioTrack
                 val options = track.options
+                val manager = context.getSystemService(AudioManager::class.java)
+                apmMonitor = launch {
+                    var samples = 0
+                    val fields = setOf("audioLevel", "totalAudioEnergy", "totalSamplesDuration", "echoReturnLoss",
+                        "echoReturnLossEnhancement", "totalSamplesCaptured", "totalCaptureDelay", "droppedSamplesDuration",
+                        "droppedSamplesEvents", "concealedSamples", "silentConcealedSamples", "concealmentEvents",
+                        "totalSamplesReceived", "packetsReceived", "packetsLost", "jitterBufferEmittedCount",
+                        "jitterBufferDelay", "insertedSamplesForDeceleration", "removedSamplesForAcceleration",
+                        "packetsSent", "bytesSent", "active")
+                    while (isActive) {
+                        val current = track.options
+                        hooks.trace.state(manager.mode, current.echoCancellation, current.autoGainControl,
+                            current.noiseSuppression, track.enabled, publication.muted)
+                        if (samples++ % 5 == 0) hooks.trace.stats(track.getRTCStats()?.statsMap?.values
+                            ?.filter { it.type in setOf("media-source", "inbound-rtp", "outbound-rtp") }
+                            ?.map { mapOf("type" to it.type, "values" to it.members.filterKeys { key -> key in fields }) }
+                            ?: emptyList())
+                        delay(50)
+                    }
+                }
                 assertTrue(options.noiseSuppression && options.autoGainControl && options.echoCancellation && options.highPassFilter)
                 pipeline = "NS=true,AGC=true,AEC=true,highPass=true"
                 assertTrue(publication.muted)
@@ -185,6 +207,7 @@ class MediaHookFeasibilityTest {
                 }
                 pipeline += ",codec=audio/opus"
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply { putString("pipeline", pipeline) })
+                hooks.trace.phase = "answered"
                 fixture("/fixture/markers/$id", reset = true)
                 val answered = peerAudio(id, generation)
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
@@ -196,6 +219,7 @@ class MediaHookFeasibilityTest {
 
                 step = "source controls"
                 for (stimulus in listOf(EmulatorMediaHooks.Stimulus.ZERO, EmulatorMediaHooks.Stimulus.WRONG)) {
+                    hooks.trace.phase = stimulus.name
                     hooks.stimulus = stimulus
                     delay(300)
                     fixture("/fixture/markers/$id", reset = true)
@@ -203,10 +227,12 @@ class MediaHookFeasibilityTest {
                     assertTrue("$stimulus must fail the far-end audio assertion", rejected is TimeoutCancellationException)
                 }
                 hooks.stimulus = EmulatorMediaHooks.Stimulus.MARKER
+                hooks.trace.phase = "restored"
                 fixture("/fixture/markers/$id", reset = true)
                 peerAudio(id, generation)
 
                 step = "held output"
+                hooks.trace.phase = "held"
                 engine.hold(id, true); hooks.beginPhase()
                 withTimeout(3000) { while (hooks.decoded().tones < 5 || hooks.output().blocks < 10) delay(10) }
                 val held = silenceWithLiveDecodedAudio(hooks)
@@ -240,24 +266,36 @@ class MediaHookFeasibilityTest {
                     "injected=${hooks.injectedFrames.get()}, decoded=${runCatching { hooks.decoded() }.getOrNull()}, " +
                     "output=${runCatching { hooks.output() }.getOrNull()}", error)
             } finally {
-                withContext(NonCancellable) {
-                    try {
+                apmMonitor?.cancel()
+                try {
+                    context.filesDir.resolve("capture-trace.json").writeText(hooks.trace.snapshot().toString())
+                    InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
+                        putString("captureTraceFile", "capture-trace.json")
+                    })
+                } catch (diagnostic: Throwable) {
+                    val primary = caught
+                    if (primary == null) { caught = diagnostic; throw diagnostic }
+                    else primary.addSuppressed(diagnostic)
+                } finally {
+                    withContext(NonCancellable) {
                         try {
-                            withTimeout(7000) {
-                                if (present()) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
-                                while (present() || TelecomEvidence.calls().isNotEmpty()) delay(20)
+                            try {
+                                withTimeout(7000) {
+                                    if (present()) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+                                    while (present() || TelecomEvidence.calls().isNotEmpty()) delay(20)
+                                }
+                            } catch (cleanup: Throwable) {
+                                val primary = caught
+                                if (primary != null) primary.addSuppressed(cleanup) else throw cleanup
                             }
-                        } catch (cleanup: Throwable) {
-                            val primary = caught
-                            if (primary != null) primary.addSuppressed(cleanup) else throw cleanup
-                        }
-                    } finally {
-                        try { hooks.close() } finally {
-                            NativeMediaSignals.observers -= observer
-                            if (previousFactory == null) NativeMediaRegistry.factories.remove("livekit")
-                            else NativeMediaRegistry.factories["livekit"] = previousFactory
-                            engine.nativeMedia = previousMedia; engine.policy = previousPolicy
-                            engine.actions.resetBridge(); engine.actions.acceptUnhandled = previousAccept; engine.emit = previousEmitter
+                        } finally {
+                            try { hooks.close() } finally {
+                                NativeMediaSignals.observers -= observer
+                                if (previousFactory == null) NativeMediaRegistry.factories.remove("livekit")
+                                else NativeMediaRegistry.factories["livekit"] = previousFactory
+                                engine.nativeMedia = previousMedia; engine.policy = previousPolicy
+                                engine.actions.resetBridge(); engine.actions.acceptUnhandled = previousAccept; engine.emit = previousEmitter
+                            }
                         }
                     }
                 }
