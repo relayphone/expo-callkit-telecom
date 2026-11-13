@@ -73,6 +73,7 @@ export function runNativeMediaJourney(
         timeout: 15_000,
       });
     }
+    run({ program: "node", args: ["--test", "tools/native-media-marker.test.ts"], timeout: 30_000 });
     // Keep the ordinary journeys unchanged, then qualify the isolated hooks and a real Release refusal.
     for (const [build, classes] of [
       ["EmulatorTest", "MediaHookFeasibilityTest,MediaTestIsolationTest"],

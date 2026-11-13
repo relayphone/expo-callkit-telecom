@@ -4,6 +4,7 @@ import android.Manifest
 import android.media.AudioFormat
 import android.os.Bundle
 import io.livekit.android.audio.AudioBufferCallback
+import io.livekit.android.room.track.LocalAudioTrack
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -103,6 +104,7 @@ class MediaHookFeasibilityTest {
             val signals = CopyOnWriteArrayList<NativeMediaSignal>()
             val observer = NativeMediaObserver { if (it.serverCallId == id) signals += it }
             var step = "prejoin"
+            var pipeline = "unobserved"
             var caught: Throwable? = null
             fun present() = (engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id }
             suspend fun stage(kind: NativeMediaStage) = withTimeout(10_000) {
@@ -124,6 +126,10 @@ class MediaHookFeasibilityTest {
                 step = "muted publication"
                 assertTrue(hooks.directArrayVerified)
                 val publication = hooks.publicationIdentity()
+                val track = publication.track as LocalAudioTrack
+                val options = track.options
+                assertTrue(options.noiseSuppression && options.autoGainControl && options.echoCancellation && options.highPassFilter)
+                pipeline = "NS=true,AGC=true,AEC=true,highPass=true"
                 assertTrue(publication.muted)
                 var peer = fixture("/fixture/markers/$id", reset = true)
                 assertTrue("Muted prejoin requires a subscribed receiver: $peer", peer.getBoolean("running"))
@@ -155,6 +161,18 @@ class MediaHookFeasibilityTest {
 
                 step = "answer"
                 engine.join(id); stage(NativeMediaStage.CONNECTED)
+                withTimeout(3000) {
+                    var codec: Any?
+                    do {
+                        val stats = track.getRTCStats()?.statsMap
+                        val outbound = stats?.values?.firstOrNull { it.type == "outbound-rtp" &&
+                            (it.members["kind"] == "audio" || it.members["mediaType"] == "audio") }
+                        codec = stats?.get(outbound?.members?.get("codecId"))?.members?.get("mimeType")
+                        if (codec != "audio/opus") delay(30)
+                    } while (codec != "audio/opus")
+                }
+                pipeline += ",codec=audio/opus"
+                InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply { putString("pipeline", pipeline) })
                 fixture("/fixture/markers/$id", reset = true)
                 val answered = peerAudio(id, generation)
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
@@ -190,6 +208,7 @@ class MediaHookFeasibilityTest {
                 assertFalse(signals.any { it.stage == NativeMediaStage.OUTPUT_OBSERVATION_UNAVAILABLE })
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                     putString("mediaHooks", "directArray=true,captureRate=${hooks.captureSampleRate}," +
+                        "$pipeline," +
                         "generatedMutedWords=$mutedWords,receivedMutedMarkers=0,answeredMarkers=${answered.getLong("markers")}," +
                         "sameReceiver=true,wrongAndZeroRejected=true,heldOutputBlocks=${held.blocks},heldNonzero=${held.nonzero},stoppedTapRejected=true")
                 })
@@ -203,6 +222,7 @@ class MediaHookFeasibilityTest {
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                     putString("tonesV1Failure", runCatching { fixture("/fixture/markers/$id").toString() }.getOrDefault("unavailable"))
                     putString("mediaHookFailure", "step=$step, error=$error, signals=${signals.map { it.stage }}")
+                    putString("pipeline", pipeline)
                 })
                 throw AssertionError("step=$step, captureRate=${hooks.captureSampleRate}, " +
                     "injected=${hooks.injectedFrames.get()}, decoded=${runCatching { hooks.decoded() }.getOrNull()}, " +

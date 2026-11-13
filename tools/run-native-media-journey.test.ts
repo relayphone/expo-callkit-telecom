@@ -37,7 +37,7 @@ test("runs the complete functional suite once and checks all four results", () =
   const f = fixture();
   try {
     runNativeMediaJourney(f.output, f.run);
-    assert.equal(f.calls.length, 11);
+    assert.equal(f.calls.length, 12);
     assert.deepEqual(f.calls[0], {
       program: "gradle",
       args: [
@@ -86,6 +86,7 @@ test("runs the complete functional suite once and checks all four results", () =
     }
     assert.equal(readdirSync(f.output).length, 4);
     assert.deepEqual(f.calls.slice(9), [
+      { program: "node", args: ["--test", "tools/native-media-marker.test.ts"], timeout: 30_000 },
       { program: "gradle", args: [
         "-p", "android/instrumentation", ":connectedEmulatorTestAndroidTest", "-PmediaTestBuildType=emulatorTest",
         "-Pandroid.testInstrumentationRunnerArguments.class=expo.modules.callkittelecom.conversations.MediaHookFeasibilityTest,expo.modules.callkittelecom.conversations.MediaTestIsolationTest",
@@ -117,6 +118,20 @@ for (const build of ["EmulatorTest", "Release"])
         build === "EmulatorTest" ? 2 : 3);
     } finally { f.close(); }
   });
+
+test("a failed real-fixture marker control remains fatal and retains ordinary results", () => {
+  const f = fixture();
+  const failure = new Error("marker control failed");
+  try {
+    assert.throws(() => runNativeMediaJourney(f.output, (command) => {
+      const result = f.run(command);
+      if (command.args.includes("tools/native-media-marker.test.ts")) throw failure;
+      return result;
+    }), (error) => error === failure);
+    assert.equal(readdirSync(f.output).length, 4);
+    assert.equal(f.calls.filter((command) => command.program === "gradle").length, 1);
+  } finally { f.close(); }
+});
 
 test("retains available media diagnostics after a failed suite and propagates its failure", () => {
   const f = fixture();

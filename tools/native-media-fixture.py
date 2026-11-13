@@ -106,8 +106,9 @@ class MarkerObservation:
                           for index, (frequency, score) in enumerate(zip(frequencies, chosen[2] if chosen else []))]}
 
     async def measure(self):
-        # Analyze each fresh second at most once; retain only the first three seconds per reset.
-        if len(self.pcm) >= 57600 and len(self.pcm) >= self.analyzed + 48000:
+        # Score any complete 400 ms window, including a short leak or the final partial second.
+        # Retain only the first three seconds per reset; unavailable PCM is never a marker pass.
+        if len(self.pcm) >= 19200 and len(self.pcm) > self.analyzed:
             epoch = self.epoch
             pcm = self.pcm[:]
             result = await asyncio.to_thread(self.analyze, pcm, self.frequencies)
