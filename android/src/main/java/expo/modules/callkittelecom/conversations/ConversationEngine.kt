@@ -548,7 +548,8 @@ class ConversationEngine(val context: Context) {
                 if (call.media?.prewarmLost() == true) signal(call, NativeMediaStage.PREWARM_LOST)
             } else when (reason) {
                 NativeMediaDisconnection.REMOTE_ENDED -> terminateLater(id, "remoteEnded")
-                NativeMediaDisconnection.CLIENT_INITIATED -> Unit
+                // Our own releases retire observation first; a live observed disconnect is unexpected.
+                NativeMediaDisconnection.CLIENT_INITIATED,
                 NativeMediaDisconnection.FAILURE -> terminateLater(id, "failed", EndedFailure.MEDIA)
             }
         }

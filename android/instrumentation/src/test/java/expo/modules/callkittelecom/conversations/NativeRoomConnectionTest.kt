@@ -17,9 +17,9 @@ class NativeRoomConnectionTest {
 
     @Test fun roomRecoversWithoutFailureAndDuplicateReconnectingDoesNotExtendTheDeadline() = runBlocking {
         val room = FakeRoom()
-        val signals = mutableListOf<NativeMediaStage>()
+        val signals = mutableListOf<Pair<NativeMediaStage, String?>>()
         val waits = mutableListOf<CompletableDeferred<Unit>>()
-        val connection = NativeRoomConnection(this, { stage, _ -> signals.add(stage) }, room::release) { millis ->
+        val connection = NativeRoomConnection(this, { stage, reason -> signals.add(stage to reason) }, room::release) { millis ->
             assertEquals(30_000L, millis)
             CompletableDeferred<Unit>().also { waits += it }.await()
         }
@@ -28,19 +28,19 @@ class NativeRoomConnectionTest {
             room.events.emit(NativeRoomState.RECONNECTING); yield()
             room.events.emit(NativeRoomState.RECONNECTING); yield()
             assertEquals(1, waits.size)
-            assertEquals(listOf(NativeMediaStage.RECONNECTING), signals)
+            assertEquals(listOf(NativeMediaStage.RECONNECTING to null), signals)
             assertEquals(0, room.releases)
             room.events.emit(NativeRoomState.RECONNECTED); yield()
             waits.single().complete(Unit); yield()
             assertEquals(0, room.releases)
-            assertEquals(listOf(NativeMediaStage.RECONNECTING, NativeMediaStage.RECONNECTED), signals)
+            assertEquals(listOf(NativeMediaStage.RECONNECTING to null, NativeMediaStage.RECONNECTED to null), signals)
             room.events.emit(NativeRoomState.RECONNECTING); yield()
             assertEquals(2, waits.size)
             waits.last().complete(Unit)
             withTimeout(1000) { room.released.await() }
             assertEquals(1, room.releases)
             assertNull(room.reason)
-            assertEquals(NativeMediaStage.ROOM_DISCONNECTED, signals.last())
+            assertEquals(NativeMediaStage.ROOM_DISCONNECTED to "RECONNECT_TIMEOUT", signals.last())
         } finally { connection.close() }
     }
 

@@ -452,11 +452,13 @@ credentials supplied through `ConversationMedia.provide`, whatever the disconnec
 reason. For outgoing, answered and held calls, `ROOM_DELETED` and
 `PARTICIPANT_REMOVED` end the call as `remoteEnded` without a failure, sharing the
 normal removal path with a server end report or `callEnded` push.
-`CLIENT_INITIATED` leaves the logical end unchanged. Other final disconnects and
-30 seconds without recovery fail the call with failure kind `media`.
-`ROOM_DISCONNECTED` signals carry the LiveKit reason name in `reason`, an empty
-`serverCallId` and no room/participant identifiers. Ending the call cancels
-recovery observation and its deadline.
+An observed `CLIENT_INITIATED` and other final disconnects fail the call with
+failure kind `media`. v2's own release retires room observation first, so it
+does not trigger another logical end. After 30 seconds without recovery, the
+call fails with failure kind `media` and reason name `RECONNECT_TIMEOUT` in
+telemetry. `ROOM_DISCONNECTED` signals carry only the reason name in `reason`,
+an empty `serverCallId` by design and no room/participant identifiers. Ending
+the call cancels recovery observation and its deadline.
 
 ## Calls behind a VPN
 

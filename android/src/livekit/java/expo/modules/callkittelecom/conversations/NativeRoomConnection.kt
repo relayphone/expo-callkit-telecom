@@ -56,8 +56,8 @@ internal class NativeRoomConnection(
     private fun disconnect(reason: DisconnectReason?) {
         if (closed) return
         closed = true
-        // A recovery deadline releases the still-connected room locally, but remains a media failure.
-        if (reason == null) signal(NativeMediaStage.ROOM_DISCONNECTED, DisconnectReason.CLIENT_INITIATED.name)
+        // A recovery deadline is a media failure with its own diagnostic reason.
+        if (reason == null) signal(NativeMediaStage.ROOM_DISCONNECTED, "RECONNECT_TIMEOUT")
         deadline?.cancel(); deadline = null
         disconnected(reason)
         lifetime.cancel()

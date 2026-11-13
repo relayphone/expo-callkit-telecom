@@ -37,7 +37,7 @@ enum class NativeMediaStage(val value: String) {
     OUTPUT_RELEASED("outputReleased")
 }
 
-/** Native observations contain no credentials/audio. ROOM_DISCONNECTED has an empty serverCallId and a provider reason name. */
+/** Native observations contain no credentials/audio. ROOM_DISCONNECTED has an empty serverCallId and a reason name. */
 data class NativeMediaSignal(val serverCallId: String, val stage: NativeMediaStage,
     val elapsedRealtimeNanos: Long, val measurements: Map<String, Long> = emptyMap(), val reason: String? = null)
 

@@ -409,12 +409,22 @@ class ConversationMediaTest {
         assertFalse(performed.any { (it["action"] as Map<*, *>)["kind"] == "end" })
     }
 
-    @Test fun clientInitiatedRoomDisconnectDoesNotChangeLogicalState() = fixture {
-        start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
-        sessions.single().room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.CLIENT_INITIATED))
+    @Test fun unexpectedClientInitiatedRoomDisconnectFailsTheAnsweredCallAndRemovesTelecom() = fixture {
+        val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+        assertEquals("reported", engine.incoming(incoming.payload())["status"])
+        engine.join(id); stage(NativeMediaStage.CONNECTED)
+        assertTrue(TelecomEvidence.calls().single().contains("state=ACTIVE"))
+        val session = sessions.single()
+        session.room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.CLIENT_INITIATED))
+        removed()
+        assertEquals("failed", ended?.get("reason"))
+        assertEquals("media", (ended?.get("failure") as Map<*, *>)["kind"])
+        assertEquals(1, terminalSnapshots)
+        withTimeout(3000) { session.closed.await() }
+        assertEquals(1, session.closes)
         stage(NativeMediaStage.ROOM_DISCONNECTED)
-        assertEquals("connected", state()?.get("status")); assertNull(ended)
-        assertEquals("CLIENT_INITIATED", signals.single { it.stage == NativeMediaStage.ROOM_DISCONNECTED }.reason)
+        val signal = signals.single { it.stage == NativeMediaStage.ROOM_DISCONNECTED }
+        assertEquals("CLIENT_INITIATED", signal.reason); assertEquals("", signal.serverCallId)
     }
 
     @Test fun localEndKeepsItsReasonAndSignalsTheLocalRoomReleaseOnce() = fixture {
