@@ -38,9 +38,13 @@ async def check():
     receiver.pcm += [0] * 480 + pcm
     receiver.frames = len(receiver.pcm)
     tail = dict(await receiver.measure())
-    receiver.pcm += [0] * 7200
+    receiver.pcm += [0] * 9600
     receiver.frames = len(receiver.pcm)
     post_roll = dict(await receiver.measure())
+    truncated = fixture.MarkerObservation("parity-v2")
+    truncated.pcm = list(array.array("h", fixture.TonesV2Signal("parity-v2", 48000).pcm(48480)))
+    truncated.frames = len(truncated.pcm)
+    truncated_coverage = (await truncated.measure())["markersWithPostRoll"]
     wrong = fixture.MarkerObservation("different-identity")
     wrong_id = wrong.analyze(pcm, wrong.frequencies)["markers"]
     damaged = [0 if 11520 <= i < 14400 else value for i, value in enumerate(pcm)]
@@ -51,7 +55,7 @@ async def check():
     receiver.reset()
     reset = (await receiver.measure())["markers"]
     late = fixture.MarkerObservation("parity-v2")
-    data = pcm + [0] * (192000 - len(pcm)) + pcm + [0] * 7200
+    data = pcm + [0] * (192000 - len(pcm)) + pcm + [0] * 9600
     first = None
     class Stream:
         async def __aiter__(self):
@@ -73,7 +77,8 @@ async def check():
     late.pcm = [0] * 144000
     late.frames += 144000
     remembered = (await late.measure())["markers"]
-    return dict(hashes=hashes, partial=partial, full=full, tail=tail, postRoll=post_roll, first=first, centralOnly=central_only,
+    return dict(hashes=hashes, partial=partial, full=full, tail=tail, postRoll=post_roll,
+                truncatedCoverage=truncated_coverage, first=first, centralOnly=central_only,
                 wrongId=wrong_id, missing=missing, zero=zero, reset=reset,
                 lateMarkers=late_markers, retained=len(late.pcm), remembered=remembered)
 print(json.dumps(asyncio.run(check())))
@@ -91,6 +96,7 @@ test("the real fixture requires complete tones-v2 slots, detects short leaks and
   assert.equal(result.tail.markers, 2);
   assert.equal(result.full.markersWithPostRoll, 0);
   assert.equal(result.postRoll.markersWithPostRoll, 2);
+  assert.equal(result.truncatedCoverage, 0, "detector start uncertainty cannot hide a truncated post-roll");
   assert.equal(result.first, 1);
   assert.deepEqual(result.hashes, {
     "8000": {marker: "7305be4e1d4ba73d2f2f876869fa5cb27c12bb91450081452139f41262f7c003",

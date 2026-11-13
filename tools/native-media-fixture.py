@@ -163,7 +163,8 @@ class MarkerObservation:
                 if not self.evidence["markers"] or result["markers"]:
                     self.evidence.update(result)
                 self.evidence["markers"] = len(self.detections)
-                self.evidence["markersWithPostRoll"] = sum(end + 7200 <= frames for _, end in self.detections)
+                # The guarded detector can place onset 20 ms early; preserve the full 150 ms tail.
+                self.evidence["markersWithPostRoll"] = sum(end + 8160 <= frames for _, end in self.detections)
         return self.evidence
 
     async def receive(self, track):
