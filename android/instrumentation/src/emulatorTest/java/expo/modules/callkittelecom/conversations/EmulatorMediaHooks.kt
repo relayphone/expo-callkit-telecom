@@ -18,13 +18,14 @@ import livekit.org.webrtc.AudioTrackSink
 import livekit.org.webrtc.audio.JavaAudioDeviceModule
 
 /** Software PCM qualification only. This implementation exists solely in the emulatorTest source set. */
-internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled: Boolean = true) : NativeAudioHooks {
-    // Match SDK testing/marker.ts: UTF-8 FNV-1a, four sync slots, sixteen low-to-high identity slots.
+internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled: Boolean = true,
+    private val requestedRate: Int? = null, private val emission: Boolean = true) : NativeAudioHooks {
+    // Match SDK testing/marker.ts: UTF-8 FNV-1a, four sync slots, low sixteen hash bits.
     private val frequencies = run {
         var hash = 2166136261L
         for (byte in markerId.toByteArray(Charsets.UTF_8)) hash = ((hash xor (byte.toLong() and 255)) * 16777619L) and 0xffffffffL
         val tones = doubleArrayOf(650.0, 950.0, 1350.0, 1850.0)
-        tones + DoubleArray(16) { tones[((hash ushr (it * 2)) and 3).toInt()] }
+        tones + DoubleArray(8) { tones[((hash ushr (it * 2)) and 3).toInt()] }
     }
     enum class Stimulus { MARKER, ZERO, WRONG }
     @Volatile var stimulus = Stimulus.MARKER
@@ -89,17 +90,28 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
                     val stimulus = this@EmulatorMediaHooks.stimulus
                     for (frame in 0 until frames) {
                         val index = first + frame
-                        val frequency = if (stimulus == Stimulus.WRONG) 440.0 else
-                            frequencies[((index * 1000 / rate / SYMBOL_MILLIS) % frequencies.size).toInt()]
+                        val slotFrames = rate / 50 * 3
+                        val pre = (rate * 3 / 20.0).roundToInt()
+                        val post = pre + slotFrames * frequencies.size
+                        val cycle = rate / 50 * 51
+                        val position = index % if (emission) cycle else slotFrames * frequencies.size
+                        val inMarker = !emission || (position >= pre && position < post)
+                        val markerPosition = if (emission) position - pre else position
+                        val local = if (inMarker) markerPosition % slotFrames else if (position < pre) position else position - post
+                        val frequency = if (inMarker) frequencies[(markerPosition / slotFrames).toInt()] else 400.0
+                        val edge = if (inMarker) minOf(local, slotFrames - local) else if (position < pre) local else cycle - position
+                        val fade = minOf(1.0, edge / (rate / 200.0))
+                        val envelope = 0.5 * (1 - cos(PI * fade))
                         // Float32 normalization and PCM16 conversion match the SDK's host source.
-                        val normalized = (0.2 * sin(2 * PI * frequency * index / rate)).toFloat()
+                        val normalized = (if (stimulus == Stimulus.WRONG) 0.2 * sin(2 * PI * 440 * index / rate)
+                            else 0.2 * envelope * sin(2 * PI * frequency * local / rate)).toFloat()
                         val sample = if (stimulus == Stimulus.ZERO) 0.toShort() else
                             (normalized.toDouble() * 32767).roundToInt().toShort()
                         repeat(channels) { pcm.putShort(sample) }
                     }
                     injectedFrames.addAndGet(frames.toLong())
                     if (stimulus == Stimulus.MARKER) {
-                        val wordFrames = rate.toLong() * SYMBOL_MILLIS * frequencies.size / 1000
+                        val wordFrames = if (emission) rate.toLong() / 50 * 51 else rate.toLong() * SYMBOL_MILLIS * frequencies.size / 1000
                         generatedWords.addAndGet((first + frames) / wordFrames - first / wordFrames)
                     }
                     if (bytesRead == 0) recordinglessCallbacks.incrementAndGet()
@@ -112,6 +124,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     override fun configureOutput(builder: JavaAudioDeviceModule.Builder,
         observer: JavaAudioDeviceModule.PlaybackSamplesReadyCallback) {
         available()
+        requestedRate?.let { require(it == 8000 || it == 48000); builder.setSampleRate(it) }
         builder.setPlaybackSamplesReadyCallback { samples ->
             observer.onWebRtcAudioTrackSamplesReady(samples)
             if (samples.audioFormat != AudioFormat.ENCODING_PCM_16BIT) failure.set(MediaHookFailure.UNSUPPORTED_PCM)
@@ -131,20 +144,24 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
         val count = pcm.remaining() / 2 / channels
         var peak = 0
         var energy = 0.0
-        var real = 0.0
-        var imaginary = 0.0
+        val coefficients = doubleArrayOf(400.0, 650.0, 950.0, 1350.0, 1850.0).map { 2 * cos(2 * PI * it / rate) }
+        val previous = DoubleArray(coefficients.size)
+        val before = DoubleArray(coefficients.size)
         repeat(count) { frame ->
             val value = pcm.short.toInt()
             peak = maxOf(peak, abs(value))
             repeat(channels - 1) { peak = maxOf(peak, abs(pcm.short.toInt())) }
             energy += value.toDouble() * value
-            val angle = 2 * PI * 440 * frame / rate
-            real += value * cos(angle); imaginary += value * sin(angle)
+            for (tone in coefficients.indices) {
+                val next = value + coefficients[tone] * previous[tone] - before[tone]
+                before[tone] = previous[tone]; previous[tone] = next
+            }
         }
         if (closed.get()) return
         window.frames.addAndGet(count.toLong())
         if (peak > 0) window.nonzero.incrementAndGet()
-        if (peak >= 128 && energy > 0 && (real * real + imaginary * imaginary) / (energy * count) > 0.15)
+        if (peak >= 128 && energy > 0 && coefficients.indices.any {
+            (previous[it] * previous[it] + before[it] * before[it] - coefficients[it] * previous[it] * before[it]) / (energy * count) > 0.15 })
             window.tones.incrementAndGet()
         window.blocks.incrementAndGet()
     }
@@ -155,6 +172,6 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     }
 
     private companion object {
-        const val SYMBOL_MILLIS = 20L
+        const val SYMBOL_MILLIS = 60L
     }
 }

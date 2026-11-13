@@ -30,21 +30,56 @@ uplinks = {}
 uplink_tasks = set()
 
 
+class TonesV2Signal:
+    """Canonical Float32 source, quantized to PCM16 LE with ties toward positive infinity."""
+    def __init__(self, identity, rate):
+        if not identity or len(identity) > 4096 or not 8000 <= rate <= 96000 or rate % 50:
+            raise ValueError("Invalid tones-v2 source")
+        self.rate = rate
+        tones = (650, 950, 1350, 1850)
+        hash_value = 2166136261
+        for byte in identity.encode("utf-8"):
+            hash_value = ((hash_value ^ byte) * 16777619) & 0xffffffff
+        self.frequencies = tones + tuple(tones[(hash_value >> shift) & 3] for shift in range(0, 16, 2))
+
+    def pcm(self, count, offset=0, *, emission=True):
+        if count < 0 or count > self.rate * 60 or offset < 0:
+            raise ValueError("Invalid PCM range")
+        slot = self.rate // 50 * 3
+        pre = math.floor(self.rate * 3 / 20 + .5)
+        post = pre + slot * 12
+        cycle = self.rate // 50 * 51
+        values = []
+        for index in range(offset, offset + count):
+            position = index % cycle if emission else index % (slot * 12)
+            in_marker = not emission or pre <= position < post
+            if in_marker:
+                marker_position = position - pre if emission else position
+                local = marker_position % slot
+                frequency = self.frequencies[marker_position // slot]
+                edge = min(local, slot - local)
+            else:
+                local = position if position < pre else position - post
+                frequency = 400
+                edge = local if position < pre else cycle - position
+            fade = min(1, edge / (self.rate / 200))
+            value = .2 * (.5 * (1 - math.cos(math.pi * fade))) * math.sin(2 * math.pi * frequency * local / self.rate)
+            normalized = struct.unpack("<f", struct.pack("<f", value))[0]
+            values.append(math.floor(normalized * 32767 + .5))
+        return struct.pack("<" + str(count) + "h", *values)
+
+
 class MarkerObservation:
-    """Bounded real uplink PCM; tones-v1 matches SDK testing/marker.ts without relaxed slots."""
+    """Bounded real uplink PCM; tones-v2 matches SDK testing/marker.ts without relaxed slots."""
     next_generation = 0
     rate = 48000
-    slot_samples = 960
+    slot_samples = 2880
 
     def __init__(self, identity):
         MarkerObservation.next_generation += 1
         self.generation = MarkerObservation.next_generation
         self.identity = identity
-        tones = (650, 950, 1350, 1850)
-        hash_value = 2166136261
-        for byte in identity.encode("utf-8"):
-            hash_value = ((hash_value ^ byte) * 16777619) & 0xffffffff
-        self.frequencies = tones + tuple(tones[(hash_value >> shift) & 3] for shift in range(0, 32, 2))
+        self.frequencies = TonesV2Signal(identity, self.rate).frequencies
         self.running = True
         self.error = None
         self.epoch = 0
@@ -55,8 +90,9 @@ class MarkerObservation:
         self.frames = 0
         self.pcm = []
         self.analyzed = 0
-        self.evidence = {"markers": 0, "profile": "tones-v1", "markerId": self.identity,
-                         "sampleRate": self.rate, "slots": [], "minimumConfidence": None}
+        self.detections = []
+        self.evidence = {"markers": 0, "profile": "tones-v2", "markerId": self.identity,
+                         "sampleRate": self.rate, "slots": [], "minimumConfidence": None, "markersWithPostRoll": 0}
 
     @staticmethod
     def analyze(pcm, frequencies):
@@ -82,17 +118,17 @@ class MarkerObservation:
         detections = []
         candidate = None
         search_end = None
-        for offset in range(0, len(pcm) - 19200 + 1, 48):
-            slots = [confidence(offset + slot * 960, frequency) for slot, frequency in enumerate(frequencies)]
+        for offset in range(0, len(pcm) - 34560 + 1, 48):
+            slots = [confidence(offset + slot * 2880 + 960, frequency) for slot, frequency in enumerate(frequencies)]
             minimum = min(slots)
             if best is None or minimum > best[0]:
                 best = (minimum, offset, slots)
-            if detections and offset < detections[-1][1] + 19200:
+            if detections and offset < detections[-1][1] + 34560:
                 continue
             if minimum >= .8:
                 if candidate is None:
-                    search_end = offset + 960
-                if candidate is None or minimum > candidate[0] + .0001:
+                    search_end = offset + 2880
+                if candidate is None or minimum > candidate[0]:
                     candidate = (minimum, offset, slots)
             if candidate is not None and offset >= search_end:
                 detections.append(candidate)
@@ -100,21 +136,34 @@ class MarkerObservation:
         if candidate is not None:
             detections.append(candidate)
         chosen = detections[0] if detections else best
-        return {"markers": len(detections), "minimumConfidence": chosen[0] if chosen else None,
+        return {"markers": len(detections), "detectionOffsets": [item[1] for item in detections], "minimumConfidence": chosen[0] if chosen else None,
                 "offsetSamples": chosen[1] if chosen else None,
                 "slots": [{"index": index, "frequencyHz": frequency, "confidence": score, "margin": score - .8}
                           for index, (frequency, score) in enumerate(zip(frequencies, chosen[2] if chosen else []))]}
 
     async def measure(self):
-        # Score any complete 400 ms window, including a short leak or the final partial second.
-        # Retain only the first three seconds per reset; unavailable PCM is never a marker pass.
-        if len(self.pcm) >= 19200 and len(self.pcm) > self.analyzed:
+        # Score any complete 720 ms window, including a short leak or the final partial second.
+        # Keep observing throughout the phase, with only three seconds retained at once.
+        if len(self.pcm) >= 34560 and self.frames > self.analyzed:
             epoch = self.epoch
+            frames = self.frames
             pcm = self.pcm[:]
             result = await asyncio.to_thread(self.analyze, pcm, self.frequencies)
             if epoch == self.epoch:
-                self.analyzed = len(pcm)
-                self.evidence.update(result)
+                self.analyzed = frames
+                base = frames - len(pcm)
+                for offset in result["detectionOffsets"]:
+                    start = base + offset
+                    end = start + 34560
+                    if not any(start < previous_end and end > previous_start for previous_start, previous_end in self.detections):
+                        if len(self.detections) >= 32:
+                            raise ValueError("Phase detection limit exceeded")
+                        self.detections.append((start, end))
+                result["windowStartSamples"] = base
+                if not self.evidence["markers"] or result["markers"]:
+                    self.evidence.update(result)
+                self.evidence["markers"] = len(self.detections)
+                self.evidence["markersWithPostRoll"] = sum(end + 7200 <= frames for _, end in self.detections)
         return self.evidence
 
     async def receive(self, track):
@@ -126,7 +175,8 @@ class MarkerObservation:
                     raise ValueError("Uplink PCM format changed")
                 values = memoryview(event.frame.data).cast("B").cast("h")
                 self.frames += len(values)
-                self.pcm.extend(values[:max(0, self.rate * 3 - len(self.pcm))])
+                self.pcm.extend(values)
+                del self.pcm[:max(0, len(self.pcm) - self.rate * 3)]
         except Exception as error:
             self.error = type(error).__name__
         finally:
@@ -181,10 +231,12 @@ async def publish(room_name):
     await room.local_participant.publish_track(track,
         rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE))
 
+    signal = TonesV2Signal(room_name.removeprefix("native-ci-") + ":toDevice", 48000) if room_name.startswith("native-ci-hooks-") else None
+
     async def frames():
         index = 0
         while True:
-            pcm = struct.pack("<480h", *[int(6000 * math.sin(2 * math.pi * 440 * (index + i) / 48000)) for i in range(480)])
+            pcm = signal.pcm(480, index) if signal else struct.pack("<480h", *[int(6000 * math.sin(2 * math.pi * 440 * (index + i) / 48000)) for i in range(480)])
             index += 480
             await source.capture_frame(rtc.AudioFrame(pcm, 48000, 1, 480))
             await asyncio.sleep(.01)

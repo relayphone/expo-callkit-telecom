@@ -43,6 +43,7 @@ class MediaHookFeasibilityTest {
     private fun healthy(peer: JSONObject, generation: Long) {
         assertTrue("A healthy subscribed receiver is required: $peer", peer.getBoolean("running"))
         assertTrue("The receiver failed: $peer", peer.isNull("error"))
+        assertEquals("tones-v2", peer.getString("profile"))
         assertEquals(generation, peer.getLong("generation"))
     }
 
@@ -51,7 +52,7 @@ class MediaHookFeasibilityTest {
         do {
             delay(40); peer = fixture("/fixture/markers/$id")
             healthy(peer, generation)
-        } while (peer.getLong("markers") < 2)
+        } while (peer.getLong("markersWithPostRoll") < 2)
         peer
     }
 
@@ -77,30 +78,40 @@ class MediaHookFeasibilityTest {
         assertEquals(MediaHookFailure.OUTPUT_TAP_UNAVAILABLE, error.reason)
     }
 
-    @Test fun captureSamplesMatchTheSharedTonesV1Vector() {
-        val hooks = EmulatorMediaHooks(context, "marker-parity:fromDevice")
-        try {
-            val callback = hooks.capture(object : AudioBufferCallback {
-                override fun onBuffer(buffer: ByteBuffer, format: Int, channels: Int, rate: Int,
-                    bytesRead: Int, timestamp: Long) = timestamp
-            })
-            val pcm = ByteBuffer.allocateDirect(6400)
-            assertEquals(123L, callback.onBuffer(pcm, AudioFormat.ENCODING_PCM_16BIT, 1, 8000, 6400, 123L))
-            val bytes = ByteArray(6400).also { pcm.duplicate().apply { clear() }.get(it) }
-            // SDK PR293 markerSamples(createMarker(identity), 8000, 3200), Math.round(value * 32767).
-            val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-            assertEquals("440c129abb3f9e18876ceb15035c5d6f9718695bc00c01ff0a97dc9c588fa44c", digest)
-        } finally { hooks.close() }
+    @Test fun captureSamplesMatchMarkerAndEmissionVectors() {
+        for ((rate, emission, expected) in listOf(
+            Triple(8000, false, "7305be4e1d4ba73d2f2f876869fa5cb27c12bb91450081452139f41262f7c003"),
+            Triple(48000, false, "82f79efb9f1b24a5c839cd500f5c9ad291ef5969348c3d68b775fcef6f8fa3b4"),
+            Triple(8000, true, "e339576ee90e3d72ef65c7a5e44ab4a74345be472fdcd39b8f25072448a5fbab"),
+            Triple(48000, true, "0a79ca1399b4fc018584bcf8e90be7c476618fab47f903b9670ce1282eafbaa1"))) {
+            val hooks = EmulatorMediaHooks(context, "parity-v2", emission = emission)
+            try {
+                val callback = hooks.capture(object : AudioBufferCallback {
+                    override fun onBuffer(buffer: ByteBuffer, format: Int, channels: Int, rate: Int,
+                        bytesRead: Int, timestamp: Long) = timestamp
+                })
+                val size = rate * (if (emission) 1020 else 720) / 1000 * 2
+                val pcm = ByteBuffer.allocateDirect(size)
+                assertEquals(123L, callback.onBuffer(pcm, AudioFormat.ENCODING_PCM_16BIT, 1, rate, size, 123L))
+                val bytes = ByteArray(size).also { pcm.duplicate().apply { clear() }.get(it) }
+                // SDK markerSamples(createMarker("parity-v2")), PCM16 little-endian, Math.round(value * 32767).
+                val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+                assertEquals("tones-v2 at $rate Hz", expected, digest)
+            } finally { hooks.close() }
+        }
     }
 
-    @Test fun realRecordinglessCapturePublicationGateDecodedAndPostMuteOutput() = runBlocking {
+    @Test fun realRecordinglessCapturePublicationGateDecodedAndPostMuteOutput() = journey(8000)
+    @Test fun real48kCaptureRetainsEveryControl() = journey(48000)
+
+    private fun journey(rate: Int) = runBlocking {
         withContext(Dispatchers.Main) {
             val engine = ConversationEngine.get(context)
             val previousMedia = engine.nativeMedia; val previousPolicy = engine.policy
             val previousEmitter = engine.emit; val previousAccept = engine.actions.acceptUnhandled
             val previousFactory = NativeMediaRegistry.factories["livekit"]
             val id = "hooks-${System.nanoTime()}"
-            val hooks = EmulatorMediaHooks(context, "$id:fromDevice")
+            val hooks = EmulatorMediaHooks(context, "$id:fromDevice", requestedRate = rate)
             val signals = CopyOnWriteArrayList<NativeMediaSignal>()
             val observer = NativeMediaObserver { if (it.serverCallId == id) signals += it }
             var step = "prejoin"
@@ -151,6 +162,7 @@ class MediaHookFeasibilityTest {
                     assertEquals(0L, peer.getLong("markers"))
                 }
                 val mutedWords = hooks.generatedWords.get() - wordsBefore
+                assertEquals(rate, hooks.captureSampleRate)
                 // Three completed boundaries guarantee at least two whole words inside the muted window.
                 assertTrue("Muted source generated only $mutedWords boundaries", mutedWords >= 3)
                 hooks.beginPhase()
@@ -176,7 +188,7 @@ class MediaHookFeasibilityTest {
                 fixture("/fixture/markers/$id", reset = true)
                 val answered = peerAudio(id, generation)
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
-                    putString("tonesV1", answered.toString())
+                    putString("tonesV2", answered.put("captureRate", hooks.captureSampleRate).toString())
                 })
                 assertSame(publication, hooks.publicationIdentity()); assertFalse(publication.muted)
                 hooks.beginPhase()
@@ -220,7 +232,7 @@ class MediaHookFeasibilityTest {
             } catch (error: Throwable) {
                 caught = error
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
-                    putString("tonesV1Failure", runCatching { fixture("/fixture/markers/$id").toString() }.getOrDefault("unavailable"))
+                    putString("tonesV2Failure", runCatching { fixture("/fixture/markers/$id").put("captureRate", hooks.captureSampleRate).toString() }.getOrDefault("unavailable"))
                     putString("mediaHookFailure", "step=$step, error=$error, signals=${signals.map { it.stage }}")
                     putString("pipeline", pipeline)
                 })
