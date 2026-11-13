@@ -73,6 +73,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         // Set before any capture thread starts: recordingless RTP negotiation cannot open the microphone.
         device.setAudioRecordEnabled(false)
         recording = device
+        audioHooks?.recording(device)
         candidate.setSpeakerMute(true); heat.muteOutput()
         val publisherReady = CompletableDeferred<Unit>()
         val subscriberReady = CompletableDeferred<Unit>()
@@ -101,7 +102,8 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         val observation = NativeRoomConnection(scope, { stage, reason -> NativeMediaSignals.emit(serverId, stage, reason = reason) }, { reason ->
             if (!closed && room === candidate) {
                 room = null; transportJobs.forEach { it.cancel() }; collector.cancel()
-                probe.close(); decode.close(); heat.close(); runCatching { candidate.release() }
+                probe.close(); decode.close(); heat.close()
+                runCatching { audioHooks?.close() }; runCatching { candidate.release() }
                 disconnected(reason?.disconnection() ?: NativeMediaDisconnection.FAILURE)
             }
         })
@@ -151,7 +153,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
                 audioHooks?.let { track.removeSink(it.decodedSink) }
             } }; tracks.clear()
             microphone = null; publication = null; captureEnabled = false; recording = null
-            runCatching { candidate.release() }
+            runCatching { audioHooks?.close() }; runCatching { candidate.release() }
             throw error
         }
     }
@@ -233,7 +235,8 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     override suspend fun close(reason: String): Unit = withContext(Dispatchers.Main.immediate) {
         if (closed) return@withContext
         closed = true; active = false; pcm.close(); decoded.close(); warmth.close()
-        audioHooks?.close()
+        // Instrumentation cleanup cannot interrupt room disposal.
+        runCatching { audioHooks?.close() }
         // release() initiates a local disconnect after we retire room observation.
         if (room != null) connection?.closeForRelease() else connection?.close()
         connection = null

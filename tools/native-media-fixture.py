@@ -32,27 +32,38 @@ uplink_tasks = set()
 
 class MarkerObservation:
     """Independently check the device's six-symbol uplink, rather than just its room presence."""
-    frequencies = (1000, 1800, 1200, 2200, 1400, 2000)
+    frequencies = (1000, 1800, 1400, 2000)
+    sequence = (0, 1, 2, 3, 0, 2)
 
     def __init__(self):
         self.running = True
+        self.error = None
         self.reset()
 
     def reset(self):
         self.frames = 0
         self.markers = 0
         self.previous = None
+        self.candidate = None
+        self.candidate_frames = 0
+        self.unknown_frames = 0
+        self.last_raw = None
         self.symbols = []
+        self.seen = [0] * len(self.frequencies)
+        self.transitions = []
 
     async def receive(self, track):
-        stream = rtc.AudioStream(track, sample_rate=48000, num_channels=1)
+        stream = None
         try:
+            stream = rtc.AudioStream(track, sample_rate=48000, num_channels=1)
             async for event in stream:
                 values = memoryview(event.frame.data).cast("B").cast("h")
                 self.frames += len(values)
                 energy = sum(value * value for value in values)
                 if not energy:
                     self.previous = None
+                    self.candidate = None
+                    self.candidate_frames = 0
                     self.symbols.clear()
                     continue
                 scores = []
@@ -64,16 +75,37 @@ class MarkerObservation:
                         second, first = first, current
                     scores.append((first * first + second * second - coefficient * first * second) / (len(values) * energy))
                 symbol = scores.index(max(scores)) if max(scores) > .15 else None
+                if symbol is not None:
+                    self.seen[symbol] += 1
+                if symbol != self.last_raw:
+                    self.transitions = (self.transitions + [-1 if symbol is None else symbol])[-24:]
+                self.last_raw = symbol
                 if symbol is None:
-                    self.symbols.clear()
-                elif symbol != self.previous:
-                    self.symbols = (self.symbols + [symbol])[-len(self.frequencies):]
-                    if self.symbols == list(range(len(self.frequencies))):
+                    self.unknown_frames += len(values)
+                    self.candidate = None
+                    self.candidate_frames = 0
+                    if self.unknown_frames >= 2880:
+                        self.symbols.clear()
+                        self.previous = None
+                    continue
+                self.unknown_frames = 0
+                if symbol != self.candidate:
+                    self.candidate = symbol
+                    self.candidate_frames = 0
+                self.candidate_frames += len(values)
+                # Confirm 40 ms of a symbol, independent of the decoder's frame size.
+                # Transitional codec windows never become extra symbols or fabricated PCM.
+                if self.candidate_frames >= 1920 and symbol != self.previous:
+                    self.symbols = (self.symbols + [symbol])[-len(self.sequence):]
+                    if self.symbols == list(self.sequence):
                         self.markers += 1
-                self.previous = symbol
+                    self.previous = symbol
+        except Exception as error:
+            self.error = type(error).__name__
         finally:
             self.running = False
-            await stream.aclose()
+            if stream is not None:
+                await stream.aclose()
 
 
 class ToneTrack(AudioStreamTrack):
@@ -214,7 +246,9 @@ async def markers(request):
                     for publication in participant.track_publications.values()
                     if publication.kind == rtc.TrackKind.KIND_AUDIO]
     return web.json_response({"running": observation.running, "frames": observation.frames,
-                             "markers": observation.markers, "muted": bool(publications) and all(p.muted for p in publications)})
+                             "markers": observation.markers, "symbols": observation.symbols, "seen": observation.seen,
+                             "transitions": observation.transitions, "error": observation.error,
+                             "muted": bool(publications) and all(p.muted for p in publications)})
 
 
 async def raw_signaling(request):

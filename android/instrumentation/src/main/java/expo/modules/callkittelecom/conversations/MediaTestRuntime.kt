@@ -5,7 +5,7 @@ import android.content.pm.ApplicationInfo
 import android.os.Build
 import expo.modules.callkittelecom.instrumentation.BuildConfig
 
-internal enum class MediaHookFailure { UNSUPPORTED_BUILD, NOT_EMULATOR, OUTPUT_TAP_UNAVAILABLE, UNSUPPORTED_PCM }
+internal enum class MediaHookFailure { UNSUPPORTED_BUILD, NOT_EMULATOR, OUTPUT_TAP_UNAVAILABLE, CAPTURE_UNAVAILABLE, UNSUPPORTED_PCM }
 internal class MediaHookUnavailable(val reason: MediaHookFailure) : IllegalStateException(reason.name)
 
 /** This guard belongs to the instrumentation host, never the published library. */
