@@ -19,8 +19,24 @@ instrumentation APK and retains HTTPS, identity, cancellation and HTTP404/410
 failure controls. It is not shipped in either library media variant.
 
 `NativeMediaSignals.observers` is a native main-thread lifecycle hook. Signals
-carry a serverCallId, a monotonic timestamp and numeric measurements. Audio
-callbacks enqueue observations without running app code on the audio thread.
+carry a serverCallId, a monotonic timestamp and numeric measurements. The
+`ROOM_DISCONNECTED` signal carries an empty `serverCallId` by design, with the
+reason name only in `reason` and no room or participant identifiers.
+
+For outgoing, answered and held calls, disconnect reasons have these outcomes:
+
+| Reason | Outcome |
+| --- | --- |
+| `ROOM_DELETED`, `PARTICIPANT_REMOVED` | Normal `remoteEnded`, without a failure |
+| `CLIENT_INITIATED` received through room observation | `failed`, failure kind `media` |
+| Other LiveKit reason names | `failed`, failure kind `media` |
+| `RECONNECT_TIMEOUT` | The 30-second reconnect deadline expired; `failed`, failure kind `media` |
+
+v2's own release emits `CLIENT_INITIATED` after retiring room observation, so it
+does not trigger another logical end. A ringing incoming call only loses its
+optional pre-join and keeps ringing, whatever the disconnect reason.
+
+Audio callbacks enqueue observations without running app code on the audio thread.
 `firstAudio` means the first decoded remote PCM16 frame with peak at least128
 (-48dBFS), after native activation; it is not a hardware/acoustic measurement.
 No raw audio or credentials are retained.

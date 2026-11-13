@@ -3,7 +3,7 @@
 Install the v2 prerelease from the GitHub release asset in your `package.json`:
 
 ```json
-"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.5/expo-callkit-telecom-2.0.0-alpha.5.tgz"
+"expo-callkit-telecom": "https://github.com/relayphone/expo-callkit-telecom/releases/download/v2.0.0-alpha.6/expo-callkit-telecom-2.0.0-alpha.6.tgz"
 ```
 
 See [release verification](./releases.md). Prerelease versions can change APIs.
@@ -448,10 +448,36 @@ Unknown, ended, disabled-provider or already-owned sessions are ignored with
 `RECONNECTED` while keeping their current status. If an incoming call is still
 ringing, losing its optional pre-join emits `PREWARM_LOST` and keeps it ringing.
 Answer creates a fresh session using the push credentials, `Proceed.media`, or
-credentials supplied through `ConversationMedia.provide`. For outgoing, answered
-and held calls, a final room disconnection or 30 seconds without recovery fails
-the call. Ending the call
-cancels recovery observation and its deadline.
+credentials supplied through `ConversationMedia.provide`, whatever the disconnect
+reason. For outgoing, answered and held calls, `ROOM_DELETED` and
+`PARTICIPANT_REMOVED` end the call as `remoteEnded` without a failure, sharing the
+normal removal path with a server end report or `callEnded` push.
+An observed `CLIENT_INITIATED` and other final disconnects fail the call with
+failure kind `media`. v2's own release retires room observation first, so it
+does not trigger another logical end. After 30 seconds without recovery, the
+call fails with failure kind `media` and reason name `RECONNECT_TIMEOUT` in
+telemetry. `ROOM_DISCONNECTED` signals carry only the reason name in `reason`,
+an empty `serverCallId` by design and no room/participant identifiers. Ending
+the call cancels recovery observation and its deadline.
+
+## Calls behind a VPN
+
+Some split-tunnel VPNs without a default route can prevent WebRTC from gathering
+usable candidates. Opt in from `Application.onCreate`, before calls create media:
+
+```kotlin
+import expo.modules.callkittelecom.conversations.ConversationMedia
+import expo.modules.callkittelecom.conversations.NativeMediaOptions
+
+// Inside Application.onCreate, after super.onCreate():
+ConversationMedia.configure(NativeMediaOptions(disableNetworkMonitor = true))
+```
+
+The option defaults to `false`. Each new native media session captures the current
+options; existing sessions keep theirs. LiveKit 2.29.2 applies it through
+[`LiveKitOverrides.peerConnectionFactoryOptions`](https://github.com/livekit/client-sdk-android/blob/v2.29.2/livekit-android-sdk/src/main/java/io/livekit/android/LiveKitOverrides.kt#L65-L68).
+Turning the network monitor off can slow recovery during a Wi-Fi to cellular
+handover, so enable it only for apps that need this VPN workaround.
 
 ## Configure a host for native answer and audio
 

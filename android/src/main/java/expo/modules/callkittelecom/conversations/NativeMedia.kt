@@ -8,10 +8,15 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 
+/** Logical meaning of a final native room disconnection, independent of its media provider. */
+enum class NativeMediaDisconnection { REMOTE_ENDED, CLIENT_INITIATED, FAILURE }
+
 /** Implementations honor cancellation; failed prewarm releases resources and remains retryable. */
 interface NativeMediaSession {
     val isPrepared: Boolean get() = true
     fun setFailureListener(listener: () -> Unit) {}
+    /** Report a final room disconnect separately from preparation and activation failures. */
+    fun setDisconnectListener(listener: (NativeMediaDisconnection) -> Unit) {}
     suspend fun prewarm(payload: Map<String, Any?>)
     suspend fun activate()
     /** Suspend local capture AND remote playback; resume only after native audio authority. */
@@ -30,7 +35,8 @@ object NativeMediaRegistry {
 /** Native work has one lifetime. Cleanup can run even after the caller's scope is cancelled. */
 internal class NativeMediaController(private val context: Context, private val payload: Map<String, Any?>,
     private val policy: JSONObject, private val scope: CoroutineScope,
-    private val failed: () -> Unit, private val connected: () -> Unit) : NativeMediaControl {
+    private val failed: () -> Unit, private val connected: () -> Unit,
+    private val disconnected: (NativeMediaDisconnection) -> Unit = { failed() }) : NativeMediaControl {
     private val dispatcher = Dispatchers.IO.limitedParallelism(1)
     private val lifetime = SupervisorJob(scope.coroutineContext[Job])
     private val operations = CoroutineScope(lifetime + dispatcher)
@@ -65,6 +71,9 @@ internal class NativeMediaController(private val context: Context, private val p
         }
         session?.setFailureListener {
             operations.launch(Dispatchers.Main.immediate) { if (!closed) failed() }
+        }
+        session?.setDisconnectListener { reason ->
+            operations.launch(Dispatchers.Main.immediate) { if (!closed) disconnected(reason) }
         }
         currentCoroutineContext().ensureActive(); check(!closed)
         val pushed = payload["media"] as? Map<String, Any?>

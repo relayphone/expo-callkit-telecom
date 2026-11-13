@@ -542,23 +542,28 @@ class ConversationEngine(val context: Context) {
 
     private fun prepareMedia(id: String, payload: Map<String, Any?>, prewarm: Boolean = true) {
         val call = call(id)
+        fun disconnected(reason: NativeMediaDisconnection) {
+            if (calls[id] !== call || !live(call)) return
+            if (call.reservation.direction == NativeCallDirection.INCOMING && call.state["status"] == "ringing") {
+                if (call.media?.prewarmLost() == true) signal(call, NativeMediaStage.PREWARM_LOST)
+            } else when (reason) {
+                NativeMediaDisconnection.REMOTE_ENDED -> terminateLater(id, "remoteEnded")
+                // Our own releases retire observation first; a live observed disconnect is unexpected.
+                NativeMediaDisconnection.CLIENT_INITIATED,
+                NativeMediaDisconnection.FAILURE -> terminateLater(id, "failed", EndedFailure.MEDIA)
+            }
+        }
         run {
             call.media = call.media ?: NativeMediaOwner(nativeMedia, call.audio, initiallyMuted = call.state["isMuted"] == true) { answerMedia -> NativeMediaController(context,
                 if (answerMedia == null) payload else payload + ("media" to answerMedia),
-                policy, jobs, failed = {
-                if (calls[id] === call && live(call)) {
-                    if (call.reservation.direction == NativeCallDirection.INCOMING && call.state["status"] == "ringing") {
-                        if (call.media?.prewarmLost() == true) signal(call, NativeMediaStage.PREWARM_LOST)
-                    } else terminateLater(id, "failed", EndedFailure.MEDIA)
-                }
-            }, connected = {
+                policy, jobs, failed = { disconnected(NativeMediaDisconnection.FAILURE) }, connected = {
                 if (calls[id] === call) {
                     call.timeout?.cancel()
                     call.state["connectedAt"] = call.state["connectedAt"] ?: Instant.now().toString()
                     if (call.state["status"] != "held") markConnected(call)
                     publish()
                 }
-            }) }
+            }, disconnected = ::disconnected) }
             if (prewarm) call.media?.prewarm()
         }
     }

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.6 (2026-11-13)
+
+### Changed
+
+* **android:** answered/outgoing/held LiveKit calls disconnected with `ROOM_DELETED`
+  or `PARTICIPANT_REMOVED` now end as `remoteEnded` without a media failure.
+  Ringing pre-join loss continues ringing; other final transport failures retain
+  their media failure. An observed `CLIENT_INITIATED` also fails the call with
+  failure kind `media`; v2's own release does not trigger another end.
+  `ROOM_DISCONNECTED` carries an empty `serverCallId` by design, with the reason
+  name only and no room or participant identifiers. The 30-second reconnect
+  deadline emits `RECONNECT_TIMEOUT` and retains its media failure.
+
+### Features
+
+* **android:** opt in to `NativeMediaOptions(disableNetworkMonitor = true)` through
+  `ConversationMedia.configure` for calls behind a VPN without a default route.
+  The default WebRTC network monitor remains enabled.
+
 ## 2.0.0-alpha.5 (2026-11-13)
 
 ### Features
