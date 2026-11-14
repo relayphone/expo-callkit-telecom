@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioFormat
 import android.os.SystemClock
 import io.livekit.android.audio.AudioBufferCallback
+import io.livekit.android.room.track.LocalAudioTrackOptions
 import io.livekit.android.room.track.LocalTrackPublication
 import io.livekit.android.room.track.RemoteAudioTrack
 import java.nio.ByteBuffer
@@ -27,6 +28,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     val trace = MediaCaptureTrace()
     val postApm = MediaApmCapture(markerId, SystemClock::elapsedRealtimeNanos)
     override val capturePostProcessor get() = postApm
+    override fun captureOptions(defaults: LocalAudioTrackOptions) = EmulatorCaptureOptions.from(defaults)
     // Match SDK testing/marker.ts: UTF-8 FNV-1a, four sync slots, low sixteen hash bits.
     private val frequencies = run {
         var hash = 2166136261L

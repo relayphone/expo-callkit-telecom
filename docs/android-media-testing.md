@@ -14,7 +14,8 @@ requires activation to refuse at runtime.
 
 Capture uses `LocalAudioTrack.setAudioBufferCallback`, composed with the existing
 ADM customizer and `NativeWarmAudio` pacing. The emulator-test ADM captures at
-48 kHz. AEC, AGC and NS remain configured on, and calls use Opus. Callback buffer
+48 kHz. Synthetic capture disables NS through the SDK's track capture options;
+AEC, AGC, high-pass filtering and Opus remain enabled. Callback buffer
 CRCs, callback timing, publication mute state, audio mode and processing options
 are retained. The callback CRC observes bytes at callback return. A read-only
 `AudioOptions.audioProcessorOptions.capturePostProcessor` copies the first three
@@ -35,9 +36,11 @@ The comparison retains each stream's complete detector result and per-slot
 energy at identical source-frame offsets. These energy windows include DSP
 delay; they do not apply a corrective shift or measure acoustic latency.
 Set `NATIVE_MEDIA_PYTHON` to the interpreter with the pinned fixture requirements
-when it is not `python3`. The observation pass keeps NS, AEC and AGC enabled.
-Any synthetic-capture processing probe stays confined to the emulator-test
-configuration; device and Release media settings retain their defaults.
+when it is not `python3`. The initial observation with NS, AEC and AGC enabled
+found intact source markers and no complete post-APM markers. The NS-off probe
+changes only synthetic capture in the emulator-test configuration; device and
+Release media settings retain their defaults. The read-only tap stays enabled
+to distinguish processing failures from later codec or receive failures.
 
 Decoded audio is observed through remote sinks. Post-mute output uses the actual
 playback tap, with the pinned direct buffer's array access verified before use.

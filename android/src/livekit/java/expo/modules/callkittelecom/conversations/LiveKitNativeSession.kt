@@ -163,7 +163,9 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     private suspend fun publishMutedMicrophone() {
         val participant = room?.localParticipant ?: error("Media not prepared")
         recording?.setAudioRecordEnabled(false)
-        val track = participant.createAudioTrack().also { microphone = it }
+        val defaults = participant.audioTrackCaptureDefaults
+        val track = participant.createAudioTrack(options = audioHooks?.captureOptions(defaults) ?: defaults)
+            .also { microphone = it }
         // Install through the SDK dispatcher before starting the silent capture pump.
         track.setAudioBufferCallback(audioHooks?.capture(warmth) ?: warmth)
         NativeMediaSignals.emit(serverId, NativeMediaStage.MICROPHONE_PUBLISH_STARTED)

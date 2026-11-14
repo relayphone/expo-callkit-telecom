@@ -201,8 +201,10 @@ class MediaHookFeasibilityTest {
                         delay(50)
                     }
                 }
-                assertTrue(options.noiseSuppression && options.autoGainControl && options.echoCancellation && options.highPassFilter)
-                pipeline = "NS=true,AGC=true,AEC=true,highPass=true"
+                assertFalse(options.noiseSuppression)
+                assertTrue(options.autoGainControl && options.echoCancellation && options.highPassFilter)
+                pipeline = "NS=${options.noiseSuppression},AGC=${options.autoGainControl}," +
+                    "AEC=${options.echoCancellation},highPass=${options.highPassFilter}"
                 assertTrue(publication.muted)
                 var peer = fixture("/fixture/markers/$id", reset = true)
                 assertTrue("Muted prejoin requires a subscribed receiver: $peer", peer.getBoolean("running"))
