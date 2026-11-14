@@ -38,7 +38,7 @@ test("runs the complete functional suite once and checks all four results", () =
   const f = fixture();
   try {
     runNativeMediaJourney(f.output, f.run);
-    assert.equal(f.calls.length, 14);
+    assert.equal(f.calls.length, 16);
     assert.deepEqual(f.calls[0], {
       program: "gradle",
       args: [
@@ -87,6 +87,8 @@ test("runs the complete functional suite once and checks all four results", () =
     }
     assert.equal(readdirSync(f.output).length, 6);
     assert.deepEqual(f.calls.slice(9), [
+      { program: "node", args: ["--test", "tools/check-android-journey-state.test.ts"], timeout: 30_000 },
+      { program: "node", args: ["tools/check-android-journey-state.ts"], timeout: 60_000 },
       { program: "node", args: ["--test", "tools/native-media-marker.test.ts", "tools/compare-media-apm.test.ts"], timeout: 30_000 },
       { program: "gradle", args: [
         "-p", "android/instrumentation", ":connectedEmulatorTestAndroidTest", "-PmediaTestBuildType=emulatorTest",
@@ -134,6 +136,21 @@ test("functional-only execution does not start the isolated media qualification"
     assert.equal(readdirSync(f.output).length, 4);
   } finally { f.close(); }
 });
+
+for (const argument of ["tools/check-android-journey-state.test.ts", "tools/check-android-journey-state.ts"])
+  test(`a failed ${argument} remains fatal before media qualification`, () => {
+    const f = fixture();
+    const failure = new Error("platform state query failed");
+    try {
+      assert.throws(() => runNativeMediaJourney(f.output, command => {
+        const result = f.run(command);
+        if (command.args.includes(argument)) throw failure;
+        return result;
+      }), error => error === failure);
+      assert.equal(readdirSync(f.output).length, 4);
+      assert.equal(f.calls.filter(command => command.program === "gradle").length, 1);
+    } finally { f.close(); }
+  });
 
 test("qualification preserves its original failure when capture diagnostics are unavailable", () => {
   const f = fixture();
