@@ -92,7 +92,7 @@ export function runNativeMediaJourney(
 export function runNativeMediaFeasibility(output = "android/instrumentation/build", run: Execute = execute): void {
   mkdirSync(output, { recursive: true });
   for (const name of ["media-hook-results", "capture-trace"]) rmSync(join(output, `${name}.json`), {force: true});
-  run({ program: "node", args: ["--test", "tools/native-media-marker.test.ts"], timeout: 30_000 });
+  run({ program: "node", args: ["--test", "tools/native-media-marker.test.ts", "tools/compare-media-apm.test.ts"], timeout: 30_000 });
   for (const [build, classes] of [
     ["EmulatorTest", "MediaHookFeasibilityTest,MediaTestIsolationTest"],
     ["Release", "MediaTestIsolationTest"],

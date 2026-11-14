@@ -253,6 +253,7 @@ class MediaHookFeasibilityTest {
                 pipeline += ",codec=audio/opus"
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply { putString("pipeline", pipeline) })
                 hooks.trace.phase = "answered"
+                hooks.postApm.start()
                 fixture("/fixture/markers/$id", reset = true)
                 val answered = peerAudio(id, generation)
                 evidence.put("fromDevice", answered)
@@ -262,6 +263,7 @@ class MediaHookFeasibilityTest {
                 assertSame(publication, hooks.publicationIdentity()); assertFalse(publication.muted)
                 step = "answered output"
                 outputAudio(id, hooks) { evidence.put("toDevice", it) }
+                hooks.postApm.stop()
                 hooks.beginPhase()
                 withTimeout(3000) { while (hooks.decoded().tones < 5 || hooks.output().tones < 5) delay(10) }
 
@@ -323,7 +325,8 @@ class MediaHookFeasibilityTest {
                 try {
                     context.filesDir.resolve("media-hook-results.json").writeText(evidence.put("step", step)
                         .put("passed", caught == null).put("pipeline", pipeline).toString())
-                    context.filesDir.resolve("capture-trace.json").writeText(hooks.trace.snapshot().toString())
+                    context.filesDir.resolve("capture-trace.json").writeText(hooks.trace.snapshot()
+                        .put("postApm", hooks.postApm.finish()).toString())
                     InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                         putString("captureTraceFile", "capture-trace.json")
                     })

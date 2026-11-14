@@ -2,7 +2,10 @@
 
 The instrumentation app has a dedicated `emulatorTest` build with synthetic
 capture and real receive observation. This is an internal software-audio harness.
-It does not measure physical microphones, speakers, Bluetooth or acoustic latency.
+It verifies that audio flows each way, that mute, hold and reconnect gate it, and
+software timing. It does not grade the noise suppressor. NS fidelity belongs to
+device and speech QA. It does not measure physical microphones, speakers,
+Bluetooth or acoustic latency.
 
 The concrete implementation lives in `src/emulatorTest`; normal device and
 Release artifacts exclude it. Activation also requires the emulator-test build
@@ -13,8 +16,28 @@ Capture uses `LocalAudioTrack.setAudioBufferCallback`, composed with the existin
 ADM customizer and `NativeWarmAudio` pacing. The emulator-test ADM captures at
 48 kHz. AEC, AGC and NS remain configured on, and calls use Opus. Callback buffer
 CRCs, callback timing, publication mute state, audio mode and processing options
-are retained. The callback CRC observes bytes at callback return; it does not
-observe post-APM or encoder-input PCM.
+are retained. The callback CRC observes bytes at callback return. A read-only
+`AudioOptions.audioProcessorOptions.capturePostProcessor` copies the first three
+seconds of answered capture after APM. It pairs source and post-APM processing
+blocks by thread, source frame and format; unsupported or missing pairs are
+reported explicitly. It observes full-band mono Float32 PCM at 48 kHz with S16
+scaling, without modifying native buffers or their cursors. This is not an
+encoder-input tap.
+
+The source and post-APM PCM are retained inside `capture-trace.json`. Compare
+them offline using the same detector as both live directions:
+
+```sh
+node tools/compare-media-apm.ts capture-trace.json comparison.json
+```
+
+The comparison retains each stream's complete detector result and per-slot
+energy at identical source-frame offsets. These energy windows include DSP
+delay; they do not apply a corrective shift or measure acoustic latency.
+Set `NATIVE_MEDIA_PYTHON` to the interpreter with the pinned fixture requirements
+when it is not `python3`. The observation pass keeps NS, AEC and AGC enabled.
+Any synthetic-capture processing probe stays confined to the emulator-test
+configuration; device and Release media settings retain their defaults.
 
 Decoded audio is observed through remote sinks. Post-mute output uses the actual
 playback tap, with the pinned direct buffer's array access verified before use.

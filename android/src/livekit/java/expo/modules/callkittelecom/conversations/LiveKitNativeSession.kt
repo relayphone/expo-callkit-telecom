@@ -57,6 +57,9 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         val heat = NativeWarmAudio(serverId).also { warmth = it }
         val candidate = LiveKit.create(context, overrides = configuration.overrides(AudioOptions(
             audioHandler = NoAudioHandler(), disableAudioPrewarming = true, disableCommunicationModeWorkaround = true,
+            audioProcessorOptions = audioHooks?.capturePostProcessor?.let {
+                io.livekit.android.audio.AudioProcessorOptions(capturePostProcessor = it)
+            },
             javaAudioDeviceModuleCustomizer = { builder ->
                 heat.configureOutput(builder)
                 audioHooks?.configureOutput(builder, heat)

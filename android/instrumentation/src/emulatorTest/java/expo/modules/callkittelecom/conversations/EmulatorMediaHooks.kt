@@ -25,6 +25,8 @@ import livekit.org.webrtc.audio.JavaAudioDeviceModule
 internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled: Boolean = true,
     private val requestedRate: Int = 48000, private val emission: Boolean = true) : NativeAudioHooks {
     val trace = MediaCaptureTrace()
+    val postApm = MediaApmCapture(markerId, SystemClock::elapsedRealtimeNanos)
+    override val capturePostProcessor get() = postApm
     // Match SDK testing/marker.ts: UTF-8 FNV-1a, four sync slots, low sixteen hash bits.
     private val frequencies = run {
         var hash = 2166136261L
@@ -149,6 +151,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
                     if (bytesRead == 0) recordinglessCallbacks.incrementAndGet()
                     val crc = CRC32().apply { update(buffer.duplicate().apply { clear() }) }.value
                     trace.returned(entered, first, frames, rate, bytesRead, publication?.muted, crc)
+                    postApm.returned(first, frames, rate, channels, buffer)
                 }
             }
             return result
@@ -237,6 +240,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
         if (!closed.compareAndSet(false, true)) return
         publication = null
         remoteTrack = null
+        postApm.stop()
         stopOutputCapture()
     }
 

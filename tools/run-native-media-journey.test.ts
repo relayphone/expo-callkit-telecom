@@ -87,7 +87,7 @@ test("runs the complete functional suite once and checks all four results", () =
     }
     assert.equal(readdirSync(f.output).length, 6);
     assert.deepEqual(f.calls.slice(9), [
-      { program: "node", args: ["--test", "tools/native-media-marker.test.ts"], timeout: 30_000 },
+      { program: "node", args: ["--test", "tools/native-media-marker.test.ts", "tools/compare-media-apm.test.ts"], timeout: 30_000 },
       { program: "gradle", args: [
         "-p", "android/instrumentation", ":connectedEmulatorTestAndroidTest", "-PmediaTestBuildType=emulatorTest",
         "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
