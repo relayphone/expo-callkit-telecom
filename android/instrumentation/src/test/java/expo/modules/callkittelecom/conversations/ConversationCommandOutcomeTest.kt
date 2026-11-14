@@ -6,6 +6,55 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ConversationCommandOutcomeTest {
+    @Test fun outcomeDeadlineExceedsThePlatformRemovalDeadline() {
+        assertEquals(70_000L, CONVERSATION_COMMAND_OUTCOME_TIMEOUT_MILLIS)
+        assertTrue(CONVERSATION_COMMAND_OUTCOME_TIMEOUT_MILLIS > PLATFORM_REMOVAL_DEADLINE_MILLIS)
+    }
+
+    @Test fun logicalEndAndExternalControlWaitsTimeOutWithoutCancellingAcceptedCommands() = runBlocking {
+        for (settlement in listOf(
+            ConversationCommandOutcome.Performed("call", ConversationCommandStatus.ENDED, ConversationEndReason.LOCAL),
+            ConversationCommandOutcome.Performed("call", ConversationCommandStatus.HELD),
+        )) {
+            val externalSettlement = CompletableDeferred<Unit>()
+            val accepted: Deferred<ConversationCommandOutcome> = async(start = CoroutineStart.UNDISPATCHED) {
+                externalSettlement.await()
+                settlement
+            }
+            try {
+                val result = withTimeout(1000) { accepted.awaitCommandOutcome(timeoutMillis = 10) }
+                assertEquals(CommandRejection.deadlineExceeded().outcome, result)
+                assertEquals(ConversationCommandCode.DEADLINE_EXCEEDED, (result as ConversationCommandOutcome.Failed).code)
+                assertTrue("The accepted command must outlive the caller's deadline", accepted.isActive)
+                externalSettlement.complete(Unit)
+                assertEquals(settlement, accepted.await())
+            } finally { externalSettlement.complete(Unit) }
+        }
+    }
+
+    @Test fun completedSettlementsAreUnchangedByTheOverallWaitBound() = runBlocking {
+        for (result in listOf(
+            ConversationCommandOutcome.Performed("call", ConversationCommandStatus.CONNECTING),
+            ConversationCommandOutcome.Refused("application reason"),
+            ConversationCommandOutcome.Failed(ConversationCommandCode.HANDLER_FAILED, "handler failed"),
+        )) {
+            assertEquals(result, CompletableDeferred(result).awaitCommandOutcome(timeoutMillis = 1000))
+        }
+    }
+
+    @Test fun aCallersShorterTimeoutPropagatesWithoutCancellingTheAcceptedCommand() = runBlocking {
+        val release = CompletableDeferred<Unit>()
+        val accepted: Deferred<ConversationCommandOutcome> = async(start = CoroutineStart.UNDISPATCHED) {
+            release.await()
+            ConversationCommandOutcome.Performed("call", ConversationCommandStatus.CONNECTED)
+        }
+        try {
+            val error = runCatching { withTimeout(10) { accepted.awaitCommandOutcome(timeoutMillis = 1000) } }.exceptionOrNull()
+            assertTrue(error is TimeoutCancellationException)
+            assertTrue(accepted.isActive)
+        } finally { release.complete(Unit) }
+    }
+
     @Test fun nativeFailureAndJavaScriptDetailsHaveOneNormalization() {
         for (code in listOf("deadline_exceeded", "handler_failed", "unknown_conversation",
             "invalid_arguments", "unsupported", "conversation", "future_code")) {

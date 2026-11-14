@@ -1,5 +1,8 @@
 package expo.modules.callkittelecom.conversations
 
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.withTimeoutOrNull
+
 /** Stable command code shared by native outcomes and JavaScript rejections. */
 @JvmInline
 value class ConversationCommandCode private constructor(val value: String) {
@@ -43,3 +46,11 @@ internal fun performedCommand(id: String, state: Map<String, Any?>): Conversatio
     return ConversationCommandOutcome.Performed(id, status,
         if (reason == null) null else ConversationEndReason.entries.single { it.value == reason })
 }
+
+internal const val CONVERSATION_COMMAND_OUTCOME_TIMEOUT_MILLIS = 70_000L
+
+/** Bound only the waiter; [Deferred] remains owned by the process command scope. */
+internal suspend fun Deferred<ConversationCommandOutcome>.awaitCommandOutcome(
+    timeoutMillis: Long = CONVERSATION_COMMAND_OUTCOME_TIMEOUT_MILLIS,
+): ConversationCommandOutcome = withTimeoutOrNull(timeoutMillis) { await() }
+    ?: CommandRejection.deadlineExceeded().outcome

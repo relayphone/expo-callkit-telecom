@@ -136,7 +136,11 @@ internal class CallNotificationRoster {
     }
 }
 
-/** Native controls for an app-owned call activity. Safe from any thread; effects run on main. */
+/**
+ * Native controls for an app-owned call activity. Safe from any thread; effects run on main.
+ * All outcome-returning calls wait at most 70 seconds, returning DEADLINE_EXCEEDED on timeout.
+ * Timing out or cancelling a waiter never cancels the accepted process-owned command.
+ */
 object ConversationControls {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -189,7 +193,7 @@ object ConversationControls {
         return scope.async {
             val engine = ConversationEngine.get(application)
             engine.commandOutcome(id, ending) { action(engine) }
-        }.await()
+        }.awaitCommandOutcome()
     }
 
     private fun perform(context: Context, action: suspend (ConversationEngine) -> Unit) {

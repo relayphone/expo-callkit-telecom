@@ -432,6 +432,12 @@ times out or throws; the awaiting native caller and JavaScript still receive tha
 refusal or failure. Cancelling an awaiting coroutine stops waiting while the
 accepted command continues in the process scope.
 
+All six outcome-returning calls have a 70 second overall wait bound, beyond the
+engine's 60 second platform-removal deadline. If command settlement or logical
+end never arrives, the caller receives `Failed(DEADLINE_EXCEEDED, ...)` using the
+shared rejection normalizer. Only the wait expires; the accepted command keeps
+running and can still publish its eventual state.
+
 ```kotlin
 scope.launch {
     when (val result = ConversationControls.endWithOutcome(context, conversationId)) {

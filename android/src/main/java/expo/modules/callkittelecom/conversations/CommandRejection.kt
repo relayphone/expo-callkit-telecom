@@ -24,8 +24,10 @@ internal class CommandRejection private constructor(
         }
 
     companion object {
+        fun deadlineExceeded() = CommandRejection("deadline_exceeded", "Conversation deadline exceeded")
+
         fun from(error: Exception): CommandRejection = when (error) {
-            is TimeoutCancellationException -> CommandRejection("deadline_exceeded", "Conversation deadline exceeded")
+            is TimeoutCancellationException -> deadlineExceeded()
             is CancellationException -> throw error
             is ConversationFailure -> CommandRejection(error.code,
                 if (error.code == "refused") error.message.orEmpty() else "Conversation operation failed", error.nativeCode)
