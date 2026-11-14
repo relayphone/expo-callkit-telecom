@@ -3,7 +3,8 @@
 The instrumentation app has a dedicated `emulatorTest` build with synthetic
 capture and real receive observation. This is an internal software-audio harness.
 It verifies that audio flows each way, that mute, hold and reconnect gate it, and
-software timing. It does not grade the noise suppressor. NS fidelity belongs to
+software timing. Synthetic capture has no acoustic path, so it turns NS and AEC
+off and does not grade noise suppression or echo cancellation. Those remain
 device and speech QA. It does not measure physical microphones, speakers,
 Bluetooth or acoustic latency.
 
@@ -14,8 +15,9 @@ requires activation to refuse at runtime.
 
 Capture uses `LocalAudioTrack.setAudioBufferCallback`, composed with the existing
 ADM customizer and `NativeWarmAudio` pacing. The emulator-test ADM captures at
-48 kHz. Synthetic capture disables NS through the SDK's track capture options;
-AEC, AGC, high-pass filtering and Opus remain enabled. Callback buffer
+48 kHz. Synthetic capture disables NS and AEC through the SDK's track capture
+options; AGC, high-pass filtering and Opus remain enabled. Production capture
+keeps its SDK defaults, including NS and AEC. Callback buffer
 CRCs, callback timing, publication mute state, audio mode and processing options
 are retained. The callback CRC observes bytes at callback return. A read-only
 `AudioOptions.audioProcessorOptions.capturePostProcessor` copies the first three
@@ -36,15 +38,35 @@ The comparison retains each stream's complete detector result and per-slot
 energy at identical source-frame offsets. These energy windows include DSP
 delay; they do not apply a corrective shift or measure acoustic latency.
 Set `NATIVE_MEDIA_PYTHON` to the interpreter with the pinned fixture requirements
-when it is not `python3`. The initial observation with NS, AEC and AGC enabled
-found intact source markers and no complete post-APM markers. The NS-off probe
-changes only synthetic capture in the emulator-test configuration; device and
-Release media settings retain their defaults. The read-only tap stays enabled
+when it is not `python3`. To summarize a downloaded `media-feasibility-results`
+artifact, including each retained phase's confidences, margins, drift and
+counter brackets, use:
+
+```sh
+node tools/compare-media-apm.ts --artifact-summary artifact-directory summary.json
+```
+
+The report records the journey's pass/fail and stopping step, requested
+processing states, source/post-APM detector results, paired-source callback CRC
+mismatches and callback pacing. It retains separate phase receipts because
+failure cleanup can replace the `fromDevice` snapshot with a later phase.
+Pairing errors remain explicit, impaired candidates retain their counters, and
+missing or duplicate capture/results files refuse summary generation. This is
+an inspection report; it does not reclassify gates or replace CI assertions.
+
+The initial observation with NS, AEC and AGC enabled
+found intact source markers and no complete post-APM markers. NS-off with AEC
+enabled still removed complete markers before encoding. Synthetic near-end tones
+share frequencies with the far-end render, so the echo suppressor treats them
+as likely echo even though this path has no speaker-to-microphone echo.
+Disabling AEC recovered complete markers; synthetic capture therefore turns
+both NS and AEC off. Device and Release media settings retain their defaults.
+The read-only tap stays enabled
 to distinguish processing failures from later codec or receive failures.
 
-An identification-only AEC-off run recovered complete markers in both
-directions. AEC-on is restored while the synthetic-capture configuration is
-evaluated; the diagnostic result alone does not establish a qualified default.
+Echo cancellation fidelity requires an acoustic path and remains device and
+speech QA. Passing processing observations alone does not establish full flow
+and gate qualification.
 
 Decoded audio is observed through remote sinks. Post-mute output uses the actual
 playback tap, with the pinned direct buffer's array access verified before use.
@@ -93,6 +115,12 @@ The `media-feasibility` job uses standard Ubuntu with KVM, a two-core/2 GB
 emulator and the merged guest-budget guard. It runs separately from the ordinary
 functional journeys, which retain their existing checks. Local emulator results
 are debugging data on a shared host; qualification comes from CI.
+
+The ordinary functional journey also verifies reconnect recovery through the
+real conversation engine with fake room-state events, including recovery while
+held and the existing reconnect deadline. Synthetic flow and held-silence
+evidence come from the dedicated feasibility journey; reconnect state tests do
+not measure recovery after an actual network outage.
 
 ```sh
 node tools/run-native-media-journey.ts --feasibility-only

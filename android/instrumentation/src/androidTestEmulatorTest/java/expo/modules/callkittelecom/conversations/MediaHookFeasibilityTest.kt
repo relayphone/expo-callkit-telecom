@@ -235,7 +235,8 @@ class MediaHookFeasibilityTest {
                     }
                 }
                 assertFalse(options.noiseSuppression)
-                assertTrue(options.autoGainControl && options.echoCancellation && options.highPassFilter)
+                assertFalse(options.echoCancellation)
+                assertTrue(options.autoGainControl && options.highPassFilter)
                 pipeline = "NS=${options.noiseSuppression},AGC=${options.autoGainControl}," +
                     "AEC=${options.echoCancellation},highPass=${options.highPassFilter}"
                 assertTrue(publication.muted)

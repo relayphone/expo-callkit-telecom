@@ -22,6 +22,8 @@ class NativeAudioHooksTest {
 
     @Test fun instrumentationDefaultsRetainTheExactCaptureConfiguration() {
         val defaults = LocalAudioTrackOptions()
+        assertTrue(defaults.noiseSuppression && defaults.echoCancellation)
+        assertTrue(defaults.autoGainControl && defaults.highPassFilter)
         assertSame(defaults, hooks.captureOptions(defaults))
         val configured = defaults.copy(autoGainControl = false, highPassFilter = false)
         assertSame(configured, hooks.captureOptions(configured))
