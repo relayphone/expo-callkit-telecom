@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 import ssl
 import struct
 import sys
@@ -552,6 +553,18 @@ async def markers(request):
                              "muted": bool(publications) and all(p.muted for p in publications)})
 
 
+def output_counter(value):
+    """Android RTCStats can encode integral counters as decimal text."""
+    if type(value) is int:
+        return value
+    if isinstance(value, str) and re.fullmatch(r"-?[0-9]+", value):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    return None
+
+
 async def device_output(request):
     """Score actual post-mute output PCM and subscriber counters from the emulator-only tap."""
     if not authenticated(request):
@@ -576,7 +589,7 @@ async def device_output(request):
     if not 0 <= sample["fromFrame"] <= sample["frame"] <= observation.frames or len(observation.stats) >= 128:
         return web.Response(status=400)
     observation.stats.append({"fromFrame": sample["fromFrame"], "frame": sample["frame"],
-                              "inbound": [{name: sample["counters"].get(name) for name in (
+                              "inbound": [{name: output_counter(sample["counters"].get(name)) for name in (
                                   "inserted_samples_for_deceleration", "removed_samples_for_acceleration", "concealed_samples", "packets_lost")}]})
     return web.json_response({"running": True, "error": None, "frames": observation.frames,
                               "generation": observation.generation, **(await observation.measure())})

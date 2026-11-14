@@ -321,8 +321,9 @@ print(json.dumps([f.MarkerObservation.analyze(x["pcm"],f.TonesV2Signal("parity-v
   }
 });
 
-test("the device-output protocol preserves clean-cycle and phase isolation semantics", () => {
-  const code = `import asyncio,base64,importlib.util,json,sys
+for (const counterFormat of ["numeric", "Android decimal text"] as const) {
+  test(`the device-output protocol preserves clean-cycle and phase isolation semantics with ${counterFormat} counters`, () => {
+    const code = `import asyncio,base64,importlib.util,json,sys
 s=importlib.util.spec_from_file_location("fixture","tools/native-media-fixture.py")
 f=importlib.util.module_from_spec(s);s.loader.exec_module(f)
 f.settings["deviceAuth"]="host-fixture"
@@ -332,11 +333,13 @@ class Request:
     def __init__(self,body): self.body=body
     async def json(self): return self.body
 async def check():
+    text_counters=${counterFormat === "Android decimal text" ? "True" : "False"}
     async def send(first,data,frame,loss,plc,reset=False,rate=48000):
         return await f.device_output(Request({"reset":reset,"sampleRate":rate,"firstFrame":first,
             "pcm16":base64.b64encode(data).decode(),"stats":{"fromFrame":frame,"frame":frame,
-                "counters":{"packets_lost":loss,"concealed_samples":plc,
-                            "inserted_samples_for_deceleration":0,"removed_samples_for_acceleration":0}}}))
+                "counters":{"packets_lost":loss,"concealed_samples":str(plc) if text_counters else plc,
+                            "inserted_samples_for_deceleration":"0" if text_counters else 0,
+                            "removed_samples_for_acceleration":"0" if text_counters else 0}}}))
     initial=await send(0,b"",0,0,0,True)
     initial=json.loads(initial.text)
     data=f.TonesV2Signal("hooks-7:toDevice",48000).pcm(107520)
@@ -355,16 +358,80 @@ async def check():
     return {"impaired":impaired,"final":result,"gap":gap.status,"unsupported":unsupported.status,
             "generationChanged":initial["generation"]!=reset["generation"],"reset":reset}
 print(json.dumps(asyncio.run(check())))`;
-  const result = JSON.parse(execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], {
-    encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL",
-  }));
-  assert.equal(result.impaired.cleanCyclesWithPostRoll, 0);
-  assert.equal(result.impaired.phaseDetections[0].receiveStats.status, "impaired");
-  assert.equal(result.final.cleanCyclesWithPostRoll, 1);
-  assert.equal(result.final.firstCleanCycle.receiveStats.status, "clean");
-  assert.equal(result.gap, 400);
-  assert.equal(result.unsupported, 400);
-  assert.ok(result.generationChanged);
-  assert.equal(result.reset.cleanCyclesWithPostRoll, 0);
-  assert.equal(result.reset.firstCleanCycle, null);
+    const result = JSON.parse(
+      execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], {
+        encoding: "utf8",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      })
+    );
+    assert.equal(result.impaired.cleanCyclesWithPostRoll, 0);
+    assert.equal(
+      result.impaired.phaseDetections[0].receiveStats.status,
+      "impaired"
+    );
+    assert.equal(result.final.cleanCyclesWithPostRoll, 1);
+    assert.equal(result.final.firstCleanCycle.receiveStats.status, "clean");
+    assert.equal(result.gap, 400);
+    assert.equal(result.unsupported, 400);
+    assert.ok(result.generationChanged);
+    assert.equal(result.reset.cleanCyclesWithPostRoll, 0);
+    assert.equal(result.reset.firstCleanCycle, null);
+  });
+}
+
+test("device-output counter normalization preserves integer precision and rejects malformed counters", () => {
+  const code = `import asyncio,base64,importlib.util,json
+s=importlib.util.spec_from_file_location("fixture","tools/native-media-fixture.py")
+f=importlib.util.module_from_spec(s);s.loader.exec_module(f)
+f.settings["deviceAuth"]="host-fixture"
+class Request:
+    match_info={"server_id":"hooks-7"}
+    headers={"Authorization":"Bearer host-fixture"}
+    def __init__(self,body):self.body=body
+    async def json(self):return self.body
+async def check():
+    data=f.TonesV2Signal("hooks-7:toDevice",48000).pcm(57600)
+    async def phase(counter):
+        async def send(first,pcm,frame,reset=False):
+            result=await f.device_output(Request({"reset":reset,"sampleRate":48000,"firstFrame":first,
+                "pcm16":base64.b64encode(pcm).decode(),"stats":{"fromFrame":frame,"frame":frame,
+                "counters":{"packets_lost":0,"concealed_samples":counter,
+                            "inserted_samples_for_deceleration":"0","removed_samples_for_acceleration":"0"}}}))
+            assert result.status==200
+            return json.loads(result.text)
+        await send(0,b"",0,True)
+        for start in range(0,57600,19200):
+            result=await send(start,data[start*2:(start+19200)*2],start+19200)
+        return result
+    try:
+        large=await phase("9007199254740993")
+        exact=all(s["inbound"][0]["concealed_samples"]==9007199254740993 for s in large["rtc"])
+        invalid=[]
+        for value in [None,True,False,1.5,"1.5","not-a-count"," 1","1_000",{},[]]:
+            result=await phase(value)
+            invalid.append({"markers":result["markers"],"postRoll":result["markersWithPostRoll"],
+                "clean":result["cleanCyclesWithPostRoll"],"first":result["firstCleanCycle"],
+                "statuses":[c["receiveStats"]["status"] for c in result["phaseDetections"]],
+                "unknown":all(s["inbound"][0]["concealed_samples"] is None for s in result["rtc"])})
+        return {"largeClean":large["cleanCyclesWithPostRoll"],"exact":exact,"invalid":invalid}
+    finally:await f.analysis_worker.close()
+print(json.dumps(asyncio.run(check())))`;
+  const result = JSON.parse(
+    execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], {
+      encoding: "utf8",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    })
+  );
+  assert.equal(result.largeClean, 1);
+  assert.equal(result.exact, true);
+  for (const invalid of result.invalid) {
+    assert.ok(invalid.markers > 0);
+    assert.ok(invalid.postRoll > 0);
+    assert.equal(invalid.clean, 0);
+    assert.equal(invalid.first, null);
+    assert.ok(invalid.statuses.every((status: string) => status === "unknown"));
+    assert.equal(invalid.unknown, true);
+  }
 });
