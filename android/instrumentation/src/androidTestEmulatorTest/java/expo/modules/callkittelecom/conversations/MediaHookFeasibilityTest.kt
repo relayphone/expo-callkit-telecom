@@ -8,6 +8,7 @@ import io.livekit.android.audio.AudioBufferCallback
 import io.livekit.android.room.track.LocalAudioTrack
 import java.nio.ByteBuffer
 import java.security.MessageDigest
+import java.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
@@ -15,6 +16,10 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
+import java.io.IOException
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -22,6 +27,8 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 @RunWith(AndroidJUnit4::class)
 class MediaHookFeasibilityTest {
@@ -31,14 +38,24 @@ class MediaHookFeasibilityTest {
         .open("media-ci.json").bufferedReader().readText()) }
     private val client = OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
 
-    private suspend fun fixture(path: String, reset: Boolean = false): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun fixture(path: String, reset: Boolean = false, body: JSONObject? = null): JSONObject = suspendCancellableCoroutine { continuation ->
         val request = Request.Builder().url(settings.getString("baseUrl") + path)
             .header("Authorization", "Bearer " + settings.getString("authentication"))
-        if (reset) request.post("{}".toRequestBody("application/json".toMediaType()))
-        client.newCall(request.build()).execute().use {
-            check(it.isSuccessful) { "Media fixture request failed" }
-            JSONObject(it.body!!.string())
-        }
+        if (reset || body != null) request.post((body?.toString() ?: "{}").toRequestBody("application/json".toMediaType()))
+        val call = client.newCall(request.build())
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, error: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(error)
+            }
+            override fun onResponse(call: Call, response: Response) {
+                val result = runCatching { response.use {
+                    check(it.isSuccessful) { "Media fixture request failed" }
+                    JSONObject(it.body!!.string())
+                } }
+                if (continuation.isActive) result.fold(continuation::resume, continuation::resumeWithException)
+            }
+        })
     }
 
     private fun healthy(peer: JSONObject, generation: Long) {
@@ -53,8 +70,30 @@ class MediaHookFeasibilityTest {
         do {
             delay(40); peer = fixture("/fixture/markers/$id")
             healthy(peer, generation)
-        } while (peer.getLong("markersWithPostRoll") < 2)
+        } while (peer.getLong("cleanCyclesWithPostRoll") < 1)
         peer
+    }
+
+    private suspend fun outputAudio(id: String, hooks: EmulatorMediaHooks, record: (JSONObject) -> Unit): JSONObject {
+        val baseline = withTimeout(2000) { hooks.outputStats(baseline = true) }
+        hooks.startOutputCapture()
+        try {
+            return withTimeout(5000) {
+                fixture("/fixture/output/$id", body = JSONObject().put("reset", true).put("sampleRate", 48000)
+                    .put("firstFrame", 0).put("pcm16", "").put("stats", baseline))
+                var peer: JSONObject
+                do {
+                    delay(100)
+                    val stats = hooks.outputStats()
+                    val (first, bytes) = hooks.drainOutput()
+                    peer = fixture("/fixture/output/$id", body = JSONObject().put("sampleRate", 48000)
+                        .put("firstFrame", first).put("pcm16", Base64.getEncoder().encodeToString(bytes)).put("stats", stats))
+                    assertTrue(peer.isNull("error")); assertTrue(peer.getBoolean("running"))
+                    record(peer)
+                } while (peer.getLong("cleanCyclesWithPostRoll") < 1)
+                peer
+            }
+        } finally { hooks.stopOutputCapture() }
     }
 
     private suspend fun silenceWithLiveDecodedAudio(hooks: EmulatorMediaHooks): EmulatorMediaHooks.Observation {
@@ -119,6 +158,7 @@ class MediaHookFeasibilityTest {
             var pipeline = "unobserved"
             var caught: Throwable? = null
             var apmMonitor: Job? = null
+            val evidence = JSONObject().put("captureRate", rate).put("profile", "tones-v2")
             fun present() = (engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id }
             suspend fun stage(kind: NativeMediaStage) = withTimeout(10_000) {
                 while (signals.none { it.stage == kind }) delay(10)
@@ -192,6 +232,11 @@ class MediaHookFeasibilityTest {
                 silenceWithLiveDecodedAudio(hooks)
                 assertFalse(signals.any { it.stage == NativeMediaStage.CAPTURE_BEFORE_AUTHORITY ||
                     it.stage == NativeMediaStage.CAPTURE_STARTED || it.stage == NativeMediaStage.OUTPUT_BEFORE_AUTHORITY })
+                peer = fixture("/fixture/markers/$id")
+                healthy(peer, generation)
+                assertTrue(peer.getBoolean("muted")); assertTrue(publication.muted)
+                assertEquals("A muted publication must never leak a raw marker", 0L, peer.getLong("markers"))
+                evidence.put("mutedPublication", peer)
 
                 step = "answer"
                 engine.join(id); stage(NativeMediaStage.CONNECTED)
@@ -210,10 +255,13 @@ class MediaHookFeasibilityTest {
                 hooks.trace.phase = "answered"
                 fixture("/fixture/markers/$id", reset = true)
                 val answered = peerAudio(id, generation)
+                evidence.put("fromDevice", answered)
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                     putString("tonesV2", answered.put("captureRate", hooks.captureSampleRate).toString())
                 })
                 assertSame(publication, hooks.publicationIdentity()); assertFalse(publication.muted)
+                step = "answered output"
+                outputAudio(id, hooks) { evidence.put("toDevice", it) }
                 hooks.beginPhase()
                 withTimeout(3000) { while (hooks.decoded().tones < 5 || hooks.output().tones < 5) delay(10) }
 
@@ -225,6 +273,10 @@ class MediaHookFeasibilityTest {
                     fixture("/fixture/markers/$id", reset = true)
                     val rejected = runCatching { peerAudio(id, generation, 3100) }.exceptionOrNull()
                     assertTrue("$stimulus must fail the far-end audio assertion", rejected is TimeoutCancellationException)
+                    val rejectedPeer = fixture("/fixture/markers/$id")
+                    healthy(rejectedPeer, generation)
+                    assertEquals("$stimulus must not produce a raw marker, even with impaired transport", 0L, rejectedPeer.getLong("markers"))
+                    evidence.put(stimulus.name, rejectedPeer)
                 }
                 hooks.stimulus = EmulatorMediaHooks.Stimulus.MARKER
                 hooks.trace.phase = "restored"
@@ -257,6 +309,7 @@ class MediaHookFeasibilityTest {
                 stage(NativeMediaStage.CLOSED)
             } catch (error: Throwable) {
                 caught = error
+                runCatching { evidence.put("fromDevice", fixture("/fixture/markers/$id")) }
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                     putString("tonesV2Failure", runCatching { fixture("/fixture/markers/$id").put("captureRate", hooks.captureSampleRate).toString() }.getOrDefault("unavailable"))
                     putString("mediaHookFailure", "step=$step, error=$error, signals=${signals.map { it.stage }}")
@@ -268,6 +321,8 @@ class MediaHookFeasibilityTest {
             } finally {
                 apmMonitor?.cancel()
                 try {
+                    context.filesDir.resolve("media-hook-results.json").writeText(evidence.put("step", step)
+                        .put("passed", caught == null).put("pipeline", pipeline).toString())
                     context.filesDir.resolve("capture-trace.json").writeText(hooks.trace.snapshot().toString())
                     InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                         putString("captureTraceFile", "capture-trace.json")

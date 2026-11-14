@@ -12,6 +12,7 @@ import { test } from "node:test";
 
 import {
   runNativeMediaJourney,
+  runNativeMediaFeasibility,
   type Command,
   type Execute,
 } from "./run-native-media-journey.ts";
@@ -37,7 +38,7 @@ test("runs the complete functional suite once and checks all four results", () =
   const f = fixture();
   try {
     runNativeMediaJourney(f.output, f.run);
-    assert.equal(f.calls.length, 12);
+    assert.equal(f.calls.length, 14);
     assert.deepEqual(f.calls[0], {
       program: "gradle",
       args: [
@@ -84,16 +85,22 @@ test("runs the complete functional suite once and checks all four results", () =
         timeout: 15_000,
       });
     }
-    assert.equal(readdirSync(f.output).length, 4);
+    assert.equal(readdirSync(f.output).length, 6);
     assert.deepEqual(f.calls.slice(9), [
       { program: "node", args: ["--test", "tools/native-media-marker.test.ts"], timeout: 30_000 },
       { program: "gradle", args: [
         "-p", "android/instrumentation", ":connectedEmulatorTestAndroidTest", "-PmediaTestBuildType=emulatorTest",
+        "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
         "-Pandroid.testInstrumentationRunnerArguments.class=expo.modules.callkittelecom.conversations.MediaHookFeasibilityTest,expo.modules.callkittelecom.conversations.MediaTestIsolationTest",
         "--no-daemon", "--max-workers=2", "--stacktrace",
       ], timeout: 300_000 },
+      ...["media-hook-results", "capture-trace"].map((name) => ({
+        program: "adb", args: ["exec-out", "run-as", "expo.modules.callkittelecom.instrumentation", "cat", `files/${name}.json`],
+        timeout: 15_000, capture: true,
+      })),
       { program: "gradle", args: [
         "-p", "android/instrumentation", ":connectedReleaseAndroidTest", "-PmediaTestBuildType=release",
+        "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
         "-Pandroid.testInstrumentationRunnerArguments.class=expo.modules.callkittelecom.conversations.MediaTestIsolationTest",
         "--no-daemon", "--max-workers=2", "--stacktrace",
       ], timeout: 300_000 },
@@ -113,11 +120,33 @@ for (const build of ["EmulatorTest", "Release"])
         if (command.args.includes(`:connected${build}AndroidTest`)) throw failure;
         return result;
       }), (error) => error === failure);
-      assert.equal(readdirSync(f.output).length, 4);
+      assert.equal(readdirSync(f.output).length, 6);
       assert.equal(f.calls.filter((command) => command.program === "gradle").length,
         build === "EmulatorTest" ? 2 : 3);
     } finally { f.close(); }
   });
+
+test("functional-only execution does not start the isolated media qualification", () => {
+  const f = fixture();
+  try {
+    runNativeMediaJourney(f.output, f.run, false);
+    assert.equal(f.calls.filter(command => command.program === "gradle").length, 1);
+    assert.equal(readdirSync(f.output).length, 4);
+  } finally { f.close(); }
+});
+
+test("qualification preserves its original failure when capture diagnostics are unavailable", () => {
+  const f = fixture();
+  const failure = new Error("qualification failed");
+  try {
+    assert.throws(() => runNativeMediaFeasibility(f.output, command => {
+      f.run(command);
+      if (command.program === "gradle") throw failure;
+      if (command.program === "adb") throw new Error("missing diagnostic");
+      return "";
+    }), error => error === failure);
+  } finally { f.close(); }
+});
 
 test("a failed real-fixture marker control remains fatal and retains ordinary results", () => {
   const f = fixture();

@@ -86,7 +86,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
                     NativeMediaSignals.emit(serverId, NativeMediaStage.REMOTE_TRACK_AVAILABLE, mapOf("role" to 2L))
                     tracks += track; track.enabled = true
                     track.addSink(probe.decoderSink); track.addSink(probe.answerSink); track.addSink(decode)
-                    audioHooks?.let { track.addSink(it.decodedSink) }
+                    audioHooks?.let { track.addSink(it.decodedSink); it.subscribed(track) }
                     remoteTrackReady.complete(Unit)
                 }
                 is RoomEvent.TrackUnsubscribed -> (event.track as? RemoteAudioTrack)?.let { track ->

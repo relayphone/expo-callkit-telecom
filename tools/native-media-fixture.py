@@ -1,6 +1,8 @@
 """CI-only TLS signaling proxy, credential endpoint and real LiveKit PCM publisher."""
 import asyncio
+import base64
 import datetime
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -27,6 +29,7 @@ closed_negotiations = set()
 terminal_gates = {}
 terminal_times = {}
 uplinks = {}
+downlinks = {}
 uplink_tasks = set()
 
 
@@ -82,6 +85,8 @@ class MarkerObservation:
         self.frequencies = TonesV2Signal(identity, self.rate).frequencies
         self.running = True
         self.error = None
+        self.track = None
+        self.saved = 0
         self.epoch = 0
         self.reset()
 
@@ -90,7 +95,11 @@ class MarkerObservation:
         self.frames = 0
         self.pcm = []
         self.analyzed = 0
+        self.saved = 0
+        self.analysis_pcm = []
+        self.analysis_result = None
         self.detections = []
+        self.cycles = []
         self.started_ns = time.monotonic_ns()
         self.arrivals = []
         self.stats = []
@@ -130,18 +139,22 @@ class MarkerObservation:
         best = None
         cap_rejected = None
         detections = []
-        candidate = None
-        search_end = None
-        for offset in range(0, max(0, len(pcm) - length + 1), rate // 1000):
-            if candidate is not None and offset > search_end:
-                detections.append(candidate)
-                candidate = None
-            if detections and offset < detections[-1][3][-1] + slot_samples:
-                continue
+        cycles = []
+        offset = 0
+        step = rate // 1000
+        while offset + length <= len(pcm):
             starts = [offset]
             slots = [confidence(offset + window, frequencies[0])]
             if slots[0] < .8:
+                offset += step
                 continue
+            search_end = offset + slot_samples
+            # Fix the sync anchor before later slots: a failed cap must never slide slot zero.
+            for alternative in range(offset + step, min(search_end, len(pcm) - length) + 1, step):
+                score = confidence(alternative + window, frequencies[0])
+                if score > slots[0] + epsilon:
+                    starts[0], slots[0] = alternative, score
+            offset = starts[0]
             for index, frequency in enumerate(frequencies[1:], 1):
                 expected = starts[-1] + slot_samples
                 start, score = expected, -1
@@ -156,29 +169,27 @@ class MarkerObservation:
                 slots.append(score)
             minimum = min(slots)
             item = (minimum, offset, slots, starts)
-            if starts[-1] + slot_samples > len(pcm):
-                continue
-            if abs(starts[-1] - offset - 11 * slot_samples) > cap:
+            complete = starts[-1] + slot_samples <= len(pcm)
+            in_cap = abs(starts[-1] - offset - 11 * slot_samples) <= cap
+            if complete:
+                cycles.append(item)
+            if not in_cap:
                 if minimum >= .8 and (cap_rejected is None or minimum > cap_rejected[0] + epsilon):
                     cap_rejected = item
-                continue
-            if best is None or minimum > best[0] + epsilon:
+            if complete and in_cap and (best is None or minimum > best[0] + epsilon):
                 best = item
-            if minimum >= .8:
-                if candidate is None:
-                    search_end = offset + slot_samples
-                if candidate is None or minimum > candidate[0] + epsilon:
-                    candidate = item
-            if candidate is not None and offset >= search_end:
-                detections.append(candidate)
-                candidate = None
-        if candidate is not None:
-            detections.append(candidate)
+            if complete and in_cap and minimum >= .8:
+                detections.append(item)
+                offset = starts[-1] + slot_samples
+            else:
+                offset = search_end + step
         chosen = detections[0] if detections else best
         def receipt(item):
             minimum, offset, values, starts = item
             return {"offsetSamples": offset, "endSamples": starts[-1] + slot_samples,
                     "minimumConfidence": minimum,
+                    "syncComplete": min(values[:4]) >= .8,
+                    "insideDriftCap": abs(starts[-1] - offset - 11 * slot_samples) <= cap,
                     "slots": [{"index": index, "frequencyHz": frequency, "confidence": score, "margin": score - .8,
                                "startSamples": start, "driftSamples": start - offset - index * slot_samples,
                                "driftMs": (start - offset - index * slot_samples) * 1000 / rate}
@@ -186,6 +197,7 @@ class MarkerObservation:
         return {"markers": len(detections), "detectionOffsets": [item[1] for item in detections], "minimumConfidence": chosen[0] if chosen else None,
                 "offsetSamples": chosen[1] if chosen else None,
                 "slots": receipt(chosen)["slots"] if chosen else [], "detections": [receipt(item) for item in detections],
+                "cycles": [receipt(item) for item in cycles],
                 "driftCapRejected": receipt(cap_rejected) if cap_rejected else None}
 
     async def measure(self):
@@ -199,6 +211,18 @@ class MarkerObservation:
             if epoch == self.epoch:
                 self.analyzed = frames
                 base = frames - len(pcm)
+                self.analysis_pcm = pcm
+                self.analysis_result = {**result, "windowStartSamples": base, "windowEndSamples": frames}
+                for item in result["cycles"]:
+                    absolute = {**item, "offsetSamples": base + item["offsetSamples"], "endSamples": base + item["endSamples"],
+                                "slots": [{**slot, "startSamples": base + slot["startSamples"]} for slot in item["slots"]]}
+                    previous = next((cycle for cycle in self.cycles if abs(cycle["offsetSamples"] - absolute["offsetSamples"]) < 2880), None)
+                    if previous is None:
+                        if len(self.cycles) >= 128:
+                            raise ValueError("Phase cycle limit exceeded")
+                        self.cycles.append(absolute)
+                    elif absolute["minimumConfidence"] > previous["minimumConfidence"] + 1e-12:
+                        previous.update(absolute)
                 for item in result["detections"]:
                     start = base + item["offsetSamples"]
                     end = base + item["endSamples"]
@@ -213,40 +237,77 @@ class MarkerObservation:
                 self.evidence["markers"] = len(self.detections)
                 # The guarded detector can place onset 20 ms early; preserve the full 150 ms tail.
                 self.evidence["markersWithPostRoll"] = sum(item["endSamples"] + 8160 <= frames for item in self.detections)
-        phase = []
-        for item in self.detections:
+        def transport(item):
             before = next((sample for sample in reversed(self.stats) if sample["frame"] <= item["offsetSamples"] and sample["inbound"]), None)
-            after = next((sample for sample in self.stats if sample["frame"] >= item["endSamples"] and sample["inbound"]), None)
+            after = next((sample for sample in self.stats if sample.get("fromFrame", sample["frame"]) >= item["endSamples"] and sample["inbound"]), None)
             delta = None if before is None or after is None else {
                 name: after["inbound"][0][name] - before["inbound"][0][name]
                 if before["inbound"][0][name] is not None and after["inbound"][0][name] is not None else None
                 for name in ("inserted_samples_for_deceleration", "removed_samples_for_acceleration", "concealed_samples", "packets_lost")}
-            phase.append({**item, "receiveStats": {"beforeFrame": before["frame"] if before else None,
-                                                  "afterFrame": after["frame"] if after else None, "delta": delta}})
+            timeline = [] if before is None or after is None else self.stats[self.stats.index(before):self.stats.index(after) + 1]
+            known = delta is not None and all(value is not None and value >= 0 for value in delta.values()) and all(
+                sample["inbound"] and all(sample["inbound"][0][name] is not None for name in delta) for sample in timeline)
+            # packets_lost can fall again after late recovery. Never erase a sampled loss spike.
+            peak = None if before is None or after is None else {
+                name: max((sample["inbound"][0][name] - before["inbound"][0][name]
+                    for sample in timeline
+                    if sample["inbound"] and sample["inbound"][0][name] is not None), default=0)
+                if before["inbound"][0][name] is not None else None
+                for name in ("concealed_samples", "packets_lost")}
+            increases = {name: sum(max(0, second["inbound"][0][name] - first["inbound"][0][name])
+                for first, second in zip(timeline, timeline[1:]) if first["inbound"] and second["inbound"] and
+                first["inbound"][0][name] is not None and second["inbound"][0][name] is not None)
+                for name in ("concealed_samples", "packets_lost")}
+            impaired = any(value > 0 for value in increases.values()) or (
+                peak is not None and any(value is not None and value > 0 for value in peak.values()))
+            return {"beforeFrame": before["frame"] if before else None,
+                    "afterFrame": after["frame"] if after else None, "delta": delta,
+                    "maximumIncrease": peak,
+                    "positiveIncreases": increases,
+                    "status": "impaired" if impaired else "clean" if known else "unknown"}
+        phase = [{**item, "receiveStats": transport(item)} for item in self.detections]
         self.evidence["phaseDetections"] = phase
+        self.evidence["cycles"] = [{**item, "receiveStats": transport(item)} for item in self.cycles]
+        self.evidence["cleanCyclesWithPostRoll"] = sum(item["endSamples"] + 8160 <= self.frames and
+            item["receiveStats"]["status"] == "clean" for item in phase)
+        self.evidence["firstCleanCycle"] = next((item for item in sorted(phase, key=lambda item: item["offsetSamples"])
+            if item["endSamples"] + 8160 <= self.frames and item["receiveStats"]["status"] == "clean"), None)
+        if directory is not None and self.identity.startswith("hooks-") and self.analyzed:
+            evidence = directory / "media-evidence" / (hashlib.sha256(self.identity.encode()).hexdigest()[:16] + "-" + str(self.epoch))
+            evidence.mkdir(parents=True, exist_ok=True)
+            (evidence / "cycles.json").write_text(json.dumps(self.evidence))
+            if self.saved < self.analyzed:
+                (evidence / (str(self.analyzed) + ".pcm16le")).write_bytes(struct.pack("<" + str(len(self.analysis_pcm)) + "h", *self.analysis_pcm))
+                (evidence / (str(self.analyzed) + ".json")).write_text(json.dumps(self.analysis_result))
+            self.saved = self.analyzed
         return {**self.evidence, "receiveClock": "host.monotonic_ns", "arrivals": self.arrivals,
                 "rtc": self.stats, "statsError": self.stats_error, "diagnosticsOverflow": self.diagnostics_overflow}
+
+    @staticmethod
+    def inbound_reports(reports):
+        values = []
+        for report in reports:
+            if report.HasField("inbound_rtp"):
+                item = report.inbound_rtp
+                counters = {name: getattr(item.inbound, name) if item.inbound.HasField(name) else None
+                            for name in ("total_samples_received", "concealed_samples", "silent_concealed_samples",
+                                         "concealment_events", "inserted_samples_for_deceleration",
+                                         "removed_samples_for_acceleration", "jitter_buffer_delay",
+                                         "jitter_buffer_emitted_count", "packets_discarded")}
+                counters.update({name: getattr(item.received, name) if item.received.HasField(name) else None
+                                 for name in ("packets_received", "packets_lost", "jitter")})
+                values.append(counters)
+        return values
 
     async def poll_stats(self, track):
         while True:
             epoch = self.epoch
+            first_frame = self.frames
             try:
-                reports = await asyncio.wait_for(track.get_stats(), 2)
-                values = []
-                for report in reports:
-                    if report.HasField("inbound_rtp"):
-                        item = report.inbound_rtp
-                        counters = {name: getattr(item.inbound, name) if item.inbound.HasField(name) else None
-                                    for name in ("total_samples_received", "concealed_samples", "silent_concealed_samples",
-                                                 "concealment_events", "inserted_samples_for_deceleration",
-                                                 "removed_samples_for_acceleration", "jitter_buffer_delay",
-                                                 "jitter_buffer_emitted_count", "packets_discarded")}
-                        counters.update({name: getattr(item.received, name) if item.received.HasField(name) else None
-                                         for name in ("packets_received", "packets_lost", "jitter")})
-                        values.append(counters)
+                values = self.inbound_reports(await asyncio.wait_for(track.get_stats(), 2))
                 if epoch == self.epoch:
                     if len(self.stats) < 128:
-                        self.stats.append({"atNs": time.monotonic_ns() - self.started_ns,
+                        self.stats.append({"atNs": time.monotonic_ns() - self.started_ns, "fromFrame": first_frame,
                                            "frame": self.frames, "inbound": values})
                     else:
                         self.diagnostics_overflow = True
@@ -257,6 +318,7 @@ class MarkerObservation:
 
     async def receive(self, track):
         stream = None
+        self.track = track
         stats_task = asyncio.create_task(self.poll_stats(track)) if track is not None and self.identity.startswith("hooks-") else None
         try:
             stream = rtc.AudioStream(track, sample_rate=self.rate, num_channels=1)
@@ -470,7 +532,15 @@ async def markers(request):
     if observation is None:
         return web.json_response({"running": False, "frames": 0, "markers": 0})
     if request.method == "POST":
+        baseline, error = [], None
+        if observation.track is not None:
+            try:
+                baseline = observation.inbound_reports(await asyncio.wait_for(observation.track.get_stats(), 2))
+            except Exception as failure:
+                error = type(failure).__name__
         observation.reset()
+        observation.stats_error = error
+        observation.stats.append({"fromFrame": 0, "frame": 0, "inbound": baseline})
     room = bots[room_name][0]
     publications = [publication for participant in room.remote_participants.values()
                     if participant.identity.startswith("device-")
@@ -480,6 +550,36 @@ async def markers(request):
                              "generation": observation.generation,
                              **(await observation.measure()), "error": observation.error,
                              "muted": bool(publications) and all(p.muted for p in publications)})
+
+
+async def device_output(request):
+    """Score actual post-mute output PCM and subscriber counters from the emulator-only tap."""
+    if not authenticated(request):
+        return web.Response(status=401)
+    server_id = request.match_info["server_id"]
+    if not server_id.startswith("hooks-"):
+        return web.Response(status=400)
+    body = await request.json()
+    if body.get("reset") is True:
+        downlinks[server_id] = MarkerObservation(server_id + ":toDevice")
+    observation = downlinks.get(server_id)
+    if observation is None or body.get("sampleRate") != 48000 or body.get("firstFrame") != observation.frames:
+        return web.Response(status=400)
+    data = base64.b64decode(body.get("pcm16", ""), validate=True)
+    if len(data) % 2 or len(data) > 48000:
+        return web.Response(status=400)
+    values = struct.unpack("<" + str(len(data) // 2) + "h", data)
+    observation.frames += len(values)
+    observation.pcm.extend(values)
+    del observation.pcm[:max(0, len(observation.pcm) - 144000)]
+    sample = body["stats"]
+    if not 0 <= sample["fromFrame"] <= sample["frame"] <= observation.frames or len(observation.stats) >= 128:
+        return web.Response(status=400)
+    observation.stats.append({"fromFrame": sample["fromFrame"], "frame": sample["frame"],
+                              "inbound": [{name: sample["counters"].get(name) for name in (
+                                  "inserted_samples_for_deceleration", "removed_samples_for_acceleration", "concealed_samples", "packets_lost")}]})
+    return web.json_response({"running": True, "error": None, "frames": observation.frames,
+                              "generation": observation.generation, **(await observation.measure())})
 
 
 async def raw_signaling(request):
@@ -588,6 +688,7 @@ if __name__ == "__main__":
     app.router.add_get("/fixture/invitation/{server_id}", invitation)
     app.router.add_get("/fixture/observations/{server_id}", observations)
     app.router.add_route("*", "/fixture/markers/{server_id}", markers)
+    app.router.add_post("/fixture/output/{server_id}", device_output)
     app.router.add_post("/v1/calls/{server_id}/media-credentials", media_credentials)
     app.router.add_post("/fixture/webrtc/{server_id}", raw_signaling)
     app.router.add_route("*", "/{rest:.*}", proxy)

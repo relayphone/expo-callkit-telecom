@@ -5,12 +5,14 @@ import android.media.AudioFormat
 import android.os.SystemClock
 import io.livekit.android.audio.AudioBufferCallback
 import io.livekit.android.room.track.LocalTrackPublication
+import io.livekit.android.room.track.RemoteAudioTrack
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.CRC32
+import org.json.JSONObject
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -54,6 +56,12 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
         private set
     val recordinglessCallbacks = AtomicLong()
     @Volatile private var publication: LocalTrackPublication? = null
+    @Volatile private var remoteTrack: RemoteAudioTrack? = null
+    private val outputLock = Any()
+    private val outputPcm = ShortArray(48000 * 6)
+    private var outputFrames = 0
+    private var drainedFrames = 0
+    private var captureOutput = false
     val directArrayVerified: Boolean
 
     init {
@@ -78,6 +86,31 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     fun decoded(): Observation { available(); return decoded.get().snapshot() }
     fun output(): Observation { available(); return output.get().snapshot() }
     fun observeOutput(enabled: Boolean) { observingOutput.set(enabled) }
+    fun startOutputCapture() = synchronized(outputLock) {
+        available(); outputFrames = 0; drainedFrames = 0; captureOutput = true
+    }
+    fun stopOutputCapture() = synchronized(outputLock) { captureOutput = false }
+    private fun capturedOutputFrames() = synchronized(outputLock) { outputFrames }
+    fun drainOutput(): Pair<Int, ByteArray> = synchronized(outputLock) {
+        available()
+        val count = outputFrames - drainedFrames
+        check(count <= 24000) { "Output capture consumer fell behind" }
+        val first = drainedFrames
+        val bytes = ByteBuffer.allocate(count * 2).order(ByteOrder.LITTLE_ENDIAN)
+        while (drainedFrames < outputFrames) bytes.putShort(outputPcm[drainedFrames++])
+        first to bytes.array()
+    }
+    suspend fun outputStats(baseline: Boolean = false): JSONObject {
+        val first = if (baseline) 0 else capturedOutputFrames()
+        val reports = checkNotNull(remoteTrack) { "Missing remote track" }.getRTCStats()?.statsMap?.values
+        val report = reports?.singleOrNull { it.type == "inbound-rtp" &&
+            (it.members["kind"] == "audio" || it.members["mediaType"] == "audio") }
+        val names = mapOf("packets_lost" to "packetsLost", "concealed_samples" to "concealedSamples",
+            "inserted_samples_for_deceleration" to "insertedSamplesForDeceleration",
+            "removed_samples_for_acceleration" to "removedSamplesForAcceleration")
+        return JSONObject().put("fromFrame", first).put("frame", if (baseline) 0 else capturedOutputFrames())
+            .put("counters", JSONObject(names.mapValues { (_, field) -> report?.members?.get(field) ?: JSONObject.NULL }))
+    }
     private fun available() { failure.get()?.let { throw MediaHookUnavailable(it) }; check(!closed.get()) }
 
     override val decodedSink = object : AudioTrackSink {
@@ -148,10 +181,26 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
             if (samples.audioFormat != AudioFormat.ENCODING_PCM_16BIT) failure.set(MediaHookFailure.UNSUPPORTED_PCM)
             else if (observingOutput.get()) observe(output.get(),
                 ByteBuffer.wrap(samples.data).order(ByteOrder.nativeOrder()), samples.sampleRate, samples.channelCount)
+            if (observingOutput.get()) synchronized(outputLock) {
+                if (captureOutput) {
+                    if (samples.sampleRate != 48000 || samples.channelCount !in 1..2 ||
+                        samples.audioFormat != AudioFormat.ENCODING_PCM_16BIT) failure.set(MediaHookFailure.UNSUPPORTED_PCM)
+                    else {
+                        val pcm = ByteBuffer.wrap(samples.data).order(ByteOrder.nativeOrder())
+                        while (pcm.remaining() >= samples.channelCount * 2) {
+                            val value = pcm.short
+                            repeat(samples.channelCount - 1) { pcm.short }
+                            if (outputFrames == outputPcm.size) { failure.set(MediaHookFailure.OUTPUT_TAP_UNAVAILABLE); break }
+                            outputPcm[outputFrames++] = value
+                        }
+                    }
+                }
+            }
         }
     }
 
     override fun published(publication: LocalTrackPublication) { this.publication = publication }
+    override fun subscribed(track: RemoteAudioTrack) { remoteTrack = track }
     fun publicationIdentity() = checkNotNull(publication)
 
     private fun observe(window: Window, pcm: ByteBuffer, rate: Int, channels: Int) {
@@ -187,6 +236,8 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         publication = null
+        remoteTrack = null
+        stopOutputCapture()
     }
 
     private companion object {

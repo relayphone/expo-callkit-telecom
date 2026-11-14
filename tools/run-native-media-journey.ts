@@ -30,7 +30,8 @@ const checks = [
 /** Runs the functional suite once and retains available media evidence on failure. */
 export function runNativeMediaJourney(
   output = "android/instrumentation/build",
-  run: Execute = execute
+  run: Execute = execute,
+  qualifyHooks = true
 ): void {
   mkdirSync(output, { recursive: true });
   const saved = new Set<string>();
@@ -73,24 +74,7 @@ export function runNativeMediaJourney(
         timeout: 15_000,
       });
     }
-    run({ program: "node", args: ["--test", "tools/native-media-marker.test.ts"], timeout: 30_000 });
-    // Keep the ordinary journeys unchanged, then qualify the isolated hooks and a real Release refusal.
-    for (const [build, classes] of [
-      ["EmulatorTest", "MediaHookFeasibilityTest,MediaTestIsolationTest"],
-      ["Release", "MediaTestIsolationTest"],
-    ] as const) {
-      run({
-        program: "gradle",
-        args: [
-          "-p", "android/instrumentation", `:connected${build}AndroidTest`,
-          `-PmediaTestBuildType=${build.charAt(0).toLowerCase()}${build.slice(1)}`,
-          `-Pandroid.testInstrumentationRunnerArguments.class=${classes.split(",")
-            .map((name) => `expo.modules.callkittelecom.conversations.${name}`).join(",")}`,
-          "--no-daemon", "--max-workers=2", "--stacktrace",
-        ],
-        timeout: 5 * 60_000,
-      });
-    }
+    if (qualifyHooks) runNativeMediaFeasibility(output, run);
   } finally {
     for (const [name] of checks.slice(1)) {
       if (!saved.has(name)) {
@@ -104,4 +88,40 @@ export function runNativeMediaJourney(
   }
 }
 
-if (import.meta.main) runNativeMediaJourney();
+/** Qualifies isolated software audio on its own CI emulator and retains failures before Release reinstalls. */
+export function runNativeMediaFeasibility(output = "android/instrumentation/build", run: Execute = execute): void {
+  mkdirSync(output, { recursive: true });
+  for (const name of ["media-hook-results", "capture-trace"]) rmSync(join(output, `${name}.json`), {force: true});
+  run({ program: "node", args: ["--test", "tools/native-media-marker.test.ts"], timeout: 30_000 });
+  for (const [build, classes] of [
+    ["EmulatorTest", "MediaHookFeasibilityTest,MediaTestIsolationTest"],
+    ["Release", "MediaTestIsolationTest"],
+  ] as const) {
+    let failure: unknown;
+    try {
+      run({ program: "gradle", args: [
+        "-p", "android/instrumentation", `:connected${build}AndroidTest`,
+        `-PmediaTestBuildType=${build.charAt(0).toLowerCase()}${build.slice(1)}`,
+        "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
+        `-Pandroid.testInstrumentationRunnerArguments.class=${classes.split(",")
+          .map((name) => `expo.modules.callkittelecom.conversations.${name}`).join(",")}`,
+        "--no-daemon", "--max-workers=2", "--stacktrace",
+      ], timeout: 5 * 60_000 });
+    } catch (error) { failure = error; throw error; }
+    finally {
+      if (build === "EmulatorTest") for (const name of ["media-hook-results", "capture-trace"]) {
+        try {
+          const contents = run({ program: "adb", args: ["exec-out", "run-as", app, "cat", `files/${name}.json`],
+            timeout: 15_000, capture: true });
+          JSON.parse(contents);
+          writeFileSync(join(output, `${name}.json`), contents);
+        } catch (error) { if (failure === undefined) throw error; }
+      }
+    }
+  }
+}
+
+if (import.meta.main) {
+  if (process.argv.includes("--feasibility-only")) runNativeMediaFeasibility();
+  else runNativeMediaJourney(undefined, undefined, !process.argv.includes("--functional-only"));
+}

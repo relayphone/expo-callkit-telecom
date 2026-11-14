@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Features
+
+* **android:** add isolated emulator-test media hooks for canonical tones-v2
+  capture injection, decoded sinks and verified post-mute output observation.
+  Dedicated Ubuntu/KVM CI qualifies the first clean complete cycle at 48 kHz,
+  retaining slot drift and transport-impairment evidence for both directions.
+
 ## 2.0.0-alpha.6 (2026-11-13)
 
 ### Changed
