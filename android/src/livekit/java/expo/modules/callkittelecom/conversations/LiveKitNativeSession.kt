@@ -33,9 +33,11 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     @Volatile private var closed = false
     private var failed: () -> Unit = {}
     private var disconnected: (NativeMediaDisconnection) -> Unit = { failed() }
+    @Volatile private var connectionChanged: (NativeMediaConnection) -> Unit = {}
     private var connection: NativeRoomConnection? = null
     override fun setFailureListener(listener: () -> Unit) { failed = listener }
     override fun setDisconnectListener(listener: (NativeMediaDisconnection) -> Unit) { disconnected = listener }
+    override fun setConnectionListener(listener: (NativeMediaConnection) -> Unit) { connectionChanged = listener }
     private var pcm = NativePcmProbe(invitationId)
     private var decoded = NativeDecodedAudioReadiness()
     private var warmth = NativeWarmAudio(invitationId)
@@ -102,7 +104,10 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             }
         } }
         connection?.close()
-        val observation = NativeRoomConnection(scope, { stage, reason -> NativeMediaSignals.emit(serverId, stage, reason = reason) }, { reason ->
+        val observation = NativeRoomConnection(scope, { stage, reason ->
+            stage.connection()?.let { connectionChanged(it) }
+            NativeMediaSignals.emit(serverId, stage, reason = reason)
+        }, { reason ->
             if (!closed && room === candidate) {
                 room = null; transportJobs.forEach { it.cancel() }; collector.cancel()
                 probe.close(); decode.close(); heat.close()

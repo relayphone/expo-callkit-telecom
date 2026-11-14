@@ -5,8 +5,8 @@ and this package's Android provider. The former upstream device matrix does not
 qualify this implementation. Its historical copy is preserved on
 [archive/android-telecom-research](https://github.com/relayphone/expo-callkit-telecom/blob/archive/android-telecom-research/docs/verified-against.md).
 
-The SDK dependency is the [v0.4.0 release](https://github.com/relayphone/ios-voip-sdk/releases/tag/v0.4.0),
-consumed from its `relayphone-ios-voip-sdk-0.4.0.tgz` asset and checked against the
+The SDK dependency is the [v0.5.0 release](https://github.com/relayphone/ios-voip-sdk/releases/tag/v0.5.0),
+consumed from its `relayphone-ios-voip-sdk-0.5.0.tgz` asset and checked against the
 release's `SHA256SUMS`. [Install the fork and SDK asset together](./sdk-package-evaluation.md).
 
 Current automated checks cover:
@@ -24,5 +24,5 @@ Current automated checks cover:
 Emulator/simulator results do not establish physical-device audio, cloud push
 transport delivery or production latency percentiles. See
 [Getting started](./getting-started.md) and the
-[SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md)
+[SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.5.0/docs/react-native.md)
 for current integration requirements.

@@ -4,10 +4,25 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
 
 class NativeOutputMuteTest {
+    @Test fun stalledPlaybackStillAppliesMuteAndCompletesHold() = runBlocking {
+        var missed = 0
+        val gate = NativeOutputMute { missed++ }
+        gate.playbackStarted()
+        var applications = 0
+        assertEquals(100L, OUTPUT_MUTE_BOUNDARY_WAIT_MILLIS)
+        withTimeout(250) { gate.atPlaybackBoundary { applications++ } }
+        assertEquals(1, applications)
+        assertEquals(1, missed)
+        gate.callbackCompleted()
+        assertEquals("A late callback cannot repeat the fallback", 1, applications)
+        assertEquals(1, missed)
+    }
+
     @Test fun aBufferFilledBeforeHoldFinishesBeforeTheGateCloses() = runBlocking {
         val gate = NativeOutputMute()
         gate.playbackStarted()

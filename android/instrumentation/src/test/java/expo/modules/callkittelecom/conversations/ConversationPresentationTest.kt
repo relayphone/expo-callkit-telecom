@@ -5,6 +5,17 @@ import org.junit.After
 import org.junit.Test
 
 class ConversationPresentationTest {
+    @Test fun reconnectingKeepsConnectedNotificationPriorityAndPresentation() {
+        val roster = CallNotificationRoster()
+        roster.put("first", mapOf("status" to "connected"))
+        roster.put("second", mapOf("status" to "connected"))
+        roster.put("first", mapOf("status" to "reconnecting"))
+        assertEquals("second", roster.plan().primary?.get("id"))
+        assertEquals(2, roster.liveStates().size)
+        roster.remove("second")
+        assertEquals("reconnecting", roster.plan().primary?.get("status"))
+    }
+
     @After fun reset() { ConversationPresentation.configure(null) }
 
     private val defaults = CallNotificationContent(title = "Caller", channelId = "incoming-default")

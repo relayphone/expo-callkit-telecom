@@ -4,9 +4,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeoutOrNull
+
+internal const val OUTPUT_MUTE_BOUNDARY_WAIT_MILLIS = 100L
 
 /** Serializes mute application with the playback callback after its current device write. */
-internal class NativeOutputMute {
+internal class NativeOutputMute(private val boundaryMissed: () -> Unit = {}) {
     private class Request(val owner: Job?, val applyMute: () -> Unit) {
         val applied = CompletableDeferred<Unit>()
     }
@@ -30,7 +33,17 @@ internal class NativeOutputMute {
             check(pending == null) { "Output mute already pending" }
             if (playing) pending = request else apply(request)
         }
-        try { request.applied.await() }
+        try {
+            if (withTimeoutOrNull(OUTPUT_MUTE_BOUNDARY_WAIT_MILLIS) { request.applied.await() } == null) {
+                synchronized(lock) {
+                    if (pending === request) {
+                        pending = null
+                        apply(request, missedBoundary = true)
+                    }
+                }
+                request.applied.await()
+            }
+        }
         finally {
             synchronized(lock) {
                 if (pending === request) pending = null
@@ -47,9 +60,10 @@ internal class NativeOutputMute {
         apply(request)
     }
 
-    private fun apply(request: Request) {
+    private fun apply(request: Request, missedBoundary: Boolean = false) {
         if (!closed && request.owner?.isActive != false && request.applied.isActive) {
             try {
+                if (missedBoundary) runCatching { boundaryMissed() }
                 request.applyMute()
                 request.applied.complete(Unit)
             } catch (error: Exception) { request.applied.completeExceptionally(error) }

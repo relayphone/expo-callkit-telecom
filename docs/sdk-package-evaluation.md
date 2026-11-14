@@ -1,6 +1,6 @@
 # Evaluate the fork with the released SDK
 
-The SDK is consumed from the [v0.4.0 release asset](https://github.com/relayphone/ios-voip-sdk/releases/tag/v0.4.0).
+The SDK is consumed from the [v0.5.0 release asset](https://github.com/relayphone/ios-voip-sdk/releases/tag/v0.5.0).
 Each consuming workflow downloads the SDK tarball and verifies its SHA-256 against that release's
 `SHA256SUMS` before installing the checked-in URL dependency and lockfile. The package evaluation
 workflow also installs the fork tarball together with the SDK URL in a separate consumer. The root package
@@ -32,7 +32,7 @@ To install in an app, first pack the chosen fork checkout with `npm pack`. Insta
 together with the SDK asset, using the actual fork tarball filename:
 
 ```sh
-npm install /path/to/expo-callkit-telecom-0.5.0.tgz https://github.com/relayphone/ios-voip-sdk/releases/download/v0.4.0/relayphone-ios-voip-sdk-0.4.0.tgz
+npm install /path/to/expo-callkit-telecom-2.0.0-alpha.7.tgz https://github.com/relayphone/ios-voip-sdk/releases/download/v0.5.0/relayphone-ios-voip-sdk-0.5.0.tgz
 npx expo install expo-notifications expo-build-properties
 ```
 

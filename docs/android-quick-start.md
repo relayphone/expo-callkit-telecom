@@ -30,8 +30,7 @@ adds no iOS mods and skips the retired Apple integration check. Android options
 work as usual. This lets apps generate their iOS project at prebuild while
 keeping their existing iOS calling setup.
 
-The pinned iOS SDK still needs its next release to load on Expo 58. Until then,
-use `ios: false` on Expo 58 or keep Expo 57 when using the iOS integration.
+The pinned iOS SDK 0.5.0 loads on Expo 57 and 58, including the default `ios: true`.
 
 ## Run the example's signaling journey
 
@@ -213,14 +212,26 @@ system callback echoes. It runs off main with a 3.5 s ceiling, reserving 1.5 s o
 Core-Telecom's 5 s callback budget for settlement. Throws become `handlerFailed`;
 timeouts become `handlerTimedOut`. Use short refusal codes without personal data
 or credentials. Answer refusal fails the callback and ends with `endReason`.
-App hold/mute refusal uses the existing typed `handler_failed` or
-`deadline_exceeded` rejection; disabled hold remains `unsupported`.
+Explicit answer and app hold/mute refusals reject with `refused` and that reason as the message.
+Thrown handlers use `handler_failed`, timeouts use `deadline_exceeded`, and
+disabled hold remains `unsupported`.
 
 System hold/mute are observations of a state the OS already applied. The handler
 is notified, but a refusal is only signalled and the SDK keeps that state.
 Decline/end always disconnect regardless of the result: their handler wait is
 capped at 2.5 s, leaving 0.5 s to request disconnection within 3 s. Late results
 are discarded after signalling the timeout, and are never retried.
+
+Once local End or Decline is accepted, a later server end report, `callEnded` push
+or `ROOM_DELETED` settles that local action immediately without waiting for the
+handler. Its performed event is emitted once and Core receives a LOCAL disconnect.
+Decline keeps public reason `local` and uses `declined` for media cleanup. A remote
+end received before the local action retains its remote reason.
+
+Room recovery publishes `reconnecting` with the original `connectedAt`; recovery
+returns to `connected`, and hold takes precedence. A platform-removal deadline
+adds `platformCallRemaining: true` to an existing failed end without changing its
+reason or failure kind.
 
 `Proceed.media` is used for an answer only when no prewarmed native media session
 exists; an existing prewarmed session ignores it. The native handler does not

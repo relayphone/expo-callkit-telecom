@@ -3,17 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { pathToFileURL } from "node:url";
-
-import {
-  assertSdkImportFailure,
-  inspectPluginProject,
-} from "./plugin-loading.ts";
+import { inspectPluginProject } from "./plugin-loading.ts";
 
 function fixture(
   t: { after(cleanup: () => void): void },
   major: 57 | 58,
-  fault: "none" | "android" | "sdk-required" | "wrong-origin" = "none"
+  fault: "none" | "android" | "sdk-required" | "wrong-origin" | "sdk-import" = "none"
 ) {
   const root = mkdtempSync(join(tmpdir(), "plugin-loading-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -32,8 +27,8 @@ function fixture(
   install("expo", {});
   const sdk = install("@relayphone/ios-voip-sdk", {
     "app.plugin.js":
-      major === 58
-        ? 'require("expo/config-plugins.js");'
+      fault === "sdk-import"
+        ? 'require("unavailable-sdk-module");'
         : "module.exports = config => { config.mods ??= {}; config.mods.ios = { infoPlist: async value => value }; };",
   });
   install("expo-callkit-telecom", {
@@ -41,7 +36,7 @@ function fixture(
       if (options.ios !== false) {
         ${
           fault === "wrong-origin"
-            ? 'require("expo/config-plugins.js");'
+            ? 'require("unavailable-v2-module");'
             : 'require("@relayphone/ios-voip-sdk/app.plugin")(config);'
         }
       } else {
@@ -83,20 +78,20 @@ test("the loading oracle checks both modes on Expo 57", async (t) => {
   });
 });
 
-test("Expo 58 only accepts the default SDK's own missing-import failure", async (t) => {
+test("the loading oracle requires SDK success on Expo 58", async (t) => {
   const { root } = fixture(t, 58);
   assert.deepEqual(await inspectPluginProject(root, 58), {
     expo: "58.0.0",
     androidOnly: "passed",
-    iosDefault: "expected-sdk-failure",
+    iosDefault: "passed",
   });
 });
 
-test("a missing import in v2 cannot be classified as the SDK's expected failure", async (t) => {
+test("a missing import in v2 fails the loading oracle", async (t) => {
   const { root } = fixture(t, 58, "wrong-origin");
   await assert.rejects(
     inspectPluginProject(root, 58),
-    /must originate in the SDK/
+    /unavailable-v2-module/
   );
 });
 
@@ -113,28 +108,7 @@ test("incorrect Android mod results fail even when the plugin loads", async (t) 
   await assert.rejects(inspectPluginProject(root, 57), /livekit/);
 });
 
-test("other SDK errors cannot hide behind the expected Expo 58 failure", () => {
-  const sdk = join(tmpdir(), "sdk");
-  const error = Object.assign(new Error("Missing module"), {
-    code: "MODULE_NOT_FOUND",
-  });
-  const observed = {
-    error,
-    parentURL: pathToFileURL(join(sdk, "app.plugin.js")).href,
-  };
-  assertSdkImportFailure(error, sdk, observed);
-  assert.throws(() =>
-    assertSdkImportFailure(
-      Object.assign(new Error(), { code: "OTHER" }),
-      sdk,
-      observed
-    )
-  );
-  assert.throws(() => assertSdkImportFailure(error, sdk, undefined));
-  assert.throws(() =>
-    assertSdkImportFailure(new Error("Other failure"), sdk, observed)
-  );
-  assert.throws(() =>
-    assertSdkImportFailure(error, `${sdk}-neighbor`, observed)
-  );
+test("SDK import failures are never accepted on Expo 58", async (t) => {
+  const { root } = fixture(t, 58, "sdk-import");
+  await assert.rejects(inspectPluginProject(root, 58), /unavailable-sdk-module/);
 });
