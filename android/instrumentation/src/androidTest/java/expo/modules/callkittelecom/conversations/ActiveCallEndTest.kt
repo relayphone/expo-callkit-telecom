@@ -289,7 +289,7 @@ class ActiveCallEndTest {
         answer()
         val started = SystemClock.elapsedRealtime()
         session.room.emit(NativeRoomState.RECONNECTING)
-        assertEquals("connected", state()?.get("status")); assertNull(terminal)
+        assertEquals("reconnecting", state()?.get("status")); assertNull(terminal)
         removedWithin(started, 3000)
         assertTrue("The real reconnect timer must expire before teardown", SystemClock.elapsedRealtime() - started >= reconnectTimeoutMillis)
         assertEquals("failed", terminal?.get("reason"))
