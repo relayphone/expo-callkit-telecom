@@ -18,7 +18,7 @@ internal fun DisconnectReason.disconnection(): NativeMediaDisconnection = when (
     else -> NativeMediaDisconnection.FAILURE
 }
 
-/** Session-owned connection observation; recovery neither reconnects audio nor changes call status. */
+/** Session-owned room observation; the call owner maps recovery without restarting audio. */
 internal class NativeRoomConnection(
     scope: CoroutineScope,
     private val signal: (NativeMediaStage, String?) -> Unit,

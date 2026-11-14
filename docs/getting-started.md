@@ -3,14 +3,14 @@
 `expo-callkit-telecom` composes `@relayphone/ios-voip-sdk`. The SDK owns the shared
 conversations API and Apple native integration; this package supplies Android
 Core-Telecom and the composed config plugin. The fork's `v2` migration is evaluated
-from a chosen fork checkout and the SDK's v0.4.0 release asset. Follow
+from a chosen fork checkout and the SDK's v0.5.0 release asset. Follow
 [package evaluation](./sdk-package-evaluation.md) to build the fork tarball and
 install it together with the SDK asset; the inherited fork version does not
 identify a published v2 release.
 
 ## Configure the native application
 
-Use the SDK's [React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md)
+Use the SDK's [React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.5.0/docs/react-native.md)
 for shared options, Apple setup and media dependencies. Android also needs
 `expo-notifications`. The SDK release requires Expo 57 or later; Apple builds
 require iOS 26 and Xcode 27.1 or later. Use a native development build, not Expo Go.
@@ -40,7 +40,7 @@ require a rebuilt application.
 ## Use the conversations API
 
 Import runtime functions and hooks from `expo-callkit-telecom`, and types from
-`expo-callkit-telecom/types`. The [SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md)
+`expo-callkit-telecom/types`. The [SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.5.0/docs/react-native.md)
 is the shared API reference. The [fork contract](./canonical-contract.md) describes
 raw call IDs, start placement, native performed actions and Android's limits.
 Report connected only when the transport actually connects.

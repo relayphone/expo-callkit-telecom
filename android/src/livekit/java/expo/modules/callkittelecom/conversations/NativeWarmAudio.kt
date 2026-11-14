@@ -32,7 +32,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
     }
 
     private val closed = AtomicBoolean(false)
-    private val outputMute = NativeOutputMute()
+    private val outputMute = NativeOutputMute { emit(NativeMediaStage.OUTPUT_MUTE_BOUNDARY_MISSED) }
     private val sequence = AtomicLong()
     private val capture = AtomicReference<CaptureEpoch?>(null)
     private val firstCaptureArmNanos = AtomicLong()

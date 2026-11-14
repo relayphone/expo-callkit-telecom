@@ -85,6 +85,6 @@ See [incoming policy](./contracts/android-incoming-policy.md) and the
 
 Use `messageType: "callEnded"` and a JSON-string `callEnded` body, or the host
 `receiveCallEnded` API. See the [Android envelope and ownership contract](./platform-notes.md#ending-a-call-from-the-server)
-and the SDK's [iOS push rules](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/Sources/VoIPCore/VoIPPush%2BDefaultFormat.swift)
+and the SDK's [iOS push rules](https://github.com/relayphone/ios-voip-sdk/blob/v0.5.0/Sources/VoIPCore/VoIPPush%2BDefaultFormat.swift)
 for when a VoIP push is appropriate. Server-end acceptance does not mean UI
 removal has finished; observe state and correlated events.

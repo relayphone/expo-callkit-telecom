@@ -13,7 +13,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { createRequire, registerHooks } from "node:module";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,31 +112,6 @@ async function checkAndroid(config: ExportedConfig, project: string) {
   );
 }
 
-type ImportFailure = { error: unknown; parentURL: string | undefined };
-
-/** Match the exact failed resolution observed in the SDK, never a similar v2 error. */
-export function assertSdkImportFailure(
-  error: unknown,
-  sdkRoot: string,
-  observed: ImportFailure | undefined
-): void {
-  assert.ok(
-    error instanceof Error && "code" in error,
-    "Expected a Node module-loading error"
-  );
-  assert.equal(error.code, "MODULE_NOT_FOUND");
-  assert.equal(
-    observed?.error,
-    error,
-    "Expected the observed Expo import failure"
-  );
-  assert.ok(
-    observed?.parentURL?.startsWith("file:") &&
-      fileURLToPath(observed.parentURL).startsWith(sdkRoot + sep),
-    "The missing import must originate in the SDK, after the v2 plugin loads"
-  );
-}
-
 /** Load the installed app.plugin.js with this consumer's real Expo dependency. */
 export async function inspectPluginProject(project: string, major: ExpoMajor) {
   const require = createRequire(join(project, "package.json"));
@@ -188,37 +163,7 @@ export async function inspectPluginProject(project: string, major: ExpoMajor) {
   );
   await checkAndroid(androidOnly, project);
 
-  let combined: ExportedConfig;
-  let observed: ImportFailure | undefined;
-  const hooks = registerHooks({
-    resolve(specifier, context, next) {
-      try {
-        return next(specifier, context);
-      } catch (error) {
-        if (specifier === "expo/config-plugins.js")
-          observed = { error, parentURL: context.parentURL };
-        throw error;
-      }
-    },
-  });
-  try {
-    combined = plugin(config(), options);
-  } catch (error) {
-    if (major !== 58) throw error;
-    assertSdkImportFailure(error, sdkRoot, observed);
-    return {
-      expo: expo.version,
-      androidOnly: "passed",
-      iosDefault: "expected-sdk-failure",
-    } as const;
-  } finally {
-    hooks.deregister();
-  }
-  assert.equal(
-    major,
-    57,
-    "The SDK now loads on Expo 58; replace its expected-failure case with success coverage"
-  );
+  const combined: ExportedConfig = plugin(config(), options);
   assert.ok(combined.mods?.ios?.infoPlist, "iOS is enabled by default");
   await checkAndroid(combined, project);
   return {

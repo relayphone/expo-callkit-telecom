@@ -72,11 +72,17 @@ class ConversationMediaTest {
             @Volatile var held = false
             override fun setFailureListener(listener: () -> Unit) { failure = listener }
             override fun setDisconnectListener(listener: (NativeMediaDisconnection) -> Unit) { disconnection = listener }
+            private var connectionChanged: (NativeMediaConnection) -> Unit = {}
+            override fun setConnectionListener(listener: (NativeMediaConnection) -> Unit) { connectionChanged = listener }
+            fun delayedConnection(state: NativeMediaConnection) { connectionChanged(state) }
             fun disconnect() { roomLive = false; failure() }
             override suspend fun prewarm(payload: Map<String, Any?>) {
                 this.payload = payload; entered.complete(Unit); preparationGate?.await()
                 roomLive = true
-                connection = NativeRoomConnection(scope, { stage, reason -> NativeMediaSignals.emit(id, stage, reason = reason) }, { reason ->
+                connection = NativeRoomConnection(scope, { stage, reason ->
+                    stage.connection()?.let { connectionChanged(it) }
+                    NativeMediaSignals.emit(id, stage, reason = reason)
+                }, { reason ->
                     roomLive = false; disconnection(reason?.disconnection() ?: NativeMediaDisconnection.FAILURE)
                 }).also { it.observe(room) }
                 observing.complete(Unit); roomConnectGate?.await()
@@ -227,6 +233,8 @@ class ConversationMediaTest {
         assertEquals("reported", engine.incoming(incoming.payload() + ("media" to grant))["status"])
         stage(NativeMediaStage.ROOM_CONNECTED)
         val old = sessions.single()
+        old.room.emit(NativeRoomState.RECONNECTING); stage(NativeMediaStage.RECONNECTING)
+        assertEquals("ringing", state()?.get("status"))
         old.room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.UNKNOWN_REASON))
         stage(NativeMediaStage.PREWARM_LOST)
         withTimeout(3000) { old.closed.await() }
@@ -244,6 +252,8 @@ class ConversationMediaTest {
         }
         engine.join(id); stage(NativeMediaStage.CONNECTED)
         assertEquals("connected", state()?.get("status"))
+        old.delayedConnection(NativeMediaConnection.RECONNECTING); yield()
+        assertEquals("A retired media session cannot change the replacement's status", "connected", state()?.get("status"))
         assertEquals(2, sessions.size)
         assertEquals(if (source == AnswerCredentials.PUSH) grant else replacement, sessions.last().payload?.get("media"))
         assertEquals(1, sessions.last().activations)
@@ -338,18 +348,34 @@ class ConversationMediaTest {
         } finally { engine.controlObserver = previous }
     }
 
-    @Test fun roomRecoveryPreservesConnectedAndHeldStatusUntilFinalDisconnection() = fixture {
+    @Test fun roomRecoveryPublishesReconnectingWithTheOriginalTimestampAndHoldPrecedence() = fixture {
         start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
+        val connectedAt = state()?.get("connectedAt")
+        val notifications = context.getSystemService(android.app.NotificationManager::class.java)
+        fun card() = notifications.activeNotifications.firstOrNull {
+            it.notification.extras.containsKey(android.app.Notification.EXTRA_CALL_PERSON)
+        }
+        val originalCard = withTimeout(3000) { while (card() == null) delay(10); checkNotNull(card()) }
         val session = sessions.single()
         session.room.emit(NativeRoomState.RECONNECTING); stage(NativeMediaStage.RECONNECTING)
-        assertEquals("connected", state()?.get("status")); assertNull(ended)
+        assertEquals("reconnecting", state()?.get("status")); assertNull(ended)
+        assertEquals(connectedAt, state()?.get("connectedAt"))
+        yield()
+        assertEquals(originalCard.id, card()?.id)
+        assertEquals(originalCard.postTime, card()?.postTime)
+        assertEquals(originalCard.notification.category, card()?.notification?.category)
         session.room.emit(NativeRoomState.RECONNECTED); stage(NativeMediaStage.RECONNECTED)
         assertEquals("connected", state()?.get("status")); assertEquals(1, session.activations)
         engine.hold(id, true)
         session.room.emit(NativeRoomState.RECONNECTING); stage(NativeMediaStage.RECONNECTING, 2)
         assertEquals("held", state()?.get("status")); assertNull(ended)
+        engine.hold(id, false)
+        assertEquals("reconnecting", state()?.get("status"))
+        assertEquals(connectedAt, state()?.get("connectedAt"))
+        engine.hold(id, true)
         session.room.emit(NativeRoomState.RECONNECTED); stage(NativeMediaStage.RECONNECTED, 2)
         assertEquals("held", state()?.get("status"))
+        assertEquals(connectedAt, state()?.get("connectedAt"))
         session.room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.UNKNOWN_REASON))
         removed()
         assertEquals("failed", ended?.get("reason"))
@@ -405,6 +431,23 @@ class ConversationMediaTest {
         assertEquals(1, session.closes)
     }
 
+    @Test fun refusedCommandsPreserveExplicitReasonsAndInternalFailureCodes() = fixture {
+        start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
+        for (reason in listOf("keepActive", "handlerTimedOut", "handlerFailed")) {
+            ConversationActions.configure { ConversationActionResult.Refuse(reason) }
+            val error = runCatching { engine.hold(id, true) }.exceptionOrNull() as Exception
+            val wire = JSONObject(CommandRejection.from(error).encodedMessage.removePrefix("expo-conversation:"))
+            assertEquals("refused", wire.getString("code")); assertEquals(reason, wire.getString("message"))
+            assertEquals("connected", state()?.get("status"))
+        }
+        ConversationActions.configure { error("Private failure") }
+        val thrown = runCatching { engine.hold(id, true) }.exceptionOrNull() as Exception
+        assertEquals("handler_failed", CommandRejection.from(thrown).code)
+        ConversationActions.configure { awaitCancellation() }
+        val expired = withTimeout(5000) { runCatching { engine.hold(id, true) }.exceptionOrNull() } as Exception
+        assertEquals("deadline_exceeded", CommandRejection.from(expired).code)
+    }
+
     @Test fun aRefusedConcurrentHoldCannotStrandProvidedMedia() = fixture {
         ConversationActions.configure { action ->
             if (action is ConversationAction.Hold && action.held && action.origin == "app") ConversationActionResult.Refuse("keepActive")
@@ -413,7 +456,7 @@ class ConversationMediaTest {
         start()
         ConversationMedia.provide(context, id, grant)
         val error = runCatching { engine.hold(id, true) }.exceptionOrNull() as Exception
-        assertEquals("handler_failed", CommandRejection.from(error).code)
+        assertEquals("refused", CommandRejection.from(error).code)
         stage(NativeMediaStage.CONNECTED)
         assertEquals("connected", state()?.get("status"))
         assertEquals(1, sessions.single().activations)

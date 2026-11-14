@@ -1,6 +1,7 @@
 package expo.modules.callkittelecom.conversations
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.selects.select
 
 /** A person's native call action. Outgoing start continues to use the JavaScript placement handler. */
 sealed interface ConversationAction {
@@ -41,6 +42,15 @@ object ConversationActions {
 internal const val CONVERSATION_ACTION_BUDGET_MILLIS = 3_500L
 internal const val CONVERSATION_END_BUDGET_MILLIS = 3_000L
 
+internal data class NativeActionDecision(val result: ConversationActionResult, val failure: Failure? = null) {
+    enum class Failure { TIMED_OUT, HANDLER_FAILED }
+    fun rejection(): ConversationFailure = when (failure) {
+        Failure.TIMED_OUT -> ConversationFailure("deadline_exceeded")
+        Failure.HANDLER_FAILED -> ConversationFailure("handler_failed")
+        null -> ConversationFailure("refused", message = (result as ConversationActionResult.Refuse).reason)
+    }
+}
+
 /** The worker cannot delay settlement by ignoring cancellation; its late result is discarded. */
 internal class ConversationActionDecision(
     private val scope: CoroutineScope,
@@ -49,30 +59,36 @@ internal class ConversationActionDecision(
     // Reserve 0.5 s to request the disconnect within the 3 s local-end ceiling.
     private val endBudgetMillis: Long = CONVERSATION_END_BUDGET_MILLIS - 500L,
 ) {
-    suspend fun ask(action: ConversationAction, handler: ConversationActionHandler): ConversationActionResult {
+    suspend fun ask(action: ConversationAction, handler: ConversationActionHandler,
+                    remoteCompletion: Deferred<Unit>? = null): NativeActionDecision {
         signal(NativeMediaStage.HANDLER_STARTED, null)
         val work = scope.async(Dispatchers.IO) {
-            try { handler.handle(action) }
-            catch (_: TimeoutCancellationException) { ConversationActionResult.Refuse("handlerTimedOut") }
-            catch (_: Exception) { ConversationActionResult.Refuse("handlerFailed") }
+            try { NativeActionDecision(handler.handle(action)) }
+            catch (_: TimeoutCancellationException) { timedOut() }
+            catch (_: Exception) { handlerFailed() }
         }
         val budget = if (action is ConversationAction.End || action is ConversationAction.Decline) endBudgetMillis else budgetMillis
         val result = try {
-            withTimeoutOrNull(budget) { work.await() } ?: ConversationActionResult.Refuse("handlerTimedOut")
+            withTimeoutOrNull(budget) {
+                if (remoteCompletion == null) work.await()
+                else select {
+                    remoteCompletion.onAwait { NativeActionDecision(ConversationActionResult.Proceed()) }
+                    work.onAwait { it }
+                }
+            } ?: timedOut()
         } catch (_: CancellationException) {
             currentCoroutineContext().ensureActive()
-            ConversationActionResult.Refuse("handlerFailed")
+            handlerFailed()
         } finally { work.cancel() }
-        signal(NativeMediaStage.HANDLER_RESPONDED, when (result) {
+        signal(NativeMediaStage.HANDLER_RESPONDED, when (val result = result.result) {
             is ConversationActionResult.Proceed -> "proceed"
             is ConversationActionResult.Refuse -> result.reason
         })
         return result
     }
+    private fun timedOut() = NativeActionDecision(ConversationActionResult.Refuse("handlerTimedOut"), NativeActionDecision.Failure.TIMED_OUT)
+    private fun handlerFailed() = NativeActionDecision(ConversationActionResult.Refuse("handlerFailed"), NativeActionDecision.Failure.HANDLER_FAILED)
 }
-
-internal fun ConversationActionResult.Refuse.rejection(): ConversationFailure =
-    ConversationFailure(if (reason == "handlerTimedOut") "deadline_exceeded" else "handler_failed")
 
 internal fun ConversationAction.canRefuse(invocationOrigin: String = origin): Boolean = this is ConversationAction.Answer ||
     (invocationOrigin == "app" && (this is ConversationAction.Hold || this is ConversationAction.Mute))

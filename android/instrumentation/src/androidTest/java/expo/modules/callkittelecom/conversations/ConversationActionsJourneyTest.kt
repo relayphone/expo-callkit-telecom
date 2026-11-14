@@ -178,7 +178,7 @@ class ConversationActionsJourneyTest {
             val error = runCatching {
                 if (origin == NativeActionOrigin.SYSTEM) engine.answerFromSystem(id) else engine.join(id)
             }.exceptionOrNull() as Exception
-            assertEquals("handler_failed", CommandRejection.from(error).code)
+            assertEquals("refused", CommandRejection.from(error).code)
             removed(id)
             assertEquals("answeredElsewhere", ended[id])
             assertEquals(ConversationAction.Answer(id, id, origin.wireValue), actions.last())
@@ -236,7 +236,7 @@ class ConversationActionsJourneyTest {
         handler { ConversationActionResult.Refuse("serverUnavailable") }
         for (control in listOf<suspend () -> Unit>({ engine.hold(id, true) }, { engine.mute(id, true) })) {
             val error = runCatching { control() }.exceptionOrNull() as Exception
-            assertEquals("handler_failed", CommandRejection.from(error).code)
+            assertEquals("refused", CommandRejection.from(error).code)
         }
         assertEquals("connected", state(id)?.get("status")); assertEquals(false, state(id)?.get("isMuted"))
         engine.hold(id, true, NativeActionOrigin.SYSTEM)
@@ -262,7 +262,7 @@ class ConversationActionsJourneyTest {
                     if (hold) engine.hold(id, true, NativeActionOrigin.SYSTEM) else engine.mute(id, true, NativeActionOrigin.SYSTEM)
                 }
                 gate.complete(Unit)
-                assertEquals("handler_failed", CommandRejection.from(app.await().exceptionOrNull() as Exception).code)
+                assertEquals("refused", CommandRejection.from(app.await().exceptionOrNull() as Exception).code)
                 withTimeout(1000) { system.await() }
             }
             assertEquals(if (hold) "held" else true, state(id)?.get(if (hold) "status" else "isMuted"))

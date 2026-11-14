@@ -17,6 +17,8 @@ interface NativeMediaSession {
     fun setFailureListener(listener: () -> Unit) {}
     /** Report a final room disconnect separately from preparation and activation failures. */
     fun setDisconnectListener(listener: (NativeMediaDisconnection) -> Unit) {}
+    /** Observe only this session's reconnect window. Retired sessions cannot change a later call. */
+    fun setConnectionListener(listener: (NativeMediaConnection) -> Unit) {}
     suspend fun prewarm(payload: Map<String, Any?>)
     suspend fun activate()
     /** Suspend local capture AND remote playback; resume only after native audio authority. */
@@ -36,7 +38,8 @@ object NativeMediaRegistry {
 internal class NativeMediaController(private val context: Context, private val payload: Map<String, Any?>,
     private val policy: JSONObject, private val scope: CoroutineScope,
     private val failed: () -> Unit, private val connected: () -> Unit,
-    private val disconnected: (NativeMediaDisconnection) -> Unit = { failed() }) : NativeMediaControl {
+    private val disconnected: (NativeMediaDisconnection) -> Unit = { failed() },
+    private val connectionChanged: (NativeMediaConnection) -> Unit = {}) : NativeMediaControl {
     private val dispatcher = Dispatchers.IO.limitedParallelism(1)
     private val lifetime = SupervisorJob(scope.coroutineContext[Job])
     private val operations = CoroutineScope(lifetime + dispatcher)
@@ -74,6 +77,9 @@ internal class NativeMediaController(private val context: Context, private val p
         }
         session?.setDisconnectListener { reason ->
             operations.launch(Dispatchers.Main.immediate) { if (!closed) disconnected(reason) }
+        }
+        session?.setConnectionListener { state ->
+            operations.launch(Dispatchers.Main.immediate) { if (!closed) connectionChanged(state) }
         }
         currentCoroutineContext().ensureActive(); check(!closed)
         val pushed = payload["media"] as? Map<String, Any?>

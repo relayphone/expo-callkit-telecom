@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { test } from "node:test";
+import { detectionVector, repeatedVector } from "./fixtures/media-marker-vectors.ts";
 
 // SDK createMarker("parity-v2"); twelve tones-v2 slots, phase reset and raised-cosine edges.
 const frequencies = [650, 950, 1350, 1850, 1850, 1850, 950, 1350, 650, 650, 1850, 1350];
@@ -242,6 +243,18 @@ test("the real fixture requires complete tones-v2 slots, detects short leaks and
     assert.equal(result[control], 0, control);
 });
 
+test("path selection gives movement precedence and treats confidence sums within 1e-9 as ties", () => {
+  const code = `import importlib.util
+s=importlib.util.spec_from_file_location("fixture","tools/native-media-fixture.py")
+f=importlib.util.module_from_spec(s);s.loader.exec_module(f)
+def path(movement,total,starts): return f.MarkerPath(movement,total,.9,starts,(.9,)*len(starts))
+assert f.prefer_marker_path(path(0,9,(0,60)),path(1,10,(0,59)))
+assert not f.prefer_marker_path(path(1,10+5e-10,(0,61)),path(1,10,(0,59)))
+assert f.prefer_marker_path(path(1,10+2e-9,(0,61)),path(1,10,(0,59)))
+assert f.prefer_marker_path(path(1,10,(0,59,120)),path(1,10,(0,60,119)))`;
+  execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], {timeout: 15_000, killSignal: "SIGKILL"});
+});
+
 test("both PCM16 little-endian parity vectors match the SDK", () => {
   for (const [rate, expected] of [
     [8000, "7305be4e1d4ba73d2f2f876869fa5cb27c12bb91450081452139f41262f7c003"],
@@ -253,36 +266,6 @@ test("both PCM16 little-endian parity vectors match the SDK", () => {
     assert.equal(createHash("sha256").update(bytes).digest("hex"), expected);
   }
 });
-
-// SDK amendment 2a: splice at original slot+45 ms, outside the central scoring window.
-function detectionVector(rate: number, changeMs: number): number[] {
-  const pre = rate * 3 / 20, slot = rate * 3 / 50;
-  let pcm = Float32Array.from({length: rate / 50 * 51}, (_, position) => {
-    const marker = position >= pre && position < pre + 12 * slot;
-    const local = marker ? (position - pre) % slot : position < pre ? position : position - pre - 12 * slot;
-    const edge = marker ? Math.min(local, slot - local) : position < pre ? local : rate / 50 * 51 - position;
-    const frequency = marker ? frequencies[Math.floor((position - pre) / slot)]! : 400;
-    return .2 * .5 * (1 - Math.cos(Math.PI * Math.min(1, edge / (rate / 200)))) *
-      Math.sin(2 * Math.PI * frequency * local / rate);
-  });
-  let shift = 0;
-  const count = rate / 100, fade = rate / 400;
-  for (const edited of changeMs === 80 ? [1, 2, 3, 4, 5, 6, 8, 10] : [2, 5, 8, 10]) {
-    const position = pre + edited * slot + rate * 9 / 200 + shift;
-    const next = new Float32Array(pcm.length + (changeMs > 0 ? count : -count));
-    next.set(pcm.subarray(0, position));
-    if (changeMs > 0) {
-      next.set(pcm.subarray(position - count, position), position);
-      next.set(pcm.subarray(position), position + count);
-    } else next.set(pcm.subarray(position + count), position);
-    for (let i = 0; i < fade; i++) {
-      const weight = i / (fade - 1);
-      next[position + i] = (1 - weight) * pcm[position + i]! + weight * next[position + i]!;
-    }
-    pcm = next; shift += changeMs > 0 ? count : -count;
-  }
-  return Array.from(pcm, value => Math.round(value * 32767));
-}
 
 test("the Python detector matches all six SDK splice hashes and exact slot drifts", () => {
   const inputs = [
@@ -316,9 +299,43 @@ print(json.dumps([f.MarkerObservation.analyze(x["pcm"],f.TonesV2Signal("parity-v
     } else {
       assert.equal(result.markers, 1);
       assert.deepEqual(result.slots.map((slot: {driftMs: number}) => slot.driftMs), changeMs > 0 ?
-        [0, 0, 0, 10, 10, 10, 20, 20, 20, 30, 30, 40] : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -10, -10]);
+        [0, 0, 0, 10, 10, 10, 20, 20, 30, 30, 30, 33] : [0, 0, 0, -7, -7, -7, -7, -7, -7, -7, -7, -7]);
     }
   }
+});
+
+test("the Python detector matches all eight published repeated-tone path vectors", () => {
+  const inputs = [
+    [8000, "deleted", "dae143f33211f6fcf9617e2e4a99de5e00831e168adafa8a7b2d8fa041811a0b"],
+    [8000, "wrong", "236233ac4ebee517862f86fda82eb5e9fe38b2168a42fd90df090ce837c0199f"],
+    [8000, "silent", "2ec6a4f8d98a1a85d5aa0bb29bd5f707c0dfd7102a78190761da7e8d19ba1531"],
+    [8000, "alias", "35770229b8db7382e249035c555d399962bcedf12cdcbd86d10367a1953a4b5e"],
+    [48000, "deleted", "67c9aaf0dc8265d63d8981ad26e800673597647ccd0bedbfe04596ee73cb9bb0"],
+    [48000, "wrong", "4afd4bfc1fe255d655c19391cc60f18e8ec95c91f04fef7a9bb059c28f9a34ea"],
+    [48000, "silent", "2f7c12aecbb02fe41c280d382587dbd7f907cb433c08483b8bfef50fdd12673c"],
+    [48000, "alias", "b94c47f58ff2975a232ef00c4f2b0b13f41b92aae53c077cfeb102d04737d612"],
+  ] as const;
+  const vectors = inputs.map(([rate, variant, sha]) => {
+    const {id, pcm} = repeatedVector(rate, variant), bytes = Buffer.alloc(pcm.length * 2);
+    pcm.forEach((value, i) => bytes.writeInt16LE(Math.round(value * 32767), i * 2));
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), sha);
+    return {id, rate, variant, pcm: Array.from({length: pcm.length}, (_, i) => bytes.readInt16LE(i * 2))};
+  });
+  const code = `import importlib.util,json,sys
+s=importlib.util.spec_from_file_location("fixture","tools/native-media-fixture.py")
+f=importlib.util.module_from_spec(s);s.loader.exec_module(f)
+print(json.dumps([f.MarkerObservation.analyze(x["pcm"],f.TonesV2Signal(x["id"],x["rate"]).frequencies,x["rate"]) for x in json.load(sys.stdin)]))`;
+  const results = JSON.parse(execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], {
+    input: JSON.stringify(vectors), encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL",
+  }));
+  vectors.forEach(({variant}, index) => {
+    const result = results[index];
+    assert.equal(result.markers, variant === "deleted" ? 1 : 0);
+    if (variant === "deleted") {
+      assert.deepEqual(result.slots.map((slot: {driftMs: number}) => slot.driftMs), Array(12).fill(0));
+      assert.ok(result.minimumConfidence > .99966);
+    }
+  });
 });
 
 for (const counterFormat of ["numeric", "Android decimal text"] as const) {

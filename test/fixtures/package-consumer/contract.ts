@@ -10,7 +10,11 @@ import type {
   IncomingCallPayload,
 } from "@relayphone/ios-voip-sdk/types";
 import { getConversations as getAndroidConversations } from "expo-callkit-telecom";
-import type { Caller } from "expo-callkit-telecom/types";
+import type { Caller, ConversationStatus, ConversationErrorCode, EndedFailure } from "expo-callkit-telecom/types";
+
+export const reconnecting: ConversationStatus = "reconnecting";
+export const refused: ConversationErrorCode = "refused";
+export const remaining: EndedFailure = { kind: "media", platformCallRemaining: true };
 
 const handler: ConversationHandler = {
   start: async (call, { signal }) => {

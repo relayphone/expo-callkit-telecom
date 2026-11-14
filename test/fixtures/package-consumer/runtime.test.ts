@@ -53,7 +53,9 @@ const native = {
     );
   },
   async endConversation() {},
-  async setHeld() {},
+  async setHeld() {
+    throw new Error('Native rejection: expo-conversation:{"code":"refused","message":"keepActive"}');
+  },
   async setMuted() {},
   async playTones() {},
   async mergeConversations() {},
@@ -119,6 +121,12 @@ test("installed packages share the SDK runtime, canonical errors and actual rout
           nativeCode: 4,
         }
       );
+      return true;
+    });
+    await assert.rejects(fork.setHeld(id, true), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "keepActive");
+      assert.deepEqual({...error}, {code: "refused"});
       return true;
     });
     const routes = fork.useAudioRoutes();

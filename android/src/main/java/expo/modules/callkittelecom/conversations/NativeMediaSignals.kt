@@ -34,7 +34,7 @@ enum class NativeMediaStage(val value: String) {
     CAPTURE_PUMP_STARTED("capturePumpStarted"), CAPTURE_PUMP_STOPPED("capturePumpStopped"),
     OUTPUT_BEFORE_AUTHORITY("outputBeforeAuthority"), OUTPUT_FIRST_NONZERO("outputFirstNonzero"),
     OUTPUT_MUTED("outputMuted"), OUTPUT_OBSERVATION_UNAVAILABLE("outputObservationUnavailable"),
-    OUTPUT_RELEASED("outputReleased")
+    OUTPUT_RELEASED("outputReleased"), OUTPUT_MUTE_BOUNDARY_MISSED("outputMuteBoundaryMissed")
 }
 
 /** Native observations contain no credentials/audio. ROOM_DISCONNECTED has an empty serverCallId and a reason name. */

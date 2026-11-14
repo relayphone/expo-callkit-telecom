@@ -26,6 +26,18 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NativeWarmAudioTest {
+    @Test fun stalledPlaybackMutesDirectlyAndRecordsTheMissedBoundary() = runBlocking {
+        withAudio("warm-audio-stalled-playback") {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            audio.configureOutput(JavaAudioDeviceModule.builder(context)); audio.playbackStarted()
+            var speakerMuted = false
+            withTimeout(500) { audio.muteOutputAtPlaybackBoundary { speakerMuted = true } }
+            assertTrue(speakerMuted)
+            drainSignals()
+            assertEquals(1, signals.count { it.stage == NativeMediaStage.OUTPUT_MUTE_BOUNDARY_MISSED })
+        }
+    }
+
     @Test fun recordinglessBuffersFollowTheirAudioDurationAndPreserveCaptureTimestamps() = runBlocking {
         withAudio("warm-audio-pacing") {
             audio.pumpStarted()

@@ -1,7 +1,7 @@
 # iOS media
 
 The SDK owns Apple native media registration and WebRTC audio integration. Use
-the [SDK v0.4.0 media guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md#media-and-audio-routes)
+the [SDK v0.5.0 media guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.5.0/docs/react-native.md#media-and-audio-routes)
 for the API shipped in the installed release asset.
 
 Pass SDK options through the single `expo-callkit-telecom` plugin entry. The

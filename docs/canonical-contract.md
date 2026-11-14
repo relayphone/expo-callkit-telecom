@@ -1,10 +1,10 @@
 # Conversations contract
 
-The package composes `@relayphone/ios-voip-sdk`: its root re-exports that API and `expo-callkit-telecom/types` exports types only. Install the fork tarball together with the SDK's v0.4.0 release asset as described in [package evaluation](sdk-package-evaluation.md). The SDK supplies the sole iOS provider and this package supplies the Android `VoIPConversations` provider.
+The package composes `@relayphone/ios-voip-sdk`: its root re-exports that API and `expo-callkit-telecom/types` exports types only. Install the fork tarball together with the SDK's v0.5.0 release asset as described in [package evaluation](sdk-package-evaluation.md). The SDK supplies the sole iOS provider and this package supplies the Android `VoIPConversations` provider.
 
 Incoming IDs are the exact `serverCallId`. Outgoing calls require an application ID: `startConversation({ id: serverCallId, to: { id: "peer" }, video: false })`. IDs are neither normalized nor converted to UUIDs. Incoming duplicate reports share admission; outgoing duplicates and direction collisions reject with `invalid_arguments`.
 
-The JavaScript handler decides outgoing **start placement** on Android. Native answer, end, hold and mute can use an optional [native server action handler](android-quick-start.md#server-actions); without one they execute directly. Answer and app controls can be refused. System hold/mute are observations of OS state, and decline/end always disconnect. Observe snapshots and `actionPerformed`, including its `app` or `system` origin. End publishes the terminal snapshot, the performed event, then removes the call. Server end reports do not fabricate performed actions. Missing start handlers fail unless `unhandledAction: "accept"` is explicit.
+The JavaScript handler decides outgoing **start placement** on Android. Native answer, end, hold and mute can use an optional [native server action handler](android-quick-start.md#server-actions); without one they execute directly. Answer and app controls can be refused with code `refused` and the handler's reason. System hold/mute are observations of OS state, and decline/end always disconnect. Observe snapshots and `actionPerformed`, including its `app` or `system` origin. End publishes the terminal snapshot, the performed event, then removes the call. A server end during an accepted local End or Decline settles that original action immediately and exactly once. Without a pending local action, server reports do not fabricate performed actions. Missing start handlers fail unless `unhandledAction: "accept"` is explicit.
 
 App placement finishes before Android Telecom admission. The default SDK placement deadline is 10 seconds; the handler receives an effective deadline one second earlier, **9 seconds** by default, matching iOS. Settlement at or after that effective deadline is rejected. Connection reports during placement are applied only after acceptance. Rejecting, cancelling or timing out placement leaves no Telecom call.
 
@@ -16,7 +16,7 @@ Android audio events come from native lifecycle ownership. `audioActivated` foll
 
 Android advertises `capabilities.tones = true` only with native LiveKit media selected. `playTones` publishes SIP DTMF through an active native session and emits an app-origin performed event after success. App-managed media rejects tones with `unsupported` without a performed event. Preview joining is unsupported on Android; filtered and answered-elsewhere calls terminate and remove their notification. Previews and notification-based preview joins remain iOS-only. Audio routes use canonical `bluetooth` and `other` values.
 
-See the SDK's [iOS and React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md) for the shared API and iOS setup.
+See the SDK's [iOS and React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.5.0/docs/react-native.md) for the shared API and iOS setup.
 
 ## Plugin composition and native project upgrades
 

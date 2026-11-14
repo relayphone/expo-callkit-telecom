@@ -20,7 +20,7 @@ or evaluate a pinned checkout with the [package evaluation guide](https://github
 
 Start with [Getting started](https://github.com/relayphone/expo-callkit-telecom/blob/v2/docs/getting-started.md)
 and the [conversations contract](https://github.com/relayphone/expo-callkit-telecom/blob/v2/docs/canonical-contract.md).
-The [SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md)
+The [SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.5.0/docs/react-native.md)
 owns the shared API and iOS setup. Import runtime functions and hooks from
 `expo-callkit-telecom`; import types from the type-only
 `expo-callkit-telecom/types` entry.

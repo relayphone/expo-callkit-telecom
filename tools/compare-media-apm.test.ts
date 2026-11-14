@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { crc32 } from "node:zlib";
+import { emissionVector, markerFrequencies, repeatedVector } from "./fixtures/media-marker-vectors.ts";
 
 import {
   compareMediaApm,
@@ -79,6 +80,28 @@ test("the shared detector preserves complete post-APM markers and same-frame slo
         )
     )
   );
+});
+
+test("the Android comparator uses the complete-path detector and rejects repeated-run controls", () => {
+  for (const variant of ["deleted", "wrong", "silent", "alias"] as const) {
+    const {id, pcm} = repeatedVector(48000, variant);
+    const original = emissionVector(48000, markerFrequencies(id));
+    const before = Buffer.alloc(pcm.length * 2), after = Buffer.alloc(pcm.length * 4);
+    pcm.forEach((value, index) => {
+      before.writeInt16LE(Math.round(original[index]! * 32767), index * 2);
+      after.writeFloatLE(Math.round(value * 32767), index * 4);
+    });
+    const value = {...capture(), markerId: id, frames: pcm.length, sourcePcm: before.toString("base64"),
+      postPcm: after.toString("base64"), blocks: Array.from({length: pcm.length / 480}, (_, i) =>
+        [i * 480, i * 480, i * 10_000_000, i * 10_000_000 + 1, 7])};
+    const result = compareMediaApm(trace(value));
+    assert.equal(result.sourceAnalysis.markers, 1);
+    assert.equal(result.postAnalysis.markers, variant === "deleted" ? 1 : 0);
+    if (variant === "deleted") {
+      const cycle = result.postAnalysis.detections[0]!;
+      assert.deepEqual(cycle.slots.map(slot => slot.driftMs), Array(12).fill(0));
+    }
+  }
 });
 
 test("removed slot energy fails the actual detector without changing source observations", () => {

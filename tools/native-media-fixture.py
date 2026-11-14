@@ -12,6 +12,7 @@ import struct
 import sys
 import time
 from fractions import Fraction
+from typing import NamedTuple
 
 from aiohttp import ClientSession, WSMsgType, web
 from livekit import api, rtc
@@ -73,6 +74,22 @@ class TonesV2Signal:
         return struct.pack("<" + str(count) + "h", *values)
 
 
+class MarkerPath(NamedTuple):
+    movement: int
+    confidence_sum: float
+    minimum: float
+    starts: tuple[int, ...]
+    confidences: tuple[float, ...]
+
+
+def prefer_marker_path(left: MarkerPath, right: MarkerPath) -> bool:
+    if left.movement != right.movement:
+        return left.movement < right.movement
+    if abs(left.confidence_sum - right.confidence_sum) > 1e-9:
+        return left.confidence_sum > right.confidence_sum
+    return left.starts < right.starts
+
+
 class MarkerObservation:
     """Bounded real uplink PCM; tones-v2 matches SDK testing/marker.ts without relaxed slots."""
     next_generation = 0
@@ -111,7 +128,7 @@ class MarkerObservation:
 
     @staticmethod
     def analyze(pcm, frequencies, rate=48000):
-        # Elastic tones-v2: unchanged Goertzel/energy floor, +/-15 ms per step, +/-60 ms drift.
+        # Complete-path tones-v2, ported from the SDK detector after the 0.5.0 release.
         # Cache overlapping slot scores; never alter, stitch or repair received PCM.
         if rate not in (8000, 48000) or len(frequencies) != 12:
             raise ValueError("Invalid analysis format")
@@ -137,6 +154,31 @@ class MarkerObservation:
                 previous * previous + before * before - coefficient * previous * before) / (window * energy)))
             scores[key] = result
             return result
+        def complete_path(anchor, first_score):
+            paths = {0: MarkerPath(0, first_score, first_score, (anchor,), (first_score,))}
+            for index, frequency in enumerate(frequencies[1:], 1):
+                following = {}
+                reach = 0 if frequency == frequencies[index - 1] else 15
+                for previous_drift, prefix in paths.items():
+                    for drift in range(max(-60, previous_drift - reach), min(60, previous_drift + reach) + 1):
+                        start = anchor + index * slot_samples + drift * rate // 1000
+                        value = confidence(start + window, frequency)
+                        if value < .8:
+                            continue
+                        candidate = MarkerPath(prefix.movement + abs(drift - previous_drift),
+                            prefix.confidence_sum + value, min(prefix.minimum, value),
+                            prefix.starts + (start,), prefix.confidences + (value,))
+                        incumbent = following.get(drift)
+                        if incumbent is None or prefer_marker_path(candidate, incumbent):
+                            following[drift] = candidate
+                paths = following
+                if not paths:
+                    return None
+            chosen = None
+            for path in paths.values():
+                if chosen is None or prefer_marker_path(path, chosen):
+                    chosen = path
+            return chosen
         best = None
         cap_rejected = None
         detections = []
@@ -156,22 +198,27 @@ class MarkerObservation:
                 if score > slots[0] + epsilon:
                     starts[0], slots[0] = alternative, score
             offset = starts[0]
-            for index, frequency in enumerate(frequencies[1:], 1):
-                expected = starts[-1] + slot_samples
-                start, score = expected, -1
-                for ms in shifts:
-                    alternative = expected + ms * rate // 1000
-                    value = confidence(alternative + window, frequency)
-                    if value > score + epsilon or score < .8 <= value:
-                        start, score = alternative, value
-                    if score >= 1 - epsilon:
-                        break
-                starts.append(start)
-                slots.append(score)
+            path = complete_path(offset, slots[0])
+            if path is not None:
+                starts, slots = path.starts, path.confidences
+            else:
+                # Retain the previous failed-alignment diagnostics; they can never accept a marker.
+                for index, frequency in enumerate(frequencies[1:], 1):
+                    expected = starts[-1] + slot_samples
+                    start, score = expected, -1
+                    for ms in shifts:
+                        alternative = expected + ms * rate // 1000
+                        value = confidence(alternative + window, frequency)
+                        if value > score + epsilon or score < .8 <= value:
+                            start, score = alternative, value
+                        if score >= 1 - epsilon:
+                            break
+                    starts.append(start)
+                    slots.append(score)
             minimum = min(slots)
             item = (minimum, offset, slots, starts)
             complete = starts[-1] + slot_samples <= len(pcm)
-            in_cap = abs(starts[-1] - offset - 11 * slot_samples) <= cap
+            in_cap = all(abs(start - offset - index * slot_samples) <= cap for index, start in enumerate(starts))
             if complete:
                 cycles.append(item)
             if not in_cap:
@@ -179,7 +226,7 @@ class MarkerObservation:
                     cap_rejected = item
             if complete and in_cap and (best is None or minimum > best[0] + epsilon):
                 best = item
-            if complete and in_cap and minimum >= .8:
+            if path is not None:
                 detections.append(item)
                 offset = starts[-1] + slot_samples
             else:
@@ -187,10 +234,13 @@ class MarkerObservation:
         chosen = detections[0] if detections else best
         def receipt(item):
             minimum, offset, values, starts = item
+            in_cap = all(abs(start - offset - index * slot_samples) <= cap for index, start in enumerate(starts))
+            valid_steps = all(abs(starts[index] - starts[index - 1] - slot_samples) <=
+                (0 if frequencies[index] == frequencies[index - 1] else rate * 15 // 1000) for index in range(1, 12))
             return {"offsetSamples": offset, "endSamples": starts[-1] + slot_samples,
                     "minimumConfidence": minimum,
                     "syncComplete": min(values[:4]) >= .8,
-                    "insideDriftCap": abs(starts[-1] - offset - 11 * slot_samples) <= cap,
+                    "insideDriftCap": in_cap, "pathValid": minimum >= .8 and in_cap and valid_steps,
                     "slots": [{"index": index, "frequencyHz": frequency, "confidence": score, "margin": score - .8,
                                "startSamples": start, "driftSamples": start - offset - index * slot_samples,
                                "driftMs": (start - offset - index * slot_samples) * 1000 / rate}

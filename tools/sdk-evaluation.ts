@@ -12,8 +12,8 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const sdkVersion = "0.4.0";
-export const sdkFilename = "relayphone-ios-voip-sdk-0.4.0.tgz";
+export const sdkVersion = "0.5.0";
+export const sdkFilename = "relayphone-ios-voip-sdk-0.5.0.tgz";
 export const sdkAssetUrl = `https://github.com/relayphone/ios-voip-sdk/releases/download/v${sdkVersion}/${sdkFilename}`;
 export const sdkChecksumsUrl = `https://github.com/relayphone/ios-voip-sdk/releases/download/v${sdkVersion}/SHA256SUMS`;
 const sdkName = "@relayphone/ios-voip-sdk";

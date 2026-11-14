@@ -33,6 +33,14 @@ internal class NativeActionReceipt(
 ) {
     private var claimed = false
     private var decision: CompletableDeferred<ConversationActionResult?>? = null
+    private var rejection: ConversationFailure? = null
+    fun rejection(): ConversationFailure = checkNotNull(rejection)
+    private val remoteCompletion = CompletableDeferred<Unit>()
+    val completedRemotely: Boolean get() = remoteCompletion.isCompleted
+    fun completeFromRemote() {
+        check(action == NativePerformedAction.End)
+        remoteCompletion.complete(Unit)
+    }
     private var observedOrigin: NativeActionOrigin? = null
     private var users = 0
     fun retain() { users++ }
@@ -55,7 +63,10 @@ internal class NativeActionReceipt(
         try {
             val handler = ConversationActions.handler
             val action = conversationAction
-            val result = if (handler != null && action != null) runner.ask(action, handler) else null
+            val outcome = if (handler != null && action != null) runner.ask(action, handler,
+                remoteCompletion.takeIf { this.action == NativePerformedAction.End }) else null
+            val result = outcome?.result
+            if (result is ConversationActionResult.Refuse) rejection = outcome.rejection()
             pending.complete(result)
             return result
         } catch (error: Throwable) { pending.completeExceptionally(error); throw error }
