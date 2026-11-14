@@ -137,7 +137,8 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
         override fun onBuffer(buffer: ByteBuffer, format: Int, channels: Int, rate: Int, bytesRead: Int, timestamp: Long): Long {
             val entered = SystemClock.elapsedRealtimeNanos()
             val gateEntry = if (gateTrace.isArmed) gateTrace.enter(MediaGateTrace.Direction.CAPTURE, output.get().id, entered,
-                captureGateClosed(), sourceCursor.get(), if (channels > 0) buffer.capacity() / 2 / channels else 0, rate, channels) else null
+                EmulatorGateProbe.captureClosedAtCallback(publication), sourceCursor.get(),
+                if (channels > 0) buffer.capacity() / 2 / channels else 0, rate, channels) else null
             // Always retain the production recordingless pump's pacing and lifecycle observations.
             val result = pacing.onBuffer(buffer, format, channels, rate, bytesRead, timestamp)
             if (!closed.get()) {

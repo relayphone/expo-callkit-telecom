@@ -89,8 +89,12 @@ Bounded transition diagnostics are retained as `gateTrace` in
 request/API acknowledgement/completion, Core mute observations, phase
 acknowledgement, callback entry/gate read/exit and the first closed gate observed
 on each audio thread. Playback reads the pinned SDK's volatile `speakerMute`
-field; capture reads the publication mute/track-enabled gate. The report names
-both sources explicitly rather than inferring gate state from a request.
+field; the capture callback reads the publication mute state and track/publication
+presence without calling the blocking RTC-thread `Track.enabled` getter. The
+control-path capture check still reads that getter. LiveKit changes track enablement
+before publishing the mute state, so the callback sample is conservative during
+hold/mute and cannot wait for an RTC executor that is stopping the same callback.
+The report names both sources explicitly rather than inferring gate state from a request.
 The SDK invokes this playback tap after `AudioTrack.write`; its entry-state
 sample does not timestamp the earlier buffer-fill/write gate decision.
 Each block retains its phase-window identity, frame range, sample rate/channels,
@@ -101,6 +105,15 @@ hard caps; overflow, unavailable gates, unsupported formats and in-flight
 callbacks are explicit. Missing evidence cannot establish a boundary fix.
 The bounded mute diagnostic runs only after the held verdict, so it cannot
 change that verdict. It adds no delay or tolerance to the silence assertion.
+
+Output PCM acknowledgements do not wait for detector scoring. Scoring runs in the
+existing bounded analysis worker, and responses report only completed results.
+The observed frame positions, contiguous PCM, three-second analysis retention,
+24,000-frame drain limit, transport counters and required post-roll stay unchanged.
+A pending score cannot qualify a cycle; the same five-second phase deadline still
+requires a completed clean cycle. Scoring failure remains fatal. CI runs the same
+30-second host controls before emulator boot to avoid competing with the guest
+for CPU while checking the detector's intentional failures.
 An absent, disabled, stale or unsupported tap fails. Held output must deliver
 fresh zero PCM while decoded audio continues. Source ZERO/WRONG controls and
 muted publication reject every raw detected marker, including impaired markers.

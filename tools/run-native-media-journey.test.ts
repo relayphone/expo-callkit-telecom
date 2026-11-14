@@ -13,9 +13,60 @@ import { test } from "node:test";
 import {
   runNativeMediaJourney,
   runNativeMediaFeasibility,
+  mediaFailureSummary,
+  runNativeMediaControls,
   type Command,
   type Execute,
 } from "./run-native-media-journey.ts";
+
+test("host preflight keeps the original controls and deadline and prepared feasibility does not duplicate them", () => {
+  const f = fixture();
+  try {
+    runNativeMediaControls(f.run);
+    assert.deepEqual(f.calls[0], { program: "node", args: ["--test",
+      "tools/native-media-marker.test.ts", "tools/compare-media-apm.test.ts"], timeout: 30_000 });
+    runNativeMediaFeasibility(f.output, f.run, "prechecked");
+    assert.equal(f.calls.filter(command => command.program === "node").length, 1);
+    assert.equal(f.calls.filter(command => command.program === "gradle").length, 2);
+    const failure = new Error("host control failed");
+    assert.throws(() => runNativeMediaControls(() => { throw failure; }), error => error === failure);
+  } finally { f.close(); }
+});
+
+test("media failure summary includes the nested drain cause and actual timeout without changing the verdict", () => {
+  const details = { passed: false, step: "answered output", failure: [
+    { type: "AssertionError", message: "Details retained in test XML" },
+    { type: "IllegalStateException", message: "Output capture consumer fell behind" },
+    { type: "TimeoutCancellationException", message: "Timed out waiting for 1000 ms" },
+  ] };
+  const summary = mediaFailureSummary(details)!;
+  assert.match(summary, /Step: answered output/);
+  assert.match(summary, /IllegalStateException: Output capture consumer fell behind/);
+  assert.match(summary, /Timed out waiting for 1000 ms/);
+  assert.equal(mediaFailureSummary({ ...details, passed: true }), undefined);
+  assert.equal(mediaFailureSummary({ passed: false, failure: "invalid" }), undefined);
+});
+
+test("failed qualification writes nested causes to the CI summary and preserves its original failure", () => {
+  const f = fixture();
+  const previous = process.env.GITHUB_STEP_SUMMARY;
+  const path = join(f.output, "summary.md");
+  const failure = new Error("Gradle failed");
+  process.env.GITHUB_STEP_SUMMARY = path;
+  try {
+    assert.throws(() => runNativeMediaFeasibility(f.output, command => {
+      f.run(command);
+      if (command.program === "gradle") throw failure;
+      return JSON.stringify({ passed: false, step: "answered output",
+        failure: [{ type: "IllegalStateException", message: "Output capture consumer fell behind" }] });
+    }), error => error === failure);
+    assert.match(readFileSync(path, "utf8"), /IllegalStateException: Output capture consumer fell behind/);
+  } finally {
+    if (previous === undefined) delete process.env.GITHUB_STEP_SUMMARY;
+    else process.env.GITHUB_STEP_SUMMARY = previous;
+    f.close();
+  }
+});
 
 function fixture() {
   const output = mkdtempSync(join(tmpdir(), "native-media-journey-"));

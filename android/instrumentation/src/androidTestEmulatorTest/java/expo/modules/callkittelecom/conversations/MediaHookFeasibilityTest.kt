@@ -5,7 +5,12 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.os.Bundle
 import io.livekit.android.audio.AudioBufferCallback
+import io.livekit.android.LiveKit
+import io.livekit.android.room.participant.AudioTrackPublishOptions
 import io.livekit.android.room.track.LocalAudioTrack
+import io.livekit.android.room.track.LocalTrackPublication
+import io.livekit.android.webrtc.peerconnection.overrideExecutorAndDispatcher
+import livekit.LivekitModels
 import livekit.org.webrtc.audio.JavaAudioDeviceModule
 import java.nio.ByteBuffer
 import java.security.MessageDigest
@@ -14,6 +19,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -38,6 +46,50 @@ class MediaHookFeasibilityTest {
     private val settings by lazy { JSONObject(InstrumentationRegistry.getInstrumentation().context.assets
         .open("media-ci.json").bufferedReader().readText()) }
     private val client = OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
+
+    @Test fun captureCallbackGateReadDoesNotWaitForTheRtcExecutor() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val room = LiveKit.create(context)
+            val track = room.localParticipant.createAudioTrack("gate-probe")
+            val info = Class.forName("livekit.LivekitModels\$TrackInfo")
+                .getMethod("getDefaultInstance").invoke(null) as LivekitModels.TrackInfo
+            val publication = LocalTrackPublication(info, track, room.localParticipant, AudioTrackPublishOptions())
+            val utilities = Class.forName("io.livekit.android.webrtc.peerconnection.RTCThreadUtilsKt")
+            fun field(name: String) = utilities.getDeclaredField(name).apply { isAccessible = true }.get(null)
+            val previousExecutor = field("executor") as ExecutorService
+            val previousDispatcher = field("rtcDispatcher") as CoroutineDispatcher
+            val executor = Executors.newSingleThreadExecutor()
+            val dispatcher = executor.asCoroutineDispatcher()
+            val readers = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val entered = CompletableDeferred<Unit>()
+            val controlStarted = CompletableDeferred<Unit>()
+            val release = CountDownLatch(1)
+            try {
+                overrideExecutorAndDispatcher(executor, dispatcher)
+                executor.submit { entered.complete(Unit); release.await() }
+                withTimeout(1000) { entered.await() }
+                val control = readers.async {
+                    controlStarted.complete(Unit)
+                    EmulatorGateProbe.captureClosed(publication)
+                }
+                withTimeout(1000) { controlStarted.await() }
+                val callback = readers.async { EmulatorGateProbe.captureClosedAtCallback(publication) }
+                assertFalse(withTimeout(1000) { callback.await() })
+                assertFalse("The full track getter really waits for the paused RTC executor", control.isCompleted)
+                release.countDown()
+                assertFalse(withTimeout(1000) { control.await() })
+            } finally {
+                release.countDown()
+                try {
+                    withContext(NonCancellable) { readers.coroutineContext[Job]!!.cancelAndJoin() }
+                } finally {
+                    overrideExecutorAndDispatcher(previousExecutor, previousDispatcher)
+                    dispatcher.close()
+                    track.dispose(); room.release()
+                }
+            }
+        }
+    }
 
     private suspend fun fixture(path: String, reset: Boolean = false, body: JSONObject? = null): JSONObject = suspendCancellableCoroutine { continuation ->
         val request = Request.Builder().url(settings.getString("baseUrl") + path)
@@ -77,11 +129,11 @@ class MediaHookFeasibilityTest {
 
     private suspend fun outputAudio(id: String, hooks: EmulatorMediaHooks, record: (JSONObject) -> Unit): JSONObject {
         val baseline = withTimeout(2000) { hooks.outputStats(baseline = true) }
-        hooks.startOutputCapture()
         try {
             return withTimeout(5000) {
                 fixture("/fixture/output/$id", body = JSONObject().put("reset", true).put("sampleRate", 48000)
                     .put("firstFrame", 0).put("pcm16", "").put("stats", baseline))
+                hooks.startOutputCapture()
                 var peer: JSONObject
                 do {
                     delay(100)
@@ -386,7 +438,7 @@ class MediaHookFeasibilityTest {
                     putString("mediaHookFailure", "step=$step, error=$error, signals=${signals.map { it.stage }}")
                     putString("pipeline", pipeline)
                 })
-                throw AssertionError("step=$step, captureRate=${hooks.captureSampleRate}, " +
+                throw AssertionError("step=$step, causes=${mediaFailureDetails(error)}, captureRate=${hooks.captureSampleRate}, " +
                     "injected=${hooks.injectedFrames.get()}, decoded=${runCatching { hooks.decoded() }.getOrNull()}, " +
                     "output=${runCatching { hooks.output() }.getOrNull()}", error)
             } finally {
@@ -402,6 +454,9 @@ class MediaHookFeasibilityTest {
                 try {
                     context.filesDir.resolve("media-hook-results.json").writeText(evidence.put("step", step)
                         .put("passed", caught == null).put("pipeline", pipeline)
+                        .put("failure", org.json.JSONArray(caught?.let(::mediaFailureDetails).orEmpty().map {
+                            JSONObject().put("type", it.type).put("message", it.message)
+                        }))
                         .put("gateTrace", hooks.gateTrace.snapshot().put("muteDiagnosticError",
                             muteDiagnosticError?.javaClass?.simpleName ?: JSONObject.NULL)).toString())
                     context.filesDir.resolve("capture-trace.json").writeText(hooks.trace.snapshot()
