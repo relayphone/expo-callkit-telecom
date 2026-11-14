@@ -97,7 +97,8 @@ internal class CallNotificationRoster {
         val value = state + ("id" to id)
         val previous = entries[id]
         if (previous?.state == value) return false
-        val entered = if (previous == null || previous.state["status"] != value["status"]) ++sequence else previous.entered
+        fun phase(state: Map<String, Any?>) = state["status"].let { if (it == "reconnecting") "connected" else it }
+        val entered = if (previous == null || phase(previous.state) != phase(value)) ++sequence else previous.entered
         entries[id] = Entry(value, entered)
         return true
     }
@@ -112,7 +113,7 @@ internal class CallNotificationRoster {
     fun remove(id: String): Boolean = entries.remove(id) != null
     fun ending(id: String): Boolean = if (id in entries) put(id, mapOf("status" to "ending")) else false
     fun liveStates(): List<Map<String, Any?>> = entries.values.map { it.state }.filter {
-        it["status"] in listOf("ringing", "dialing", "connecting", "connected", "held")
+        it["status"] in listOf("ringing", "dialing", "connecting", "connected", "reconnecting", "held")
     }
 
     data class Plan(val primary: Map<String, Any?>?, val waiting: List<Map<String, Any?>>, val heldCount: Int) {
@@ -123,7 +124,7 @@ internal class CallNotificationRoster {
         }
     }
     fun plan(retainedPrimaryId: String? = null): Plan {
-        val active = entries.values.filter { it.state["status"] in listOf("dialing", "connecting", "connected") }
+        val active = entries.values.filter { it.state["status"] in listOf("dialing", "connecting", "connected", "reconnecting") }
         val held = entries.values.filter { it.state["status"] == "held" }
         val ringing = entries.values.filter { it.state["status"] == "ringing" }
         val ending = entries.values.filter { it.state["status"] == "ending" }

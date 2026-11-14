@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.Person
 import android.os.SystemClock
 import android.telecom.DisconnectCause
+import io.livekit.android.events.DisconnectReason
 import androidx.core.telecom.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -39,6 +40,7 @@ class ActiveCallEndTest {
         private var realControls: CallControlScope? = null
         val coreClosed = CompletableDeferred<Unit>()
         var disconnects = 0
+        val disconnectCauses = mutableListOf<Int>()
         var disconnectFailures = 0
         var throwDisconnectFailures = false
         var reconnectTimeoutMillis = NATIVE_MEDIA_RECONNECT_TIMEOUT_MILLIS
@@ -64,6 +66,7 @@ class ActiveCallEndTest {
                         admitted(object : CallControlScope by real {
                             override suspend fun disconnect(cause: DisconnectCause): CallControlResult {
                                 disconnects++
+                                disconnectCauses += cause.code
                                 if (disconnectFailures > 0) {
                                     disconnectFailures--
                                     if (throwDisconnectFailures) error("Injected Core disconnect failure")
@@ -92,15 +95,17 @@ class ActiveCallEndTest {
             val closed = CompletableDeferred<Unit>()
             private var connection: NativeRoomConnection? = null
             private var failed: () -> Unit = {}
+            private var disconnected: (NativeMediaDisconnection) -> Unit = { failed() }
             override var isPrepared = false
                 private set
             var activations = 0
             var closes = 0
             override fun setFailureListener(listener: () -> Unit) { failed = listener }
+            override fun setDisconnectListener(listener: (NativeMediaDisconnection) -> Unit) { disconnected = listener }
             override suspend fun prewarm(payload: Map<String, Any?>) {
                 isPrepared = true
-                connection = NativeRoomConnection(scope, { _, _ -> }, {
-                    isPrepared = false; failed()
+                connection = NativeRoomConnection(scope, { stage, reason -> NativeMediaSignals.emit(id, stage, reason = reason) }, { reason ->
+                    isPrepared = false; disconnected(reason?.disconnection() ?: NativeMediaDisconnection.FAILURE)
                 }, reconnectTimeoutMillis = reconnectTimeoutMillis).also { it.observe(room) }
             }
             override suspend fun activate() { activations++ }
@@ -192,6 +197,58 @@ class ActiveCallEndTest {
                 else NativeMediaRegistry.factories["livekit"] = previousFactory
             }
         }
+    }
+
+    @Test fun aServerReportCannotReplaceAnAcceptedLocalEnd() = localEndRace(0)
+    @Test fun aCallEndedPushCannotReplaceAnAcceptedLocalEnd() = localEndRace(1)
+    @Test fun roomDeletionCannotReplaceAnAcceptedLocalEnd() = localEndRace(2)
+
+    private fun localEndRace(source: Int) = fixture {
+        answer()
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val finished = CompletableDeferred<Unit>()
+        ConversationActions.configure { action ->
+            assertTrue(action is ConversationAction.End)
+            withContext(NonCancellable) { entered.complete(Unit); release.await(); finished.complete(Unit) }
+            ConversationActionResult.Refuse("lateRefusal")
+        }
+        try {
+            coroutineScope {
+                val ending = async(start = CoroutineStart.UNDISPATCHED) { engine.end(id) }
+                withTimeout(1000) { entered.await() }
+                val started = SystemClock.elapsedRealtime()
+                when (source) {
+                    0 -> ConversationEnds.report(context, id, "failed")
+                    1 -> engine.receiveCallEnded(mapOf("serverCallId" to id, "eventId" to "end-$id", "reason" to "remoteEnded"))
+                    else -> session.room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.ROOM_DELETED))
+                }
+                withTimeout(500) { ending.await() }
+                assertFalse("End must complete before the app handler replies", release.isCompleted)
+                removedWithin(started, 3000)
+                assertEquals("local", terminal?.get("reason")); assertNull(terminal?.get("failure"))
+                assertEquals(listOf(DisconnectCause.LOCAL), disconnectCauses)
+                val performed = events.filter { it["type"] == "actionPerformed" }.map { it["payload"] as Map<*, *> }
+                assertEquals(1, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
+                release.complete(Unit); withTimeout(1000) { finished.await() }; yield()
+                assertEquals(1, signals.count { it.stage == NativeMediaStage.HANDLER_STARTED })
+                assertEquals(1, signals.count { it.stage == NativeMediaStage.HANDLER_RESPONDED })
+                duplicatesDoNothing()
+            }
+        } finally { release.complete(Unit) }
+    }
+
+    @Test fun aRemoteReportBeforeLocalEndKeepsItsReasonAndHasNoLocalReceipt() = fixture {
+        answer(); disconnectFailures = 1
+        val started = SystemClock.elapsedRealtime()
+        ConversationEnds.report(context, id, "remoteEnded")
+        withTimeout(1000) { while (terminal == null) delay(10) }
+        runCatching { engine.end(id) }
+        removedWithin(started, 3000)
+        assertEquals("remoteEnded", terminal?.get("reason"))
+        assertTrue(disconnectCauses.all { it == DisconnectCause.REMOTE })
+        assertFalse(events.any { it["type"] == "actionPerformed" &&
+            ((it["payload"] as Map<*, *>)["action"] as Map<*, *>)["kind"] == "end" })
     }
 
     private fun fixture(body: suspend Fixture.() -> Unit) = runBlocking {

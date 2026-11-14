@@ -20,7 +20,7 @@ internal enum class EndedFailure(val kind: String, val cause: NativeIncomingFilt
     FILTERED_OTHER("filtered", NativeIncomingFilterReason.OTHER);
 
     companion object {
-        private val handlerCodes = setOf("deadline_exceeded", "handler_failed")
+        private val handlerCodes = setOf("deadline_exceeded", "handler_failed", "refused")
 
         /** `NOT_PLACED` when a start or join failed because its handler rejected it or nobody settled it in time. */
         fun ofHandler(error: Throwable): EndedFailure? =

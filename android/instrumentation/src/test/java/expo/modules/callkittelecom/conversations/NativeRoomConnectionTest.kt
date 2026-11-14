@@ -7,6 +7,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NativeRoomConnectionTest {
+    @Test fun reconnectWindowControlsPublicStatusWithHoldTakingPrecedence() = runBlocking {
+        val room = FakeRoom()
+        val status = NativeConnectionStatus()
+        val connection = NativeRoomConnection(this, { stage, _ -> status.observe(stage) }, room::release)
+        connection.observe(room.events)
+        try {
+            assertEquals("connected", status.connected(false))
+            room.events.emit(NativeRoomState.RECONNECTING); yield()
+            assertEquals("reconnecting", status.connected(false))
+            assertEquals("held", status.connected(true))
+            room.events.emit(NativeRoomState.RECONNECTED); yield()
+            assertEquals("held", status.connected(true))
+            assertEquals("connected", status.connected(false))
+        } finally { connection.close() }
+    }
+
     private class FakeRoom {
         val events = MutableSharedFlow<NativeRoomState>()
         var releases = 0

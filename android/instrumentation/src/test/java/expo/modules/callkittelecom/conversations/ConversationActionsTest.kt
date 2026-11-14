@@ -57,8 +57,7 @@ class ConversationActionsTest {
     }
 
     @Test fun refusalMapsToTypedFailuresAndOnlyAnswerOrAppControlsCanVeto() {
-        assertEquals("handler_failed", ConversationActionResult.Refuse("claimLost").rejection().code)
-        assertEquals("deadline_exceeded", ConversationActionResult.Refuse("handlerTimedOut").rejection().code)
+        assertEquals("refused", NativeActionDecision(ConversationActionResult.Refuse("claimLost")).rejection().code)
         assertEquals("failed", ConversationActionResult.Refuse("claimLost", "invalid").validEndReason())
         assertEquals("answeredElsewhere", ConversationActionResult.Refuse("claimLost", "answeredElsewhere").validEndReason())
         assertFalse(ConversationAction.Hold("call", null, "app", true).canRefuse("system"))
@@ -81,8 +80,53 @@ class ConversationActionsTest {
             val signals = mutableListOf<Pair<NativeMediaStage, String?>>()
             val result = ConversationActionDecision(scope, { stage, outcome -> signals += stage to outcome }, budgetMillis = 40)
                 .ask(ConversationAction.Answer("call", null, "system"), handler)
-            assertEquals(ConversationActionResult.Refuse(reason), result)
+            assertEquals(ConversationActionResult.Refuse(reason), result.result)
+            assertEquals(if (reason == "handlerTimedOut") "deadline_exceeded" else "handler_failed", result.rejection().code)
             assertEquals(listOf(NativeMediaStage.HANDLER_STARTED to null, NativeMediaStage.HANDLER_RESPONDED to reason), signals)
+        }
+    }
+
+    @Test fun explicitRefusalsKeepTheirReasonEvenWhenItResemblesAnInternalFailure() = fixture { scope ->
+        for (reason in listOf("claimLost", "handlerTimedOut", "handlerFailed")) {
+            val receipt = NativeActionReceipt("call", NativeActionOrigin.APP, NativePerformedAction.Hold(true))
+            ConversationActions.configure { ConversationActionResult.Refuse(reason) }
+            receipt.decide(ConversationActionDecision(scope, { _, _ -> }))
+            val wire = org.json.JSONObject(CommandRejection.from(receipt.rejection()).encodedMessage.removePrefix("expo-conversation:"))
+            assertEquals("refused", wire.getString("code"))
+            assertEquals(reason, wire.getString("message"))
+        }
+    }
+
+    @Test fun aRemoteCompletionSettlesEndAndDeclineWithoutWaitingForTheHandlerOrRepeatingTelemetry() = fixture { scope ->
+        for (decline in listOf(false, true)) {
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val finished = CompletableDeferred<Unit>()
+            val signals = mutableListOf<Pair<NativeMediaStage, String?>>()
+            ConversationActions.configure { action ->
+                assertEquals(decline, action is ConversationAction.Decline)
+                withContext(NonCancellable) { entered.complete(Unit); release.await() }
+                finished.complete(Unit)
+                ConversationActionResult.Refuse("lateRefusal")
+            }
+            val receipt = NativeActionReceipt("call", NativeActionOrigin.APP, NativePerformedAction.End, decline = decline)
+            try {
+                coroutineScope {
+                    val result = async(start = CoroutineStart.UNDISPATCHED) {
+                        receipt.decide(ConversationActionDecision(scope, { stage, reason -> signals += stage to reason }))
+                    }
+                    entered.await()
+                    receipt.completeFromRemote()
+                    assertTrue(withTimeout(250) { result.await() } is ConversationActionResult.Proceed)
+                    var effects = 0
+                    var performed = 0
+                    repeat(2) { receipt.perform({ effects++ }, {}) { _, _ -> performed++ } }
+                    assertEquals(1, effects); assertEquals(1, performed)
+                    release.complete(Unit); withTimeout(1000) { finished.await() }; yield()
+                    assertEquals(listOf(NativeMediaStage.HANDLER_STARTED to null,
+                        NativeMediaStage.HANDLER_RESPONDED to "proceed"), signals)
+                }
+            } finally { release.complete(Unit) }
         }
     }
 
