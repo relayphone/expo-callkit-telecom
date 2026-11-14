@@ -181,10 +181,15 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
         available()
         require(requestedRate == 48000)
         builder.setSampleRate(requestedRate)
-        builder.setPlaybackSamplesReadyCallback { samples ->
+        builder.setPlaybackSamplesReadyCallback(playbackCallback(observer))
+    }
+
+    internal fun playbackCallback(observer: JavaAudioDeviceModule.PlaybackSamplesReadyCallback) =
+        JavaAudioDeviceModule.PlaybackSamplesReadyCallback { samples ->
+            val window = output.get()
             observer.onWebRtcAudioTrackSamplesReady(samples)
             if (samples.audioFormat != AudioFormat.ENCODING_PCM_16BIT) failure.set(MediaHookFailure.UNSUPPORTED_PCM)
-            else if (observingOutput.get()) observe(output.get(),
+            else if (observingOutput.get()) observe(window,
                 ByteBuffer.wrap(samples.data).order(ByteOrder.nativeOrder()), samples.sampleRate, samples.channelCount)
             if (observingOutput.get()) synchronized(outputLock) {
                 if (captureOutput) {
@@ -202,7 +207,6 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
                 }
             }
         }
-    }
 
     override fun published(publication: LocalTrackPublication) { this.publication = publication }
     override fun subscribed(track: RemoteAudioTrack) { remoteTrack = track }

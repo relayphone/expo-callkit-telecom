@@ -6,6 +6,7 @@ import android.media.AudioManager
 import android.os.Bundle
 import io.livekit.android.audio.AudioBufferCallback
 import io.livekit.android.room.track.LocalAudioTrack
+import livekit.org.webrtc.audio.JavaAudioDeviceModule
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.Base64
@@ -142,6 +143,38 @@ class MediaHookFeasibilityTest {
     }
 
     @Test fun realRecordinglessCapturePublicationGateDecodedAndPostMuteOutput() = journey(48000)
+
+    @Test fun aPhaseResetInsideAnInFlightPlaybackCallbackCannotReclassifyItsPcm() {
+        val hooks = EmulatorMediaHooks(context, "phase-reset")
+        try {
+            hooks.beginPhase()
+            val callback = hooks.playbackCallback { hooks.beginPhase() }
+            callback.onWebRtcAudioTrackSamplesReady(playbackSamples(512))
+            assertEquals(0L, hooks.output().blocks)
+            assertEquals(0L, hooks.output().nonzero)
+            hooks.playbackCallback { }.onWebRtcAudioTrackSamplesReady(playbackSamples(0))
+            assertEquals(1L, hooks.output().blocks)
+            assertEquals(0L, hooks.output().nonzero)
+        } finally { hooks.close() }
+    }
+
+    @Test fun freshNonzeroPlaybackInTheNewPhaseStillFailsTheSilenceRequirement() {
+        val hooks = EmulatorMediaHooks(context, "phase-nonzero")
+        try {
+            hooks.beginPhase()
+            val callback = hooks.playbackCallback { }
+            callback.onWebRtcAudioTrackSamplesReady(playbackSamples(0))
+            callback.onWebRtcAudioTrackSamplesReady(playbackSamples(512))
+            assertEquals(2L, hooks.output().blocks)
+            assertEquals(1L, hooks.output().nonzero)
+        } finally { hooks.close() }
+    }
+
+    private fun playbackSamples(value: Short) = JavaAudioDeviceModule.AudioSamples(
+        AudioFormat.ENCODING_PCM_16BIT, 1, 48000,
+        ByteBuffer.allocate(960).order(java.nio.ByteOrder.nativeOrder()).apply {
+            repeat(480) { putShort(value) }
+        }.array())
 
     private fun journey(rate: Int) = runBlocking {
         withContext(Dispatchers.Main) {

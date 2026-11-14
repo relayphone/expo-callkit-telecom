@@ -42,8 +42,15 @@ changes only synthetic capture in the emulator-test configuration; device and
 Release media settings retain their defaults. The read-only tap stays enabled
 to distinguish processing failures from later codec or receive failures.
 
+An identification-only AEC-off run recovered complete markers in both
+directions. AEC-on is restored while the synthetic-capture configuration is
+evaluated; the diagnostic result alone does not establish a qualified default.
+
 Decoded audio is observed through remote sinks. Post-mute output uses the actual
 playback tap, with the pinned direct buffer's array access verified before use.
+Each callback retains the observation phase it entered, so a concurrent phase
+reset cannot count its earlier PCM in the new phase. Fresh nonzero output in
+the new phase still fails the silence check.
 An absent, disabled, stale or unsupported tap fails. Held output must deliver
 fresh zero PCM while decoded audio continues. Source ZERO/WRONG controls and
 muted publication reject every raw detected marker, including impaired markers.
