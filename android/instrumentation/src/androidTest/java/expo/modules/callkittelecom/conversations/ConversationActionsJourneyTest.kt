@@ -40,6 +40,7 @@ class ConversationActionsJourneyTest {
         val muteEntered = CompletableDeferred<Unit>()
         @Volatile var mediaMuted = false
         @Volatile var failMediaMute = false
+        @Volatile var activationGate: CompletableDeferred<Unit>? = null
         private val observer = NativeMediaObserver { signals += it }
         init {
             engine.actions.resetBridge()
@@ -59,7 +60,7 @@ class ConversationActionsJourneyTest {
                         prepared += payload
                         NativeMediaSignals.emit(payload["serverCallId"] as String, NativeMediaStage.ROOM_CONNECTED)
                     }
-                    override suspend fun activate() {}
+                    override suspend fun activate() { activationGate?.await() }
                     override suspend fun setHeld(held: Boolean) {}
                     override suspend fun setMuted(muted: Boolean) {
                         if (muted && failMediaMute) error("Capture session lost")
@@ -103,6 +104,7 @@ class ConversationActionsJourneyTest {
         suspend fun close() {
             ConversationActions.configure(null)
             muteGate?.complete(Unit)
+            activationGate?.complete(Unit)
             try { withContext(NonCancellable) {
                 for (id in ids) if (state(id) != null) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                 ids.lastOrNull()?.let { removed(it) }
@@ -123,7 +125,9 @@ class ConversationActionsJourneyTest {
         val id = incoming()
         val entered = CompletableDeferred<Unit>()
         val gate = CompletableDeferred<Unit>()
-        handler { entered.complete(Unit); gate.await(); ConversationActionResult.Proceed() }
+        val mediaGate = CompletableDeferred<Unit>()
+        activationGate = mediaGate
+        handler { entered.complete(Unit); gate.await(); ConversationActionResult.Proceed(grant("answer-settlement")) }
         try { coroutineScope {
             val result = async { ConversationControls.answerWithOutcome(engine.context, id) }
             withTimeout(1000) { entered.await() }
@@ -133,8 +137,11 @@ class ConversationActionsJourneyTest {
             assertEquals(ConversationCommandOutcome.Performed(id, ConversationCommandStatus.CONNECTING),
                 withTimeout(5000) { result.await() })
             assertEquals("connecting", state(id)?.get("status"))
+            assertNull(state(id)?.get("connectedAt"))
             assertEquals(1, performed.count { it["conversationId"] == id && (it["action"] as Map<*, *>)["kind"] == "answer" })
-        } } finally { gate.complete(Unit) }
+            mediaGate.complete(Unit)
+            connected(id)
+        } } finally { gate.complete(Unit); mediaGate.complete(Unit) }
     }
 
     @Test fun nativeEndAndDeclineWaitForLogicalEndAndReturnItsReason() = fixture {
