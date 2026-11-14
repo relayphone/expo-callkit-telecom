@@ -138,6 +138,7 @@ class ConversationEngine(val context: Context) {
         var endJob: Job? = null
         var ending = false
         var terminal = false
+        val logicalEnd = CompletableDeferred<ConversationCommandOutcome.Performed>()
         var terminalIntent: NativeEndedIntake.Intent? = null
         lateinit var disconnect: CoreCallDisconnect
         /** Why the call failed, when that is known before it ends. */
@@ -221,6 +222,7 @@ class ConversationEngine(val context: Context) {
                         "conversationId" to id, "serverCallId" to intent.payload.serverCallId, "eventId" to intent.payload.eventId)))
                 }
                 if (calls[id] !== current) continue
+                current.logicalEnd.complete(performedCommand(id, current.state))
                 current.visible = false
                 if (current.disconnect.pending) ConversationService.ending(context, id)
                 else releaseTerminal(id, current)
@@ -245,6 +247,12 @@ class ConversationEngine(val context: Context) {
         NativeMediaSignals.emit(serverCallId(current), stage, measurements, reason = reason)
     }
     private fun call(id: String) = calls[id] ?: error("unknown_conversation")
+    internal suspend fun commandOutcome(id: String, ending: Boolean = false,
+                                        command: suspend () -> Unit): ConversationCommandOutcome = try {
+        val current = call(id)
+        command()
+        if (ending) current.logicalEnd.await() else performedCommand(id, current.state)
+    } catch (error: Exception) { CommandRejection.from(error).outcome }
     private fun live(current: Call): Boolean = calls[current.state["id"] as String] === current &&
         identities.isCurrent(current.reservation) && !current.terminal && !current.ending && !current.localEndPending && current.incoming?.intent == null
     private fun requireLive(current: Call) { check(live(current)) { "unknown_conversation" } }
@@ -647,6 +655,12 @@ class ConversationEngine(val context: Context) {
                 throw receipt.rejection()
             }
             if (!latest()) return
+            val endRejection = if (action == NativePerformedAction.End && origin == NativeActionOrigin.APP &&
+                decision is ConversationActionResult.Refuse) receipt.rejection() else null
+            if (action == NativePerformedAction.End && current.terminal) {
+                endRejection?.let { throw it }
+                return
+            }
             if (decision is ConversationActionResult.Refuse && origin == NativeActionOrigin.SYSTEM &&
                 (action is NativePerformedAction.Hold || action is NativePerformedAction.Mute)) receipt.observedFromSystem()
             if (action != NativePerformedAction.End) requireLive(current)
@@ -685,6 +699,7 @@ class ConversationEngine(val context: Context) {
                 if (action == NativePerformedAction.End) { current.holdingTerminal = false; flushTerminals() }
             }
             observeControl(id, action, origin, NativeControlPoint.COMPLETED)
+            endRejection?.let { throw it }
         } finally {
             val remaining = receipt.release()
             if (remaining == 0 && current.receipts[action] === receipt) current.receipts.remove(action)

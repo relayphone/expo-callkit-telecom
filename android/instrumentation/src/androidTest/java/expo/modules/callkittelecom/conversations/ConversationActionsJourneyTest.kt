@@ -40,6 +40,7 @@ class ConversationActionsJourneyTest {
         val muteEntered = CompletableDeferred<Unit>()
         @Volatile var mediaMuted = false
         @Volatile var failMediaMute = false
+        @Volatile var activationGate: CompletableDeferred<Unit>? = null
         private val observer = NativeMediaObserver { signals += it }
         init {
             engine.actions.resetBridge()
@@ -59,7 +60,7 @@ class ConversationActionsJourneyTest {
                         prepared += payload
                         NativeMediaSignals.emit(payload["serverCallId"] as String, NativeMediaStage.ROOM_CONNECTED)
                     }
-                    override suspend fun activate() {}
+                    override suspend fun activate() { activationGate?.await() }
                     override suspend fun setHeld(held: Boolean) {}
                     override suspend fun setMuted(muted: Boolean) {
                         if (muted && failMediaMute) error("Capture session lost")
@@ -103,6 +104,7 @@ class ConversationActionsJourneyTest {
         suspend fun close() {
             ConversationActions.configure(null)
             muteGate?.complete(Unit)
+            activationGate?.complete(Unit)
             try { withContext(NonCancellable) {
                 for (id in ids) if (state(id) != null) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                 ids.lastOrNull()?.let { removed(it) }
@@ -117,6 +119,195 @@ class ConversationActionsJourneyTest {
 
     private fun fixture(body: suspend Fixture.() -> Unit) = runBlocking {
         withContext(Dispatchers.Main) { val fixture = Fixture(); try { fixture.body() } finally { fixture.close() } }
+    }
+
+    @Test fun nativeAnswerWaitsForSettlementAndReturnsThePublishedPhase() = fixture {
+        val id = incoming()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val mediaGate = CompletableDeferred<Unit>()
+        activationGate = mediaGate
+        handler { entered.complete(Unit); gate.await(); ConversationActionResult.Proceed(grant("answer-settlement")) }
+        try { coroutineScope {
+            val result = async { ConversationControls.answerWithOutcome(engine.context, id) }
+            withTimeout(1000) { entered.await() }
+            assertFalse(result.isCompleted)
+            assertEquals("ringing", state(id)?.get("status"))
+            gate.complete(Unit)
+            assertEquals(ConversationCommandOutcome.Performed(id, ConversationCommandStatus.CONNECTING),
+                withTimeout(5000) { result.await() })
+            assertEquals("connecting", state(id)?.get("status"))
+            assertNull(state(id)?.get("connectedAt"))
+            assertEquals(1, performed.count { it["conversationId"] == id && (it["action"] as Map<*, *>)["kind"] == "answer" })
+            mediaGate.complete(Unit)
+            connected(id)
+        } } finally { gate.complete(Unit); mediaGate.complete(Unit) }
+    }
+
+    @Test fun nativeEndAndDeclineWaitForLogicalEndAndReturnItsReason() = fixture {
+        for (decline in listOf(false, true)) {
+            handler { ConversationActionResult.Proceed(grant("native-end")) }
+            val id = incoming()
+            if (!decline) { engine.join(id); connected(id) }
+            val entered = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            handler { entered.complete(Unit); gate.await(); ConversationActionResult.Proceed() }
+            try { coroutineScope {
+                val result = async {
+                    if (decline) ConversationControls.declineWithOutcome(engine.context, id)
+                    else ConversationControls.endWithOutcome(engine.context, id)
+                }
+                withTimeout(1000) { entered.await() }
+                assertFalse(result.isCompleted); assertNull(ended[id])
+                gate.complete(Unit)
+                assertEquals(ConversationCommandOutcome.Performed(id, ConversationCommandStatus.ENDED, ConversationEndReason.LOCAL),
+                    withTimeout(5000) { result.await() })
+                assertEquals("local", ended[id])
+                removed(id)
+            } } finally { gate.complete(Unit) }
+        }
+    }
+
+    @Test fun nativeEndAndDeclinePreserveExactRefusalsWhileStillDisconnecting() = fixture {
+        for (decline in listOf(false, true)) {
+            handler { ConversationActionResult.Proceed(grant("native-refusal")) }
+            val id = incoming()
+            if (!decline) { engine.join(id); connected(id) }
+            val reason = if (decline) "decline reason: handlerTimedOut" else "end reason: handlerFailed"
+            handler { action ->
+                assertEquals(decline, action is ConversationAction.Decline)
+                ConversationActionResult.Refuse(reason)
+            }
+            val result = withTimeout(5000) {
+                if (decline) ConversationControls.declineWithOutcome(engine.context, id)
+                else ConversationControls.endWithOutcome(engine.context, id)
+            }
+            assertEquals(ConversationCommandOutcome.Refused(reason), result)
+            assertEquals("local", ended[id]); removed(id)
+            assertEquals(1, performed.count { it["conversationId"] == id && (it["action"] as Map<*, *>)["kind"] == "end" })
+
+            handler { ConversationActionResult.Proceed(grant("bridge-refusal")) }
+            val bridgeId = incoming()
+            if (!decline) { engine.join(bridgeId); connected(bridgeId) }
+            handler { ConversationActionResult.Refuse(reason) }
+            val error = runCatching { engine.end(bridgeId) }.exceptionOrNull() as Exception
+            assertEquals(result, CommandRejection.from(error).outcome)
+            removed(bridgeId)
+        }
+    }
+
+    @Test fun overlappingNativeEndsShareThePerformedOrRefusedSettlement() = fixture {
+        val admission = engine.coreAdmission
+        var disconnects = 0
+        engine.coreAdmission = CoreCallAdmission { attributes, callbacks, admitted ->
+            admission.add(attributes, callbacks) {
+                admitted(object : CallControlScope by this {
+                    override suspend fun disconnect(cause: android.telecom.DisconnectCause): androidx.core.telecom.CallControlResult {
+                        disconnects++
+                        return this@add.disconnect(cause)
+                    }
+                })
+            }
+        }
+        try {
+            for (refused in listOf(false, true)) {
+                handler { ConversationActionResult.Proceed(grant("overlap")) }
+                val id = incoming(); engine.join(id); connected(id)
+                val before = disconnects
+                val entered = CompletableDeferred<Unit>()
+                val gate = CompletableDeferred<Unit>()
+                handler {
+                    entered.complete(Unit); gate.await()
+                    if (refused) ConversationActionResult.Refuse("shared end refusal") else ConversationActionResult.Proceed()
+                }
+                try { coroutineScope {
+                    val first = async(start = CoroutineStart.UNDISPATCHED) { ConversationControls.endWithOutcome(engine.context, id) }
+                    withTimeout(1000) { entered.await() }
+                    val second = async(start = CoroutineStart.UNDISPATCHED) { ConversationControls.endWithOutcome(engine.context, id) }
+                    assertFalse(first.isCompleted); assertFalse(second.isCompleted)
+                    gate.complete(Unit)
+                    val expected = if (refused) ConversationCommandOutcome.Refused("shared end refusal")
+                        else ConversationCommandOutcome.Performed(id, ConversationCommandStatus.ENDED, ConversationEndReason.LOCAL)
+                    assertEquals(expected, withTimeout(5000) { first.await() })
+                    assertEquals(expected, withTimeout(5000) { second.await() })
+                    removed(id)
+                    assertEquals(1, disconnects - before)
+                    assertEquals(1, actions.count { it.conversationId == id && it is ConversationAction.End })
+                    assertEquals(1, performed.count { it["conversationId"] == id && (it["action"] as Map<*, *>)["kind"] == "end" })
+                } } finally { gate.complete(Unit) }
+            }
+        } finally { engine.coreAdmission = admission }
+    }
+
+    @Test fun nativeAnswerAndHoldRefusalsMatchTheCommandBridge() = fixture {
+        val reason = "exact app refusal"
+        handler { ConversationActionResult.Refuse(reason) }
+        var id = incoming()
+        assertEquals(ConversationCommandOutcome.Refused(reason), ConversationControls.answerWithOutcome(engine.context, id))
+        removed(id)
+        id = incoming()
+        val answerError = runCatching { engine.join(id) }.exceptionOrNull() as Exception
+        assertEquals(ConversationCommandOutcome.Refused(reason), CommandRejection.from(answerError).outcome)
+        removed(id)
+
+        handler { ConversationActionResult.Proceed(grant("native-hold")) }
+        id = incoming(); engine.join(id); connected(id)
+        handler { ConversationActionResult.Refuse(reason) }
+        val result = ConversationControls.setHeldWithOutcome(engine.context, id, true)
+        val error = runCatching { engine.hold(id, true) }.exceptionOrNull() as Exception
+        assertEquals(ConversationCommandOutcome.Refused(reason), result)
+        assertEquals(result, CommandRejection.from(error).outcome)
+        assertEquals("connected", state(id)?.get("status"))
+    }
+
+    @Test fun nativeTimeoutAndThrownHandlerKeepTheBridgeFailureCodes() = fixture {
+        handler { ConversationActionResult.Proceed(grant("native-failures")) }
+        val id = incoming(); engine.join(id); connected(id)
+        for (timeout in listOf(true, false)) {
+            handler { if (timeout) awaitCancellation() else error("private transport detail") }
+            val result = ConversationControls.setHeldWithOutcome(engine.context, id, true)
+            val error = runCatching { engine.hold(id, true) }.exceptionOrNull() as Exception
+            val code = if (timeout) ConversationCommandCode.DEADLINE_EXCEEDED else ConversationCommandCode.HANDLER_FAILED
+            assertEquals(code, (result as ConversationCommandOutcome.Failed).code)
+            assertEquals(CommandRejection.from(error).outcome, result)
+            assertFalse(result.message.contains("private transport detail"))
+            assertEquals("connected", state(id)?.get("status"))
+        }
+        val unknown = ConversationControls.endWithOutcome(engine.context, "unknown-native-call") as ConversationCommandOutcome.Failed
+        assertEquals(ConversationCommandCode.UNKNOWN_CONVERSATION, unknown.code)
+    }
+
+    @Test fun cancellingTheNativeWaiterDoesNotAbandonAnAcceptedEnd() = fixture {
+        val id = incoming()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        handler { entered.complete(Unit); gate.await(); ConversationActionResult.Proceed() }
+        try { coroutineScope {
+            val result = async { ConversationControls.endWithOutcome(engine.context, id) }
+            withTimeout(1000) { entered.await() }
+            result.cancelAndJoin()
+            assertNull(ended[id])
+            gate.complete(Unit)
+            removed(id)
+            assertEquals("local", ended[id])
+            assertEquals(1, performed.count { it["conversationId"] == id && (it["action"] as Map<*, *>)["kind"] == "end" })
+        } } finally { gate.complete(Unit) }
+    }
+
+    @Test fun remoteCompletionSettlesTheNativeEndOutcomeBeforeItsHandlerReturns() = fixture {
+        val id = incoming()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        handler { entered.complete(Unit); gate.await(); ConversationActionResult.Refuse("late refusal") }
+        try { coroutineScope {
+            val result = async { ConversationControls.declineWithOutcome(engine.context, id) }
+            withTimeout(1000) { entered.await() }
+            engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+            assertEquals(ConversationCommandOutcome.Performed(id, ConversationCommandStatus.ENDED, ConversationEndReason.LOCAL),
+                withTimeout(1000) { result.await() })
+            assertFalse(gate.isCompleted)
+            removed(id)
+        } } finally { gate.complete(Unit) }
     }
 
     @Test fun mediaFailureDuringSystemMuteIsMediaFailureRatherThanFrameworkRemoval() = fixture {
@@ -200,7 +391,11 @@ class ConversationActionsJourneyTest {
                     ConversationActionResult.Refuse("lateFailure")
                 }
                 val began = SystemClock.elapsedRealtime()
-                withTimeout(3000) { engine.end(id); removed(id) }
+                withTimeout(3000) {
+                    val error = runCatching { engine.end(id) }.exceptionOrNull() as Exception
+                    assertEquals("deadline_exceeded", CommandRejection.from(error).code)
+                    removed(id)
+                }
                 assertTrue(SystemClock.elapsedRealtime() - began < 3000)
                 assertEquals("local", ended[id])
                 assertEquals(if (answered) ConversationAction.End(id, id, "app") else ConversationAction.Decline(id, id, "app"), actions.last())
@@ -309,11 +504,13 @@ class ConversationActionsJourneyTest {
         try { coroutineScope {
             val start = async(start = CoroutineStart.UNDISPATCHED) { runCatching { engine.start(mapOf("id" to id, "to" to mapOf("id" to "callee"))) } }
             withTimeout(1000) { placement.await() }
-            val end = async(start = CoroutineStart.UNDISPATCHED) { engine.end(id) }
+            val end = async(start = CoroutineStart.UNDISPATCHED) { runCatching { engine.end(id) } }
             withTimeout(1000) { entered.await() }
             assertTrue(start.await().isFailure)
             assertNotNull(state(id)); assertNull(ended[id])
-            gate.complete(Unit); withTimeout(1000) { end.await() }
+            gate.complete(Unit)
+            val error = withTimeout(1000) { end.await() }.exceptionOrNull() as Exception
+            assertEquals(ConversationCommandOutcome.Refused("ignoredEndFailure"), CommandRejection.from(error).outcome)
             assertEquals("local", ended[id]); removed(id)
             assertEquals(listOf(ConversationAction.End(id, null, "app")), actions.toList())
             assertEquals(1, performed.count { it["conversationId"] == id && (it["action"] as Map<*, *>)["kind"] == "end" })

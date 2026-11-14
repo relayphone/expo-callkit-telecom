@@ -21,7 +21,8 @@ sealed interface ConversationActionResult {
     data class Proceed(val media: Map<String, Any?>? = null) : ConversationActionResult
     /**
      * Refuse an answer, or an app-origin hold/mute. Answer also ends the call with [endReason].
-     * Decline/end always disconnect. System hold/mute retain the OS state; refusal is only signalled.
+     * Decline/end always disconnect; app callers still receive the refusal or handler failure.
+     * System hold/mute retain the OS state; refusal is only signalled.
      * Use a short [reason] code without names, numbers, credentials or server error messages.
      */
     data class Refuse(val reason: String, val endReason: String = "failed") : ConversationActionResult
