@@ -441,6 +441,10 @@ class ConversationEngine(val context: Context) {
                     answer = { if (calls[id] === call) answerFromSystem(id) },
                     disconnect = { cause -> withTimeout(4500) { if (calls[id] === call) {
                         if (call.terminal) Unit
+                        else if (call.localEndPending && call.receipts[NativePerformedAction.End]?.completedRemotely == true) {
+                            completePendingLocalEnd(id, call)
+                            Unit
+                        }
                         else if (call.ending || call.incoming?.intent != null) terminal(id, call.state["endReason"] as? String ?: call.incoming?.intent?.payload?.reason ?: "failed")
                         else if (!call.disconnect.started && cause.code == DisconnectCause.REMOTE) {
                             call.nonActionEnd = true

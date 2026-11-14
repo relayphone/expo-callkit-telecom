@@ -32,6 +32,7 @@ class ConversationCorrectnessTest {
         var retryGate: CompletableDeferred<Unit>? = null
         val retryEntered = CompletableDeferred<Unit>()
         var disconnects = 0
+        var echoDisconnect = false
         val causes = mutableListOf<Int>()
         var throwsRemaining = 0
         val outcomes = ArrayDeque<CallControlResult>()
@@ -58,6 +59,7 @@ class ConversationCorrectnessTest {
                         disconnects++
                         causes += cause.code
                         disconnectEntered.complete(Unit)
+                        if (echoDisconnect) callbacks.disconnect(cause)
                         disconnectGate?.await()
                         if (disconnects == 2) { retryEntered.complete(Unit); retryGate?.await() }
                         if (throwsRemaining > 0) { throwsRemaining--; error("Core disconnect failed") }
@@ -274,6 +276,35 @@ class ConversationCorrectnessTest {
         assertEquals("local", ended?.get("reason"))
         assertEquals(listOf(DisconnectCause.LOCAL), core.causes)
         assertEquals(1, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
+    }
+
+    @Test fun aReentrantCoreEchoKeepsTheLocalReceiptBetweenTerminalSnapshotAndRemoval() = fixture {
+        ready(); core.echoDisconnect = true
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val order = mutableListOf<String>()
+        var terminalSeen = false
+        val previous = engine.emit
+        engine.emit = { name, body ->
+            previous(name, body)
+            if (name == "conversationsChanged") {
+                val current = (body["conversations"] as List<*>).filterIsInstance<Map<*, *>>().firstOrNull { it["id"] == id }
+                if (current?.get("status") == "ended" && !terminalSeen) { terminalSeen = true; order += "ended" }
+                else if (current == null && terminalSeen) order += "removed"
+            } else if (name == "conversationEvent" && body["type"] == "actionPerformed" &&
+                (((body["payload"] as Map<*, *>)["action"] as Map<*, *>)["kind"] == "end")) order += "performed"
+        }
+        ConversationActions.configure { entered.complete(Unit); release.await(); ConversationActionResult.Proceed() }
+        try { coroutineScope {
+            val local = async(start = CoroutineStart.UNDISPATCHED) { engine.end(id) }
+            withTimeout(1000) { entered.await() }
+            engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+            withTimeout(500) { local.await() }
+        } } finally { release.complete(Unit); ConversationActions.configure(null) }
+        ended()
+        assertEquals(listOf("ended", "performed", "removed"), order)
+        assertEquals(listOf(DisconnectCause.LOCAL), core.causes)
+        assertEquals(1, core.disconnects)
     }
 
     @Test fun cancellingTheFirstLocalEndDoesNotCancelAnotherEndOrDuplicateCoreRequest() = fixture {
