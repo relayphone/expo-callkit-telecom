@@ -73,6 +73,15 @@ playback tap, with the pinned direct buffer's array access verified before use.
 Each callback retains the observation phase it entered, so a concurrent phase
 reset cannot count its earlier PCM in the new phase. Fresh nonzero output in
 the new phase still fails the silence check.
+Hold applies the SDK's speaker-mute setter on the playback thread at callback
+completion, between the current device write and the next buffer's gate check.
+This prevents an earlier filled buffer from reaching a callback whose entry
+gate is already closed. The hold operation awaits setter application, without
+waiting for zero PCM or changing the measurement boundary. A stopped or
+never-started device applies mute immediately under the same lifecycle lock.
+Pending application checks caller cancellation at the boundary and is retired
+when output resumes or the session closes. Runtimes without the SDK playback
+tap retain direct muting.
 Bounded transition diagnostics are retained as `gateTrace` in
 `media-hook-results.json`. They use `android.elapsedRealtimeNanos` for control
 request/API acknowledgement/completion, Core mute observations, phase

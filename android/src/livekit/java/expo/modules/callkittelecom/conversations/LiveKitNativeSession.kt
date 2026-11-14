@@ -198,7 +198,11 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     override suspend fun setHeld(held: Boolean): Unit = withContext(Dispatchers.Main.immediate) {
         check(!closed); this@LiveKitNativeSession.held = held
         if (!active) return@withContext
-        if (held) { room?.setSpeakerMute(true); warmth.muteOutput(); pcm.disarm() } else releaseOutput()
+        if (held) {
+            val device = checkNotNull(recording)
+            warmth.muteOutputAtPlaybackBoundary { device.setSpeakerMute(true) }
+            pcm.disarm()
+        } else releaseOutput()
         setMicrophone(!held && !muted)
     }
     override suspend fun setMuted(muted: Boolean): Unit = withContext(Dispatchers.Main.immediate) {
