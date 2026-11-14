@@ -10,6 +10,10 @@ internal class CommandRejection private constructor(
     private val message: String,
     private val nativeCode: Int? = null,
 ) {
+    val outcome: ConversationCommandOutcome
+        get() = if (code == "refused") ConversationCommandOutcome.Refused(message)
+        else ConversationCommandOutcome.Failed(ConversationCommandCode.from(code), message, nativeCode)
+
     val encodedMessage: String
         get() {
             val details = JSONObject().put("code", code).put("message", message)

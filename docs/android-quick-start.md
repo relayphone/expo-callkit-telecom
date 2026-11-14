@@ -409,14 +409,63 @@ notification IDs.
 
 ## Ends your app learns about
 
+### Await native command outcomes
+
+The existing `ConversationControls.answer`, `end`, `decline` and `playTones`
+functions keep their fire-and-forget signatures. Their suspend counterparts are
+`answerWithOutcome`, `endWithOutcome`, `declineWithOutcome` and
+`playTonesWithOutcome`. `setHeldWithOutcome` and `setMutedWithOutcome` expose the
+same app-origin hold and mute commands used by JavaScript.
+
+Each returns `ConversationCommandOutcome`: `Performed` with the published typed
+status, `Refused(reason)` with the handler's exact text, or `Failed(code, message)`.
+`ConversationCommandCode.value` is the JavaScript rejection code, such as
+`deadline_exceeded`, `handler_failed`, `unknown_conversation`, `invalid_arguments`
+or `unsupported`. Native Core errors also retain `nativeCode`. Both paths use the
+same rejection normalizer.
+
+Answer completes after the answer command and its state publication; `CONNECTING`
+can precede media connection. End and Decline complete after the logical end is
+published and include its `ConversationEndReason`. Platform removal can continue
+afterward. End and Decline always disconnect, including when their handler refuses,
+times out or throws; the awaiting native caller and JavaScript still receive that
+refusal or failure. Cancelling an awaiting coroutine stops waiting while the
+accepted command continues in the process scope.
+
+```kotlin
+scope.launch {
+    when (val result = ConversationControls.endWithOutcome(context, conversationId)) {
+        is ConversationCommandOutcome.Performed -> showEnded(result.endReason)
+        is ConversationCommandOutcome.Refused -> showHandlerRefusal(result.reason)
+        is ConversationCommandOutcome.Failed -> showFailure(result.code.value, result.message)
+    }
+}
+```
+
+Other public native entries retain their signatures and behavior:
+
+| Entry | Role |
+| --- | --- |
+| `ConversationEngine.start` | Suspend outgoing placement; returns the conversation ID |
+| `ConversationEngine.report` | Suspend app facts, including a logical end |
+| `ConversationEngine.tones`, `selectRoute` | Suspend tones and audio-route commands |
+| `ConversationEngine.snapshot`, `audioRoutes` | Read public conversation and route snapshots |
+| `ConversationEnds.report` | Fire-and-forget server-end intake |
+| `ConversationMedia.provide`, `configure` | Supply credentials and configure future native sessions |
+
+Direct engine commands remain confined to main. The public controls dispatch there
+from any thread. Engine answer, end, hold and mute implementation methods are
+internal; app code uses `ConversationControls`.
+
 Local app or system-UI ends use `local`; remote ends use `remoteEnded`. An unexpected
 Core-Telecom removal uses `failed` with `failure.kind = "frameworkReset"`, while
 native media connection loss uses `failed` with `failure.kind = "media"`.
 Core's first mute observation is a baseline and preserves any app-requested mute.
-Failed disconnects retry once after a short delay, then end locally; a call Core
-no longer tracks is already removed. Overlapping ends share the teardown.
-An app end report received while a local end is disconnecting keeps the report's
-reason and suppresses the pending local action receipt without another Core request.
+Failed disconnects retry with backoff up to the platform-removal deadline; a call
+Core no longer tracks is already removed. Overlapping ends share the teardown.
+An accepted local End or Decline keeps its logical reason when a later server end
+report, end push or room deletion confirms completion. That confirmation settles
+the original action without waiting for its handler or creating another Core request.
 
 When your native server integration learns that an incoming call ended, report
 the same `serverCallId` used by its invitation:

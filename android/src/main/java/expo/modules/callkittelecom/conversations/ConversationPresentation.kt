@@ -158,6 +158,40 @@ object ConversationControls {
         perform(context) { it.tones(conversationId, digits) }
     }
 
+    /** Await answer settlement and its published phase, which can precede media connection. */
+    @JvmStatic suspend fun answerWithOutcome(context: Context, conversationId: String): ConversationCommandOutcome =
+        outcome(context, conversationId) { it.join(conversationId, NativeActionOrigin.APP) }
+
+    /** Await the logical end and its reason; platform removal can continue afterward. */
+    @JvmStatic suspend fun endWithOutcome(context: Context, conversationId: String): ConversationCommandOutcome =
+        outcome(context, conversationId, ending = true) { it.end(conversationId, NativeActionOrigin.APP) }
+
+    /** Await a ringing call's decline through the same native action path as [endWithOutcome]. */
+    @JvmStatic suspend fun declineWithOutcome(context: Context, conversationId: String): ConversationCommandOutcome =
+        endWithOutcome(context, conversationId)
+
+    /** Await app-origin hold/resume and preserve the handler's refusal reason. */
+    @JvmStatic suspend fun setHeldWithOutcome(context: Context, conversationId: String, held: Boolean): ConversationCommandOutcome =
+        outcome(context, conversationId) { it.hold(conversationId, held, NativeActionOrigin.APP) }
+
+    /** Await app-origin mute/unmute and preserve the handler's refusal reason. */
+    @JvmStatic suspend fun setMutedWithOutcome(context: Context, conversationId: String, muted: Boolean): ConversationCommandOutcome =
+        outcome(context, conversationId) { it.mute(conversationId, muted, NativeActionOrigin.APP) }
+
+    /** Await the same native tones command used by JavaScript. */
+    @JvmStatic suspend fun playTonesWithOutcome(context: Context, conversationId: String, digits: String): ConversationCommandOutcome =
+        outcome(context, conversationId) { it.tones(conversationId, digits) }
+
+    /** Cancelling a waiting caller leaves the accepted command owned by the process scope. */
+    private suspend fun outcome(context: Context, id: String, ending: Boolean = false,
+                                action: suspend (ConversationEngine) -> Unit): ConversationCommandOutcome {
+        val application = context.applicationContext
+        return scope.async {
+            val engine = ConversationEngine.get(application)
+            engine.commandOutcome(id, ending) { action(engine) }
+        }.await()
+    }
+
     private fun perform(context: Context, action: suspend (ConversationEngine) -> Unit) {
         val application = context.applicationContext
         scope.launch {
