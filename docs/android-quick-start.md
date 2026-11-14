@@ -461,8 +461,12 @@ Local app or system-UI ends use `local`; remote ends use `remoteEnded`. An unexp
 Core-Telecom removal uses `failed` with `failure.kind = "frameworkReset"`, while
 native media connection loss uses `failed` with `failure.kind = "media"`.
 Core's first mute observation is a baseline and preserves any app-requested mute.
-Failed disconnects retry with backoff up to the platform-removal deadline; a call
-Core no longer tracks is already removed. Overlapping ends share the teardown.
+Failed disconnects retry with backoff for an initial 60 seconds. After that
+deadline, cleanup retains the original public Core-Telecom control and retries
+after 10, 30, 60 and then every 120 seconds while the process lives. Retired
+cleanup does not reserve a conversation ID or prevent new call admission.
+Only a successful disconnect or Core's `ERROR_CALL_IS_NOT_BEING_TRACKED` confirms
+removal. Overlapping ends share the teardown.
 An accepted local End or Decline keeps its logical reason when a later server end
 report, end push or room deletion confirms completion. That confirmation settles
 the original action without waiting for its handler or creating another Core request.
@@ -481,6 +485,44 @@ during pending Telecom admission. Repeated reports and earlier or later pushes
 share the call's server identity, remove its ringing surfaces, and publish its
 terminal reason without ending it twice. Reports for unknown calls follow the
 same behavior as unknown end pushes.
+
+### Retry a remaining platform call
+
+An app-owned "End it here" control can await the public native reconcile API:
+
+```kotlin
+import expo.modules.callkittelecom.conversations.ConversationPlatformCalls
+import expo.modules.callkittelecom.conversations.PlatformCallReconcileOutcome
+
+when (ConversationPlatformCalls.reconcile(context, conversationId)) {
+    PlatformCallReconcileOutcome.REMOVED -> clearPlatformCallWarning()
+    PlatformCallReconcileOutcome.STILL_REMAINING -> showPlatformCallWarning()
+    PlatformCallReconcileOutcome.NO_SUCH_CALL -> showNoRetainedControl()
+}
+```
+
+Call it from a coroutine on any dispatcher. Concurrent callers share cleanup;
+cancelling a waiter leaves it running. A wait takes at most five seconds, and
+failed manual attempts are limited to one every ten seconds. An accepted local
+End still waiting on its handler completes as `local` through the same retained
+action receipt. A live replacement using the same app ID is never disconnected.
+
+Collect `ConversationPlatformCalls.removed` before ending calls to learn when
+cleanup succeeds after the initial deadline. Each `PlatformCallRemoved` carries
+the conversation ID, original platform UUID and `endedAt` (`Instant?`, matching
+the published logical end when available), so apps can match the warning even
+after reusing an ID. This native event stream does not replay history. For failed
+ends, `conversationsChanged` also publishes the original logical end with
+`failure.platformCallRemaining` cleared; its timestamp, reason and failure kind
+stay unchanged. If the app ID has since been reused, only the UUID-identified
+native removal event is sent, preserving the replacement's state.
+
+These controls remain available only while the process lives. Core-Telecom
+1.0.1 has no supported restore or reattach-by-UUID API after process restart.
+`NO_SUCH_CALL` means no matching in-memory cleanup handle; it does not confirm
+that Telecom has removed an old call. No privileged or private removal API is used.
+The JavaScript command surface continues to come from the iOS SDK; this Android
+reconcile API is native Kotlin.
 
 ## Media for calls your app starts
 

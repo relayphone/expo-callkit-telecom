@@ -33,10 +33,21 @@ internal fun coreRemovalBackoffMillis(attempt: Int): Long = when (attempt) {
     1 -> 100L; 2 -> 250L; 3 -> 500L; 4 -> 1000L; 5 -> 2000L; else -> 5000L
 }
 
+internal fun coreLateRemovalBackoffMillis(attempt: Int): Long = when (attempt) {
+    1 -> 10_000L; 2 -> 30_000L; 3 -> 60_000L; else -> 120_000L
+}
+
 /** Main-confined removal ownership outlives both logical end and individual callers. */
 internal class CoreCallDisconnect(private val scope: CoroutineScope,
-                                  private val deadlineMillis: Long = PLATFORM_REMOVAL_DEADLINE_MILLIS) {
+                                  private val deadlineMillis: Long = PLATFORM_REMOVAL_DEADLINE_MILLIS,
+                                  private val reconcileTimeoutMillis: Long = 5000L,
+                                  private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 }) {
     private var completion: Deferred<CoreDisconnectOutcome>? = null
+    private var request: (suspend () -> CallControlResult)? = null
+    private var reconciliation: Deferred<Boolean>? = null
+    private var lastReconcileAt: Long? = null
+    var removed: Boolean = false
+        private set
     private val retry = Channel<Unit>(Channel.CONFLATED)
     val started: Boolean get() = completion != null
     val pending: Boolean get() = completion?.isCompleted == false
@@ -50,19 +61,13 @@ internal class CoreCallDisconnect(private val scope: CoroutineScope,
 
     fun start(request: suspend () -> CallControlResult): Deferred<CoreDisconnectOutcome> {
         completion?.let { return it }
+        this.request = request
         val pending = scope.async(start = CoroutineStart.LAZY) {
             withTimeoutOrNull(deadlineMillis) {
               while (true) {
-                attempts++
-                val result = try { request() }
-                catch (_: CancellationException) { currentCoroutineContext().ensureActive(); null }
-                catch (error: CallException) { CallControlResult.Error(error.code) }
-                catch (_: Exception) { null }
-                if (result is CallControlResult.Success || result is CallControlResult.Error &&
-                    result.errorCode == CallException.ERROR_CALL_IS_NOT_BEING_TRACKED) {
+                if (attempt()) {
                     return@withTimeoutOrNull CoreDisconnectOutcome.REMOVED
                 }
-                lastErrorCode = (result as? CallControlResult.Error)?.errorCode ?: CallException.ERROR_UNKNOWN
                 withTimeoutOrNull(coreRemovalBackoffMillis(attempts)) { retry.receive() }
               }
               @Suppress("UNREACHABLE_CODE") CoreDisconnectOutcome.REMOVED
@@ -74,4 +79,38 @@ internal class CoreCallDisconnect(private val scope: CoroutineScope,
     }
 
     suspend fun remove(request: suspend () -> CallControlResult): CoreDisconnectOutcome = start(request).await()
+
+    /** Shared process-owned work: caller cancellation never cancels a disconnect attempt. */
+    suspend fun reconcile(): Boolean {
+        if (removed) return true
+        if (!started) return false
+        reconciliation?.takeIf { !it.isCompleted }?.let { return it.await() }
+        // Manual taps cannot turn a quick platform failure into an unbounded retry loop.
+        if (lastReconcileAt?.let { nowMillis() - it < 10_000L } == true) return false
+        lastReconcileAt = nowMillis()
+        val work = scope.async(start = CoroutineStart.LAZY) {
+            withTimeoutOrNull(reconcileTimeoutMillis) {
+                if (pending) {
+                    retryNow()
+                    completion!!.await() == CoreDisconnectOutcome.REMOVED
+                } else attempt()
+            } ?: false
+        }
+        reconciliation = work
+        work.start()
+        return work.await()
+    }
+
+    private suspend fun attempt(): Boolean {
+        if (removed) return true
+        attempts++
+        val result = try { checkNotNull(request).invoke() }
+        catch (_: CancellationException) { currentCoroutineContext().ensureActive(); null }
+        catch (error: CallException) { CallControlResult.Error(error.code) }
+        catch (_: Exception) { null }
+        removed = result is CallControlResult.Success || result is CallControlResult.Error &&
+            result.errorCode == CallException.ERROR_CALL_IS_NOT_BEING_TRACKED
+        if (!removed) lastErrorCode = (result as? CallControlResult.Error)?.errorCode ?: CallException.ERROR_UNKNOWN
+        return removed
+    }
 }

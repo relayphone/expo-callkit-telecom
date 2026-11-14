@@ -35,6 +35,9 @@ class ConversationCorrectnessTest {
         var echoDisconnect = false
         val causes = mutableListOf<Int>()
         var throwsRemaining = 0
+        var refusal: Int? = null
+        var admitAfterCancellation = false
+        val platformId = ParcelUuid(UUID.randomUUID())
         val outcomes = ArrayDeque<CallControlResult>()
         val muted = MutableSharedFlow<Boolean>(replay = 1)
         val endpoint = MutableStateFlow<CallEndpointCompat?>(null)
@@ -44,10 +47,10 @@ class ConversationCorrectnessTest {
             this.callbacks = callbacks
             try { coroutineScope {
                 entered.complete(Unit)
-                admit.await()
+                if (admitAfterCancellation) withContext(NonCancellable) { admit.await() } else admit.await()
                 val controls = object : CallControlScope {
                     override val coroutineContext: CoroutineContext = this@coroutineScope.coroutineContext
-                    override fun getCallId() = ParcelUuid(UUID.randomUUID())
+                    override fun getCallId() = platformId
                     override val currentCallEndpoint = endpoint.filterNotNull()
                     override val availableEndpoints = flowOf(emptyList<CallEndpointCompat>())
                     override val isMuted: Flow<Boolean> = muted
@@ -63,7 +66,7 @@ class ConversationCorrectnessTest {
                         disconnectGate?.await()
                         if (disconnects == 2) { retryEntered.complete(Unit); retryGate?.await() }
                         if (throwsRemaining > 0) { throwsRemaining--; error("Core disconnect failed") }
-                        val outcome = outcomes.removeFirstOrNull() ?: CallControlResult.Success()
+                        val outcome = outcomes.removeFirstOrNull() ?: refusal?.let { CallControlResult.Error(it) } ?: CallControlResult.Success()
                         if (outcome is CallControlResult.Success || outcome is CallControlResult.Error &&
                             outcome.errorCode == CallException.ERROR_CALL_IS_NOT_BEING_TRACKED) confirmed.complete(Unit)
                         removed.complete(Unit)
@@ -85,6 +88,10 @@ class ConversationCorrectnessTest {
         private val previousPolicy = engine.policy
         private val previousEmit = engine.emit
         private val previousAccept = engine.actions.acceptUnhandled
+        private val previousRemovalDeadline = engine.platformRemovalDeadlineMillis
+        private val previousRemovalBackoff = engine.lateRemovalBackoffMillis
+        private val previousRemovalClock = engine.platformRemovalNowMillis
+        var removalClock = 0L
         val signals = mutableListOf<NativeMediaSignal>()
         val performed = mutableListOf<Map<*, *>>()
         val events = mutableListOf<Map<String, Any?>>()
@@ -93,6 +100,7 @@ class ConversationCorrectnessTest {
 
         init {
             engine.actions.resetBridge(); engine.actions.acceptUnhandled = true
+            engine.platformRemovalNowMillis = { removalClock }
             engine.coreAdmission = core; engine.nativeMedia = AndroidNativeMedia.NONE
             engine.policy = JSONObject(mapOf("prewarm" to false))
             engine.emit = { name, body ->
@@ -119,12 +127,17 @@ class ConversationCorrectnessTest {
         suspend fun close() {
             try {
                 core.admit.complete(Unit); core.disconnectGate?.complete(Unit); core.retryGate?.complete(Unit)
+                core.refusal = null; removalClock += 10_000
                 if (state() != null) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+                engine.reconcilePlatformCall(id)
                 withTimeout(5000) { while (state() != null) delay(10) }
             } finally {
                 NativeMediaSignals.observers -= observer
                 engine.coreAdmission = previousAdmission; engine.nativeMedia = previousMedia
                 engine.policy = previousPolicy; engine.emit = previousEmit; engine.actions.acceptUnhandled = previousAccept
+                engine.platformRemovalDeadlineMillis = previousRemovalDeadline
+                engine.lateRemovalBackoffMillis = previousRemovalBackoff
+                engine.platformRemovalNowMillis = previousRemovalClock
             }
         }
     }
@@ -366,19 +379,126 @@ class ConversationCorrectnessTest {
     @Test fun unrequestedCoreRemovalIsAFrameworkFailure() = fixture {
         ready()
         core.removed.complete(Unit); ended()
-        assertEquals(0, core.disconnects)
+        assertEquals(1, core.disconnects)
         assertEquals("failed", ended?.get("reason"))
         assertEquals(mapOf("kind" to "frameworkReset"), ended?.get("failure"))
     }
 
+    @Test fun publicReconcileSharesTheDisconnectOfAnEndStillInFlight() = fixture {
+        ready()
+        val gate = CompletableDeferred<Unit>()
+        core.disconnectGate = gate
+        coroutineScope {
+            val end = async { engine.end(id) }
+            core.disconnectEntered.await()
+            val reconcile = async { ConversationPlatformCalls.reconcile(engine.context, id) }
+            yield()
+            assertEquals(1, core.disconnects)
+            gate.complete(Unit)
+            end.await()
+            assertEquals(PlatformCallReconcileOutcome.REMOVED, reconcile.await())
+        }
+        ended()
+    }
+
+    @Test fun publicReconcileCompletesASuspendedLocalEndHandlerWithItsLocalReason() = fixture {
+        ready()
+        val entered = CompletableDeferred<Unit>()
+        ConversationActions.configure { entered.complete(Unit); awaitCancellation() }
+        try {
+            coroutineScope {
+                val end = async { engine.end(id) }
+                entered.await()
+                assertEquals(PlatformCallReconcileOutcome.REMOVED, ConversationPlatformCalls.reconcile(engine.context, id))
+                end.await()
+            }
+            ended()
+            assertEquals("local", ended?.get("reason"))
+            assertNull(ended?.get("failure"))
+            assertEquals(1, core.disconnects)
+            assertEquals(1, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
+        } finally { ConversationActions.configure(null) }
+    }
+
+    @Test fun frameworkFailureRetainsRemovalWithoutBlockingAReplacementWithTheSameId() = reusedIdRemoval(false)
+    @Test fun oldRemovalCannotRepublishAfterAReplacementWithTheSameIdHasEnded() = reusedIdRemoval(true)
+    @Test fun lateAdmissionCannotRepublishAfterAReplacementWithTheSameIdHasEnded() = reusedIdRemoval(true, true)
+
+    @Test fun lateAdmissionPublishesAndClearsTheOriginalRemainingFlagWithoutIdReuse() = fixture {
+        engine.platformRemovalDeadlineMillis = 30
+        engine.lateRemovalBackoffMillis = { 120_000 }
+        core.refusal = 73
+        core.admitAfterCancellation = true
+        coroutineScope {
+            val starting = async { runCatching { start() } }
+            core.entered.await()
+            engine.report(id, mapOf("type" to "ended", "reason" to "failed"))
+            starting.await()
+        }
+        val logicalAt = ended?.get("at")
+        core.admit.complete(Unit)
+        withTimeout(3000) { while ((ended?.get("failure") as? Map<*, *>)?.get("platformCallRemaining") != true) delay(5) }
+        core.refusal = null
+        assertEquals(PlatformCallReconcileOutcome.REMOVED, ConversationPlatformCalls.reconcile(engine.context, id))
+        assertEquals(logicalAt, ended?.get("at"))
+        assertEquals(mapOf("kind" to "server"), ended?.get("failure"))
+    }
+
+    private fun reusedIdRemoval(endReplacement: Boolean, lateAdmission: Boolean = false) = fixture {
+        engine.platformRemovalDeadlineMillis = 30
+        engine.lateRemovalBackoffMillis = { removalClock += 10_000; 30 }
+        core.refusal = 73
+        if (lateAdmission) {
+            core.admitAfterCancellation = true
+            coroutineScope {
+                val starting = async { runCatching { start() } }
+                core.entered.await()
+                engine.report(id, mapOf("type" to "ended", "reason" to "failed"))
+                starting.await()
+            }
+        } else {
+            ready()
+            core.callbacks.disconnect(DisconnectCause(DisconnectCause.ERROR))
+            withTimeout(3000) { while ((ended?.get("failure") as? Map<*, *>)?.get("platformCallRemaining") != true) delay(5) }
+            assertEquals("frameworkReset", (ended?.get("failure") as Map<*, *>)["kind"])
+        }
+        val replacement = Core().apply { admit.complete(Unit) }
+        engine.coreAdmission = replacement
+        start()
+        assertEquals(PlatformCallReconcileOutcome.NO_SUCH_CALL, ConversationPlatformCalls.reconcile(engine.context, id))
+        if (endReplacement) { engine.end(id); replacement.confirmed.await() }
+        val replacementEnd = ended
+        if (lateAdmission) {
+            core.admit.complete(Unit)
+            withTimeout(3000) { while (signals.none { it.stage == NativeMediaStage.PLATFORM_REMOVAL_FAILED }) delay(5) }
+        }
+        coroutineScope {
+            val removal = async(start = CoroutineStart.UNDISPATCHED) { ConversationPlatformCalls.removed.first { it.platformCallId == core.platformId.uuid } }
+            try {
+                core.refusal = null
+                withTimeout(3000) { removal.await() }
+                assertEquals(id, removal.await().conversationId)
+                if (endReplacement) {
+                    assertNull(state())
+                    assertSame(replacementEnd, ended)
+                } else {
+                    assertEquals("dialing", state()?.get("status"))
+                    assertEquals(0, replacement.disconnects)
+                }
+            } finally { removal.cancel() }
+        }
+        if (!endReplacement) engine.end(id)
+        replacement.confirmed.await()
+    }
+
     @Test fun explicitRemoteCoreRemovalIsRemoteWithoutAnotherDisconnectOrPersonAction() = coreRemoval(DisconnectCause.REMOTE, "remoteEnded")
-    @Test fun explicitCoreErrorIsAFrameworkFailureWithoutAnotherDisconnectOrPersonAction() = coreRemoval(DisconnectCause.ERROR, "failed")
+    @Test fun explicitCoreErrorReconcilesTheFrameworkFailureWithoutAPersonAction() = coreRemoval(DisconnectCause.ERROR, "failed")
 
     private fun coreRemoval(cause: Int, reason: String) = fixture {
         ready()
         core.callbacks.disconnect(DisconnectCause(cause))
         core.removed.complete(Unit); ended()
-        assertEquals(0, core.disconnects)
+        assertEquals(if (reason == "failed") 1 else 0, core.disconnects)
         assertEquals(reason, ended?.get("reason"))
         if (reason == "failed") assertEquals(mapOf("kind" to "frameworkReset"), ended?.get("failure"))
         else assertNull(ended?.get("failure"))
