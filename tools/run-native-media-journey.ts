@@ -74,6 +74,8 @@ export function runNativeMediaJourney(
         timeout: 15_000,
       });
     }
+    run({ program: "node", args: ["--test", "tools/check-android-journey-state.test.ts"], timeout: 30_000 });
+    run({ program: "node", args: ["tools/check-android-journey-state.ts"], timeout: 60_000 });
     if (qualifyHooks) runNativeMediaFeasibility(output, run);
   } finally {
     for (const [name] of checks.slice(1)) {
