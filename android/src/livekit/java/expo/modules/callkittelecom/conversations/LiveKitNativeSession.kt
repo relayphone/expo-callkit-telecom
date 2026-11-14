@@ -73,6 +73,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
                 })
             })))
         val device = candidate.lkObjects.audioDeviceModule as? JavaAudioDeviceModule ?: error("Unsupported native audio module")
+        audioHooks?.audioDeviceCreated(device)
         // Set before any capture thread starts: recordingless RTP negotiation cannot open the microphone.
         device.setAudioRecordEnabled(false)
         recording = device

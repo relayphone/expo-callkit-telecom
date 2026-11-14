@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.onEach
 
 /** All mutable state and Core-Telecom controls are confined to Dispatchers.Main. */
 class ConversationEngine(val context: Context) {
+    internal var controlObserver: NativeControlObserver? = null
     companion object {
         @Volatile private var instance: ConversationEngine? = null
         fun get(context: Context): ConversationEngine = instance ?: synchronized(this) {
@@ -568,9 +569,20 @@ class ConversationEngine(val context: Context) {
         }
     }
 
+    private fun observeControl(id: String, action: NativePerformedAction, origin: NativeActionOrigin, point: NativeControlPoint) {
+        val observer = controlObserver ?: return
+        val (kind, closed) = when (action) {
+            is NativePerformedAction.Hold -> NativeControlKind.HOLD to action.held
+            is NativePerformedAction.Mute -> NativeControlKind.MUTE to action.muted
+            else -> return
+        }
+        runCatching { observer.observed(NativeControlObservation(id, kind, closed, point, android.os.SystemClock.elapsedRealtimeNanos(), origin)) }
+    }
+
     private suspend fun native(id: String, action: NativePerformedAction, origin: NativeActionOrigin,
                                request: (suspend () -> Unit)? = null) {
         val current = call(id)
+        observeControl(id, action, origin, NativeControlPoint.REQUESTED)
         @Suppress("UNCHECKED_CAST") val serverId = (current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String
         val previous = current.receipts[action]
         val reusable = when (action) {
@@ -611,6 +623,8 @@ class ConversationEngine(val context: Context) {
                 (action is NativePerformedAction.Hold || action is NativePerformedAction.Mute)) receipt.observedFromSystem()
             if (action != NativePerformedAction.End) requireLive(current)
             request?.invoke()
+            if (action is NativePerformedAction.Hold && request != null)
+                observeControl(id, action, origin, NativeControlPoint.PLATFORM_ACKNOWLEDGED)
             if (!latest()) return
             receipt.performWhile(::latest, {
                 check(calls[id] === current && identities.isCurrent(current.reservation) && current.incoming?.intent == null) { "unknown_conversation" }
@@ -632,6 +646,8 @@ class ConversationEngine(val context: Context) {
                         requireLive(current)
                         if (!latest()) return@performWhile
                         if (current.active && origin == NativeActionOrigin.APP) audio.isMicrophoneMute = action.muted
+                        if (current.active && origin == NativeActionOrigin.APP)
+                            observeControl(id, action, origin, NativeControlPoint.PLATFORM_ACKNOWLEDGED)
                         current.state["isMuted"] = action.muted
                     }
                     NativePerformedAction.Start, is NativePerformedAction.Tones -> error("invalid_arguments")
@@ -640,6 +656,7 @@ class ConversationEngine(val context: Context) {
                 emit(name, body)
                 if (action == NativePerformedAction.End) { current.holdingTerminal = false; flushTerminals() }
             }
+            observeControl(id, action, origin, NativeControlPoint.COMPLETED)
         } finally {
             val remaining = receipt.release()
             if (remaining == 0 && current.receipts[action] === receipt) current.receipts.remove(action)

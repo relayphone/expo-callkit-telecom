@@ -13,6 +13,7 @@ internal interface NativeAudioHooks {
     val decodedSink: AudioTrackSink
     val capturePostProcessor: AudioProcessorInterface? get() = null
     fun captureOptions(defaults: LocalAudioTrackOptions): LocalAudioTrackOptions = defaults
+    fun audioDeviceCreated(device: JavaAudioDeviceModule) {}
     fun capture(pacing: AudioBufferCallback): AudioBufferCallback
     fun configureOutput(builder: JavaAudioDeviceModule.Builder, observer: JavaAudioDeviceModule.PlaybackSamplesReadyCallback)
     fun published(publication: LocalTrackPublication)

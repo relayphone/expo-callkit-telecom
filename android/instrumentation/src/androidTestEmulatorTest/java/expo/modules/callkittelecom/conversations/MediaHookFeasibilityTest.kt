@@ -181,18 +181,45 @@ class MediaHookFeasibilityTest {
             val engine = ConversationEngine.get(context)
             val previousMedia = engine.nativeMedia; val previousPolicy = engine.policy
             val previousEmitter = engine.emit; val previousAccept = engine.actions.acceptUnhandled
+            val previousControlObserver = engine.controlObserver
             val previousFactory = NativeMediaRegistry.factories["livekit"]
             val id = InstrumentationRegistry.getArguments().getString("mediaTestId") ?: "hooks-${System.nanoTime()}"
             require(id.matches(Regex("hooks-[0-9]+")))
             val hooks = EmulatorMediaHooks(context, "$id:fromDevice", requestedRate = rate)
             val signals = CopyOnWriteArrayList<NativeMediaSignal>()
-            val observer = NativeMediaObserver { if (it.serverCallId == id) signals += it }
+            val observer = NativeMediaObserver {
+                if (it.serverCallId == id) {
+                    signals += it
+                    if (it.stage == NativeMediaStage.CORE_MUTE_OBSERVED)
+                        hooks.gateTrace.event(MediaGateTrace.Point.CORE_MUTE_OBSERVED, it.elapsedRealtimeNanos,
+                            it.measurements["muted"] == 1L)
+                }
+            }
             var step = "prejoin"
             var pipeline = "unobserved"
             var caught: Throwable? = null
             var apmMonitor: Job? = null
+            var heldRequested = false
+            var muteDiagnosticDone = false
+            var muteDiagnosticError: Throwable? = null
             val evidence = JSONObject().put("captureRate", rate).put("profile", "tones-v2")
             fun present() = (engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id }
+            suspend fun traceMuteTransition() {
+                muteDiagnosticDone = true
+                hooks.gateTrace.stop()
+                try { withContext(NonCancellable) { withTimeout(3000) {
+                    engine.hold(id, false)
+                    while (hooks.captureGateClosed()) delay(10)
+                    hooks.gateTrace.recording(MediaGateTrace.Phase.MUTED) {
+                        hooks.trace.phase = "mute diagnostic"
+                        engine.mute(id, true)
+                        hooks.beginPhase()
+                        delay(100)
+                    }
+                } } } catch (error: Throwable) {
+                    muteDiagnosticError = error; throw error
+                } finally { hooks.gateTrace.stop() }
+            }
             suspend fun stage(kind: NativeMediaStage) = withTimeout(10_000) {
                 while (signals.none { it.stage == kind }) delay(10)
             }
@@ -200,6 +227,7 @@ class MediaHookFeasibilityTest {
             engine.policy = JSONObject(mapOf("media" to "livekit", "credentials" to "fromPush", "prewarm" to true))
             engine.actions.resetBridge(); engine.actions.acceptUnhandled = true
             engine.emit = { name, _ -> assertNotEquals("handlerAction", name) }
+            engine.controlObserver = NativeControlObserver { if (it.conversationId == id) hooks.gateTrace.control(it) }
             NativeMediaRegistry.factories["livekit"] = { LiveKitNativeSession(it, id, hooks) }
             NativeMediaSignals.observers += observer
             try {
@@ -322,10 +350,13 @@ class MediaHookFeasibilityTest {
                 peerAudio(id, generation)
 
                 step = "held output"
+                heldRequested = true
+                hooks.gateTrace.arm(MediaGateTrace.Phase.HELD)
                 hooks.trace.phase = "held"
                 engine.hold(id, true); hooks.beginPhase()
                 withTimeout(3000) { while (hooks.decoded().tones < 5 || hooks.output().blocks < 10) delay(10) }
                 val held = silenceWithLiveDecodedAudio(hooks)
+                hooks.gateTrace.stop()
                 hooks.observeOutput(false)
                 val stopped = runCatching { silenceWithLiveDecodedAudio(hooks) }.exceptionOrNull()
                 assertTrue(stopped is MediaHookUnavailable)
@@ -340,6 +371,8 @@ class MediaHookFeasibilityTest {
                         "generatedMutedWords=$mutedWords,receivedMutedMarkers=0,answeredMarkers=${answered.getLong("markers")}," +
                         "sameReceiver=true,wrongAndZeroRejected=true,heldOutputBlocks=${held.blocks},heldNonzero=${held.nonzero},stoppedTapRejected=true")
                 })
+                step = "mute diagnostic"
+                traceMuteTransition()
                 step = "end"
                 engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                 withTimeout(7000) { while (present() || TelecomEvidence.calls().isNotEmpty() ||
@@ -357,10 +390,20 @@ class MediaHookFeasibilityTest {
                     "injected=${hooks.injectedFrames.get()}, decoded=${runCatching { hooks.decoded() }.getOrNull()}, " +
                     "output=${runCatching { hooks.output() }.getOrNull()}", error)
             } finally {
+                val primary = caught
+                if (heldRequested && !muteDiagnosticDone && present()) {
+                    hooks.gateTrace.stop()
+                    try { traceMuteTransition() } catch (error: Throwable) {
+                        muteDiagnosticError = error
+                        if (primary != null) primary.addSuppressed(error) else caught = error
+                    } finally { hooks.gateTrace.stop() }
+                }
                 apmMonitor?.cancel()
                 try {
                     context.filesDir.resolve("media-hook-results.json").writeText(evidence.put("step", step)
-                        .put("passed", caught == null).put("pipeline", pipeline).toString())
+                        .put("passed", caught == null).put("pipeline", pipeline)
+                        .put("gateTrace", hooks.gateTrace.snapshot().put("muteDiagnosticError",
+                            muteDiagnosticError?.javaClass?.simpleName ?: JSONObject.NULL)).toString())
                     context.filesDir.resolve("capture-trace.json").writeText(hooks.trace.snapshot()
                         .put("postApm", hooks.postApm.finish()).toString())
                     InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
@@ -385,6 +428,7 @@ class MediaHookFeasibilityTest {
                         } finally {
                             try { hooks.close() } finally {
                                 NativeMediaSignals.observers -= observer
+                                engine.controlObserver = previousControlObserver
                                 if (previousFactory == null) NativeMediaRegistry.factories.remove("livekit")
                                 else NativeMediaRegistry.factories["livekit"] = previousFactory
                                 engine.nativeMedia = previousMedia; engine.policy = previousPolicy
@@ -393,6 +437,8 @@ class MediaHookFeasibilityTest {
                         }
                     }
                 }
+                val tracingFailure = muteDiagnosticError
+                if (primary == null && tracingFailure != null) throw tracingFailure
             }
         }
     }

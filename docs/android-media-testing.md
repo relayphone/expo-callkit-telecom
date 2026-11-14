@@ -73,6 +73,23 @@ playback tap, with the pinned direct buffer's array access verified before use.
 Each callback retains the observation phase it entered, so a concurrent phase
 reset cannot count its earlier PCM in the new phase. Fresh nonzero output in
 the new phase still fails the silence check.
+Bounded transition diagnostics are retained as `gateTrace` in
+`media-hook-results.json`. They use `android.elapsedRealtimeNanos` for control
+request/API acknowledgement/completion, Core mute observations, phase
+acknowledgement, callback entry/gate read/exit and the first closed gate observed
+on each audio thread. Playback reads the pinned SDK's volatile `speakerMute`
+field; capture reads the publication mute/track-enabled gate. The report names
+both sources explicitly rather than inferring gate state from a request.
+The SDK invokes this playback tap after `AudioTrack.write`; its entry-state
+sample does not timestamp the earlier buffer-fill/write gate decision.
+Each block retains its phase-window identity, frame range, sample rate/channels,
+peak and RMS in PCM16 units, and an offset into immutable PCM16LE bytes. The
+diagnostic window is armed before hold; `PHASE_ACKNOWLEDGED` identifies the
+existing measurement boundary, separately from arming. PCM and metadata have
+hard caps; overflow, unavailable gates, unsupported formats and in-flight
+callbacks are explicit. Missing evidence cannot establish a boundary fix.
+The bounded mute diagnostic runs only after the held verdict, so it cannot
+change that verdict. It adds no delay or tolerance to the silence assertion.
 An absent, disabled, stale or unsupported tap fails. Held output must deliver
 fresh zero PCM while decoded audio continues. Source ZERO/WRONG controls and
 muted publication reject every raw detected marker, including impaired markers.

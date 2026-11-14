@@ -25,6 +25,9 @@ class MediaTestIsolationTest {
             assertThrows(ClassNotFoundException::class.java) {
                 Class.forName("expo.modules.callkittelecom.conversations.EmulatorCaptureOptions", false, context.classLoader)
             }
+            for (name in listOf("MediaGateTrace", "EmulatorGateProbe")) assertThrows(ClassNotFoundException::class.java) {
+                Class.forName("expo.modules.callkittelecom.conversations.$name", false, context.classLoader)
+            }
             val error = assertThrows(MediaHookUnavailable::class.java) { MediaTestRuntime.activate(context) }
             assertEquals(MediaHookFailure.UNSUPPORTED_BUILD, error.reason)
         }

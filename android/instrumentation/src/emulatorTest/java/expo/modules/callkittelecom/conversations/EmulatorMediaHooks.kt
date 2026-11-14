@@ -26,6 +26,9 @@ import livekit.org.webrtc.audio.JavaAudioDeviceModule
 internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled: Boolean = true,
     private val requestedRate: Int = 48000, private val emission: Boolean = true) : NativeAudioHooks {
     val trace = MediaCaptureTrace()
+    val gateTrace = MediaGateTrace(SystemClock::elapsedRealtimeNanos)
+    @Volatile private var gateProbe: EmulatorGateProbe? = null
+    override fun audioDeviceCreated(device: JavaAudioDeviceModule) { gateProbe = EmulatorGateProbe(device) }
     val postApm = MediaApmCapture(markerId, SystemClock::elapsedRealtimeNanos)
     override val capturePostProcessor get() = postApm
     override fun captureOptions(defaults: LocalAudioTrackOptions) = EmulatorCaptureOptions.from(defaults)
@@ -41,7 +44,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     enum class Stimulus { MARKER, ZERO, WRONG }
     @Volatile var stimulus = Stimulus.MARKER
     data class Observation(val blocks: Long, val frames: Long, val nonzero: Long, val tones: Long)
-    private class Window {
+    private class Window(val id: Long = 0) {
         val blocks = AtomicLong()
         val frames = AtomicLong()
         val nonzero = AtomicLong()
@@ -52,6 +55,8 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     private val failure = AtomicReference<MediaHookFailure?>(null)
     private val decoded = AtomicReference(Window())
     private val output = AtomicReference(Window())
+    private val phaseSequence = AtomicLong()
+    private val playbackCursor = AtomicLong()
     private val observingOutput = AtomicBoolean(true)
     private val sourceCursor = AtomicLong()
     val injectedFrames = AtomicLong()
@@ -86,7 +91,11 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
 
     }
 
-    fun beginPhase() { decoded.set(Window()); output.set(Window()) }
+    fun beginPhase() {
+        val id = phaseSequence.incrementAndGet()
+        decoded.set(Window(id)); output.set(Window(id)); gateTrace.phaseAcknowledged(id)
+    }
+    fun captureGateClosed() = EmulatorGateProbe.captureClosed(publication)
     fun decoded(): Observation { available(); return decoded.get().snapshot() }
     fun output(): Observation { available(); return output.get().snapshot() }
     fun observeOutput(enabled: Boolean) { observingOutput.set(enabled) }
@@ -127,6 +136,8 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     override fun capture(pacing: AudioBufferCallback) = object : AudioBufferCallback {
         override fun onBuffer(buffer: ByteBuffer, format: Int, channels: Int, rate: Int, bytesRead: Int, timestamp: Long): Long {
             val entered = SystemClock.elapsedRealtimeNanos()
+            val gateEntry = if (gateTrace.isArmed) gateTrace.enter(MediaGateTrace.Direction.CAPTURE, output.get().id, entered,
+                captureGateClosed(), sourceCursor.get(), if (channels > 0) buffer.capacity() / 2 / channels else 0, rate, channels) else null
             // Always retain the production recordingless pump's pacing and lifecycle observations.
             val result = pacing.onBuffer(buffer, format, channels, rate, bytesRead, timestamp)
             if (!closed.get()) {
@@ -154,6 +165,9 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
                     val crc = CRC32().apply { update(buffer.duplicate().apply { clear() }) }.value
                     trace.returned(entered, first, frames, rate, bytesRead, publication?.muted, crc)
                     postApm.returned(first, frames, rate, channels, buffer)
+                    if (gateEntry != null) gateTrace.exit(gateEntry, ByteArray(buffer.capacity()).also {
+                        buffer.asReadOnlyBuffer().apply { clear() }.get(it)
+                    })
                 }
             }
             return result
@@ -187,6 +201,12 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     internal fun playbackCallback(observer: JavaAudioDeviceModule.PlaybackSamplesReadyCallback) =
         JavaAudioDeviceModule.PlaybackSamplesReadyCallback { samples ->
             val window = output.get()
+            val entered = SystemClock.elapsedRealtimeNanos()
+            val frames = if (samples.channelCount > 0) samples.data.size / 2 / samples.channelCount else 0
+            val first = playbackCursor.getAndAdd(frames.toLong())
+            val gateEntry = if (gateTrace.isArmed) gateTrace.enter(MediaGateTrace.Direction.PLAYBACK, window.id, entered,
+                gateProbe?.playbackClosed(), first, frames, samples.sampleRate, samples.channelCount) else null
+            try {
             observer.onWebRtcAudioTrackSamplesReady(samples)
             if (samples.audioFormat != AudioFormat.ENCODING_PCM_16BIT) failure.set(MediaHookFailure.UNSUPPORTED_PCM)
             else if (observingOutput.get()) observe(window,
@@ -206,6 +226,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
                     }
                 }
             }
+            } finally { gateTrace.exit(gateEntry, samples.data) }
         }
 
     override fun published(publication: LocalTrackPublication) { this.publication = publication }
