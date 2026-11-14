@@ -3,6 +3,7 @@ package expo.modules.callkittelecom.conversations
 import android.media.AudioFormat
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import java.io.Closeable
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -214,6 +215,35 @@ class NativeWarmAudioTest {
             assertEquals(2, muted.size)
             assertNotEquals(muted[0].measurements["epoch"], muted[1].measurements["epoch"])
             assertFalse(signals.any { it.stage == NativeMediaStage.OUTPUT_BEFORE_AUTHORITY })
+        }
+    }
+
+    @Test fun holdAppliesTheGateAtCallbackCompletionWithoutWaitingForZeroPcm() = runBlocking {
+        withAudio("warm-audio-hold-boundary") {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            audio.configureOutput(JavaAudioDeviceModule.builder(context))
+            audio.playbackStarted(); audio.releaseOutput()
+            var speakerMuted = false
+            val priorPcm = ByteBuffer.allocate(8).order(ByteOrder.nativeOrder()).apply {
+                repeat(4) { putShort(512.toShort()) }
+            }.array()
+            val unchanged = priorPcm.copyOf()
+            val hold = async(start = CoroutineStart.UNDISPATCHED) {
+                audio.muteOutputAtPlaybackBoundary { speakerMuted = true }
+            }
+            assertFalse(speakerMuted); assertFalse(hold.isCompleted)
+            audio.onWebRtcAudioTrackSamplesReady(JavaAudioDeviceModule.AudioSamples(
+                AudioFormat.ENCODING_PCM_16BIT, 1, SAMPLE_RATE, priorPcm))
+            withTimeout(2000) { hold.await() }
+            assertTrue(speakerMuted)
+            assertArrayEquals(unchanged, priorPcm)
+            val observedZero = async(start = CoroutineStart.UNDISPATCHED) { audio.awaitMutedOutput() }
+            assertFalse("Mute acknowledgement must not depend on a zero-PCM observation", observedZero.isCompleted)
+            audio.onWebRtcAudioTrackSamplesReady(JavaAudioDeviceModule.AudioSamples(
+                AudioFormat.ENCODING_PCM_16BIT, 1, SAMPLE_RATE, ByteArray(8)))
+            withTimeout(2000) { observedZero.await() }
+            drainSignals()
+            assertEquals(1, signals.count { it.stage == NativeMediaStage.OUTPUT_MUTED })
         }
     }
 

@@ -32,6 +32,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
     }
 
     private val closed = AtomicBoolean(false)
+    private val outputMute = NativeOutputMute()
     private val sequence = AtomicLong()
     private val capture = AtomicReference<CaptureEpoch?>(null)
     private val firstCaptureArmNanos = AtomicLong()
@@ -87,11 +88,13 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
 
     fun playbackStarted() {
         if (closed.get()) return
+        outputMute.playbackStarted()
         if (playbackActive.compareAndSet(false, true)) emit(NativeMediaStage.PLAYBACK_STARTED)
         playbackReady.get().complete(Unit)
     }
 
     fun playbackStopped() {
+        outputMute.playbackStopped()
         if (playbackActive.getAndSet(false)) emit(NativeMediaStage.PLAYBACK_STOPPED)
         val next = CompletableDeferred<Unit>()
         playbackReady.getAndSet(next).cancel()
@@ -109,6 +112,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
     /** Publish authorization before unmuting the ADM; output callbacks may run immediately. */
     fun releaseOutput() {
         if (closed.get()) return
+        outputMute.cancelPending()
         val epoch = OutputEpoch(sequence.incrementAndGet(), SystemClock.elapsedRealtimeNanos(), true)
         firstOutputReleaseNanos.compareAndSet(0, epoch.startedNanos)
         output.getAndSet(epoch).mutedReady.cancel()
@@ -119,6 +123,16 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         if (closed.get()) return
         val epoch = OutputEpoch(sequence.incrementAndGet(), SystemClock.elapsedRealtimeNanos(), false)
         output.getAndSet(epoch).mutedReady.cancel()
+    }
+
+    suspend fun muteOutputAtPlaybackBoundary(applyMute: () -> Unit) {
+        check(!closed.get())
+        if (outputObservationAvailable) {
+            outputMute.atPlaybackBoundary { applyMute(); muteOutput() }
+        } else {
+            // Preserve direct muting on runtimes where the SDK playback tap cannot be installed.
+            applyMute(); muteOutput()
+        }
     }
 
     fun configureOutput(builder: JavaAudioDeviceModule.Builder) {
@@ -193,6 +207,11 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
     }
 
     override fun onWebRtcAudioTrackSamplesReady(samples: JavaAudioDeviceModule.AudioSamples) {
+        try { observePlayback(samples) }
+        finally { outputMute.callbackCompleted() }
+    }
+
+    private fun observePlayback(samples: JavaAudioDeviceModule.AudioSamples) {
         val observedNanos = SystemClock.elapsedRealtimeNanos()
         val epoch = output.get()
         if (closed.get() || samples.audioFormat != AudioFormat.ENCODING_PCM_16BIT) return
@@ -217,6 +236,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
 
     fun close() {
         if (!closed.compareAndSet(false, true)) return
+        outputMute.close()
         capture.getAndSet(null)?.ready?.cancel()
         stoppedReady.get().cancel()
         output.get().mutedReady.cancel()

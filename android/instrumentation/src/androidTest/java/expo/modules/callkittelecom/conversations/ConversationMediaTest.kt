@@ -320,6 +320,24 @@ class ConversationMediaTest {
         assertFalse(signals.any { it.stage == NativeMediaStage.CONNECTED })
     }
 
+    @Test fun readOnlyControlObserverRetainsPlatformAcknowledgementBeforeMediaCompletion() = fixture {
+        start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
+        val previous = engine.controlObserver
+        val observations = mutableListOf<Pair<NativeControlObservation, Boolean>>()
+        try {
+            engine.controlObserver = NativeControlObserver { observations += it to sessions.single().held }
+            engine.hold(id, true)
+            val hold = observations.filter { it.first.kind == NativeControlKind.HOLD && it.first.closed && it.first.origin == NativeActionOrigin.APP }
+            assertEquals(listOf(NativeControlPoint.REQUESTED, NativeControlPoint.PLATFORM_ACKNOWLEDGED,
+                NativeControlPoint.COMPLETED), hold.map { it.first.point })
+            assertFalse(hold[1].second); assertTrue(hold[2].second)
+            assertTrue(hold.zipWithNext().all { (before, after) -> before.first.atNs <= after.first.atNs })
+            engine.controlObserver = NativeControlObserver { error("observer failure") }
+            engine.hold(id, false)
+            assertEquals("connected", state()?.get("status"))
+        } finally { engine.controlObserver = previous }
+    }
+
     @Test fun roomRecoveryPreservesConnectedAndHeldStatusUntilFinalDisconnection() = fixture {
         start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)
         val session = sessions.single()
