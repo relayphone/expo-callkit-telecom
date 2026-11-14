@@ -38,7 +38,7 @@ admission; outgoing duplicate IDs and direction collisions reject on Android.
 | VoIP push registration/listeners | Native registration at launch; `usePushToken()` returns `{ type: "apns-voip" / "fcm", value }` or `null` |
 | `addCallIntentReceivedListener` | `useConversationEvent("dialRequest", listener)` |
 
-Read the [SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md)
+Read the [SDK guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.5.0/docs/react-native.md)
 for all shared APIs, statuses, failure causes and events. Check each conversation's
 capabilities; Android also rejects merging and does not support call previews.
 
@@ -130,7 +130,7 @@ authority. There is no built-in HTTP credential fallback. Follow the
 
 The SDK supplies LiveCommunicationKit, PushKit, native media registration, call
 previews, communication notifications and Focus integration. Use its
-[React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md)
+[React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.5.0/docs/react-native.md)
 for requirements, plugin options and shared behavior, and
 [native media guidance](./ios-native-media.md) for media prepared before JavaScript.
 Call previews and `providerReset` are iOS-only. Rebuild the application after

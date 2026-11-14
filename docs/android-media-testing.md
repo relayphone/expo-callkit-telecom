@@ -77,7 +77,9 @@ Hold applies the SDK's speaker-mute setter on the playback thread at callback
 completion, between the current device write and the next buffer's gate check.
 This prevents an earlier filled buffer from reaching a callback whose entry
 gate is already closed. The hold operation awaits setter application, without
-waiting for zero PCM or changing the measurement boundary. A stopped or
+waiting for zero PCM or changing the measurement boundary. The wait is capped at
+100 ms; stalled playback falls back to direct muting and emits
+`OUTPUT_MUTE_BOUNDARY_MISSED`. A stopped or
 never-started device applies mute immediately under the same lifecycle lock.
 Pending application checks caller cancellation at the boundary and is retired
 when output resumes or the session closes. Runtimes without the SDK playback
@@ -112,10 +114,17 @@ independent of the far-end capture observer.
 
 Sources retain the canonical 720 ms marker, 150 ms 400 Hz pre-roll and post-roll,
 and all four source parity hashes. Detection scores each slot's central 20 ms.
-Later slot starts search within ±15 ms of the prior chosen start plus 60 ms;
-final cumulative drift is capped at ±60 ms. All twelve slots must score at least
-0.8. The sync anchor is fixed before later slots are evaluated, so a failed cap
-cannot slide the anchor to manufacture a pass.
+Complete-path dynamic programming searches starts within ±15 ms of the previous
+start plus 60 ms, with cumulative drift capped at ±60 ms at every slot. Drift
+stays constant within an expected repeated-tone run and changes only at tone
+transitions. All twelve slots must score at least 0.8. Paths prefer least total
+movement, then greatest confidence sum (sums within 1e-9 tie), then earliest
+starts. The sync anchor stays fixed; a failed cap cannot slide it to manufacture
+a pass. Rejected legacy alignments remain diagnostics with `pathValid: false`.
+
+SDK 0.5.0 predates this detector. The Python peer ports the complete-path detector
+from SDK commit `9269e31`; the Android APM comparator invokes that same peer
+implementation. The detector will be supplied by a later SDK release.
 
 An audio phase passes on its first complete **clean** cycle, with post-roll
 observed, within the existing five-second deadline. A cycle whose counter
@@ -134,6 +143,10 @@ The six SDK amendment 2a input hashes and drift lists are host-tested at 8 kHz
 and 48 kHz. They insert or delete 10 ms at slot +45 ms, with 2.5 ms in-place
 crossfades. Four edits in slots 2/5/8/10 give ±40 ms and must pass. Eight
 insertions give +80 ms and must fail specifically on the drift cap.
+The recomputed drift lists are `[0,0,0,10,10,10,20,20,30,30,30,33]` for +40 ms
+and `[0,0,0,-7,-7,-7,-7,-7,-7,-7,-7,-7]` for −40 ms at both rates. All eight
+published repeated-tone regression hashes also match: the deleted-run vectors
+detect with zero drifts, while wrong, silent and final-slot alias controls fail.
 
 ## CI and evidence
 

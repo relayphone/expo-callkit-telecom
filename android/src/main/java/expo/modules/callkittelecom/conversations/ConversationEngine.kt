@@ -146,21 +146,6 @@ class ConversationEngine(val context: Context) {
     private val identities = NativeIdentityReservations()
     internal var nativeMedia = AndroidNativeMedia.from(metadata?.getString("ExpoCallKitTelecomAndroidNativeMedia"))
     private val calls = linkedMapOf<String, Call>()
-    private val reconnectObserver = NativeMediaObserver { observation ->
-        if (observation.stage == NativeMediaStage.RECONNECTING || observation.stage == NativeMediaStage.RECONNECTED) {
-            for (current in calls.values.toList()) {
-                if (serverCallId(current) == observation.serverCallId && live(current) &&
-                    current.connection.observe(observation.stage) && current.state["connectedAt"] != null) {
-                    current.state["status"] = current.connection.connected(current.state["status"] == "held")
-                    publish()
-                }
-            }
-        }
-    }
-    init {
-        NativeMediaSignals.observers += reconnectObserver
-        jobs.coroutineContext[Job]!!.invokeOnCompletion { NativeMediaSignals.observers -= reconnectObserver }
-    }
     private val recent = mutableMapOf<String, Pair<Long, Map<String, Any?>>>()
     private val incomingTasks = mutableMapOf<String, CompletableDeferred<Map<String, Any?>>>()
     private val endedIntake = NativeEndedIntake()
@@ -586,7 +571,9 @@ class ConversationEngine(val context: Context) {
             }
         }
         run {
-            call.media = call.media ?: NativeMediaOwner(nativeMedia, call.audio, initiallyMuted = call.state["isMuted"] == true) { answerMedia -> NativeMediaController(context,
+            call.media = call.media ?: NativeMediaOwner(nativeMedia, call.audio, initiallyMuted = call.state["isMuted"] == true) { answerMedia ->
+                call.connection.observe(NativeMediaConnection.RECONNECTED)
+                NativeMediaController(context,
                 if (answerMedia == null) payload else payload + ("media" to answerMedia),
                 policy, jobs, failed = { disconnected(NativeMediaDisconnection.FAILURE) }, connected = {
                 if (calls[id] === call) {
@@ -595,7 +582,12 @@ class ConversationEngine(val context: Context) {
                     if (call.state["status"] != "held") markConnected(call)
                     publish()
                 }
-            }, disconnected = ::disconnected) }
+            }, disconnected = ::disconnected, connectionChanged = { state ->
+                if (live(call) && call.connection.observe(state) && call.state["connectedAt"] != null) {
+                    call.state["status"] = call.connection.connected(call.state["status"] == "held")
+                    publish()
+                }
+            }) }
             if (prewarm) call.media?.prewarm()
         }
     }
@@ -902,6 +894,15 @@ class ConversationEngine(val context: Context) {
         if (!started) jobs.launch {
             val outcome = completion.await()
             if (outcome == CoreDisconnectOutcome.DEADLINE_EXPIRED) {
+                @Suppress("UNCHECKED_CAST")
+                val ended = current.state["ended"] as? Map<String, Any?>
+                val updated = ended?.let(::withRemainingPlatformCall)
+                if (updated != null && updated !== ended) {
+                    current.state["ended"] = updated
+                    current.visible = true
+                    pendingTerminals[current.reservation.id] = current
+                    publish()
+                }
                 signal(current, NativeMediaStage.PLATFORM_REMOVAL_FAILED, mapOf(
                     "attemptCount" to current.disconnect.attempts.toLong(),
                     "lastCoreErrorCode" to current.disconnect.lastErrorCode.toLong()))

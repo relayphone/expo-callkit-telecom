@@ -5,7 +5,28 @@ All notable changes to `expo-callkit-telecom` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 2.0.0-alpha.7 (2026-11-14)
+
+### Changed
+
+* Pin the verified iOS SDK 0.5.0 release asset. Default iOS plugin loading now
+  succeeds on Expo 58 as well as Expo 57.
+* **android:** publish `reconnecting` during native room recovery while retaining
+  `connectedAt`; hold takes precedence and notifications keep ongoing presentation.
+* **android:** explicit native-handler refusals reject app commands with `refused`
+  and the handler's reason. Internal timeouts and thrown handlers retain their codes.
+* **android:** annotate an existing failed end with `platformCallRemaining: true`
+  when platform removal exhausts its deadline, preserving the logical end.
+* Port tones-v2 complete-path alignment and transition-only drift from the next
+  SDK detector, including deterministic confidence-sum ties and published vectors.
+
+### Fixes
+
+* **android:** wait at most 100 ms for the playback mute boundary, then mute
+  directly and record the missed boundary so a stalled write cannot block hold.
+* **android:** preserve an accepted local End or Decline when a later server
+  report, push or room deletion confirms completion. Settle immediately with one
+  performed action and a local platform disconnect, without waiting for the handler.
 
 ### Features
 

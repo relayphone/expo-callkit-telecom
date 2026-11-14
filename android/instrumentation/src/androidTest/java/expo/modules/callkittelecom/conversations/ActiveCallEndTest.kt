@@ -96,15 +96,21 @@ class ActiveCallEndTest {
             private var connection: NativeRoomConnection? = null
             private var failed: () -> Unit = {}
             private var disconnected: (NativeMediaDisconnection) -> Unit = { failed() }
+            private var connectionChanged: (NativeMediaConnection) -> Unit = {}
             override var isPrepared = false
                 private set
             var activations = 0
             var closes = 0
+            var closeReason: String? = null
             override fun setFailureListener(listener: () -> Unit) { failed = listener }
             override fun setDisconnectListener(listener: (NativeMediaDisconnection) -> Unit) { disconnected = listener }
+            override fun setConnectionListener(listener: (NativeMediaConnection) -> Unit) { connectionChanged = listener }
             override suspend fun prewarm(payload: Map<String, Any?>) {
                 isPrepared = true
-                connection = NativeRoomConnection(scope, { stage, reason -> NativeMediaSignals.emit(id, stage, reason = reason) }, { reason ->
+                connection = NativeRoomConnection(scope, { stage, reason ->
+                    stage.connection()?.let { connectionChanged(it) }
+                    NativeMediaSignals.emit(id, stage, reason = reason)
+                }, { reason ->
                     isPrepared = false; disconnected(reason?.disconnection() ?: NativeMediaDisconnection.FAILURE)
                 }, reconnectTimeoutMillis = reconnectTimeoutMillis).also { it.observe(room) }
             }
@@ -112,7 +118,7 @@ class ActiveCallEndTest {
             override suspend fun setHeld(held: Boolean) = Unit
             override suspend fun setMuted(muted: Boolean) = Unit
             override suspend fun close(reason: String) {
-                closes++; isPrepared = false
+                closes++; closeReason = reason; isPrepared = false
                 connection?.close(); scope.cancel(); closed.complete(Unit)
             }
         }
@@ -127,10 +133,16 @@ class ActiveCallEndTest {
         fun service() = context.getSystemService(ActivityManager::class.java).getRunningServices(Int.MAX_VALUE)
             .firstOrNull { it.service.className == ConversationService::class.java.name }
 
-        suspend fun answer() {
+        suspend fun ring() {
             val grant = mapOf("provider" to "livekit", "token" to "fake-room-grant", "expiresAt" to System.currentTimeMillis() / 1000 + 120)
             assertEquals("reported", engine.incoming(IncomingCallPush(id, "incoming-$id",
                 mapOf("handleType" to "generic", "value" to id, "displayName" to id), media = grant).payload())["status"])
+        }
+
+        suspend fun prepared() = withTimeout(3000) { while (!::session.isInitialized || !session.isPrepared) delay(10) }
+
+        suspend fun answer() {
+            ring()
             engine.join(id)
             withTimeout(5000) {
                 while (state()?.get("status") != "connected" || !notificationPresent() || service()?.foreground != true ||
@@ -202,14 +214,15 @@ class ActiveCallEndTest {
     @Test fun aServerReportCannotReplaceAnAcceptedLocalEnd() = localEndRace(0)
     @Test fun aCallEndedPushCannotReplaceAnAcceptedLocalEnd() = localEndRace(1)
     @Test fun roomDeletionCannotReplaceAnAcceptedLocalEnd() = localEndRace(2)
+    @Test fun aServerReportCannotReplaceAnAcceptedDecline() = localEndRace(0, decline = true)
 
-    private fun localEndRace(source: Int) = fixture {
-        answer()
+    private fun localEndRace(source: Int, decline: Boolean = false) = fixture {
+        if (decline) { engine.policy.put("prewarm", true); ring(); prepared() } else answer()
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         val finished = CompletableDeferred<Unit>()
         ConversationActions.configure { action ->
-            assertTrue(action is ConversationAction.End)
+            assertEquals(decline, action is ConversationAction.Decline)
             withContext(NonCancellable) { entered.complete(Unit); release.await(); finished.complete(Unit) }
             ConversationActionResult.Refuse("lateRefusal")
         }
@@ -227,6 +240,7 @@ class ActiveCallEndTest {
                 assertFalse("End must complete before the app handler replies", release.isCompleted)
                 removedWithin(started, 3000)
                 assertEquals("local", terminal?.get("reason")); assertNull(terminal?.get("failure"))
+                assertEquals(if (decline) "declined" else "ended", session.closeReason)
                 assertEquals(listOf(DisconnectCause.LOCAL), disconnectCauses)
                 val performed = events.filter { it["type"] == "actionPerformed" }.map { it["payload"] as Map<*, *> }
                 assertEquals(1, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
@@ -357,6 +371,7 @@ class ActiveCallEndTest {
         session.closed.await()
         assertEquals("failed", terminal?.get("reason"))
         assertEquals(mapOf("kind" to "server"), terminal?.get("failure"))
+        val logicalAt = terminal?.get("at")
         assertEquals(1, events.count { it["type"] == "audioDeactivated" })
         assertFalse(coreClosed.isCompleted)
         assertNull(state())
@@ -379,12 +394,15 @@ class ActiveCallEndTest {
         }
         assertTrue(SystemClock.elapsedRealtime() - started >= 2000)
         val failed = signals.single { it.stage == NativeMediaStage.PLATFORM_REMOVAL_FAILED }
+        assertEquals("failed", terminal?.get("reason")); assertEquals(logicalAt, terminal?.get("at"))
+        assertEquals(mapOf("kind" to "server", "platformCallRemaining" to true), terminal?.get("failure"))
         assertEquals(id, failed.serverCallId)
         assertEquals(mapOf("attemptCount" to disconnects.toLong(), "lastCoreErrorCode" to CallException.ERROR_UNKNOWN.toLong()), failed.measurements)
         assertNull(failed.reason)
         withTimeout(1000) { while (notificationPresent() || service() != null || !coreClosed.isCompleted) delay(10) }
         assertTrue("Refusing Core removal can leave the system call behind", TelecomEvidence.calls().isNotEmpty())
-        assertEquals(mapOf("kind" to "server"), terminal?.get("failure"))
-        assertEquals(1, terminalSnapshots); assertEquals(1, session.closes)
+        assertEquals(mapOf("kind" to "server", "platformCallRemaining" to true), terminal?.get("failure"))
+        assertEquals("The second snapshot annotates the same logical end", 2, terminalSnapshots)
+        assertEquals(1, session.closes)
     }
 }

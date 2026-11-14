@@ -3,7 +3,7 @@
 ## iOS
 
 The SDK supplies LiveCommunicationKit and PushKit through its sole Apple native
-provider. Follow its [React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.4.0/docs/react-native.md)
+provider. Follow its [React Native guide](https://github.com/relayphone/ios-voip-sdk/blob/v0.5.0/docs/react-native.md)
 for current iOS/Expo requirements, entitlements, notifications, previews and Focus
 configuration. Its package includes the native sources; do not add a separate SDK
 pod or Swift package. The composed fork plugin invokes the SDK plugin.
@@ -42,8 +42,9 @@ keeps refusing removal, v2 emits native `PLATFORM_REMOVAL_FAILED` through
 `NativeMediaSignals`, with the conversation ID, `attemptCount` and
 `lastCoreErrorCode`, then cancels the Core scope and removes the service and
 notification. The system may still show the call: Core-Telecom 1.0.1 has no
-other removal path. The ended reason and failure stay unchanged. A typed flag
-on the ended failure follows with the next iOS SDK release.
+other removal path. An existing failed end is updated with
+`failure.platformCallRemaining: true`; its timestamp, reason and failure kind
+stay unchanged. Nonfailed ends do not gain a new failure.
 
 ### Background battery restrictions
 

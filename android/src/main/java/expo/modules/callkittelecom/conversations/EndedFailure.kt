@@ -44,3 +44,11 @@ internal fun conversationEnd(at: String, reason: String, failure: EndedFailure?)
     } else {
         mapOf("at" to at, "reason" to reason)
     }
+
+/** Preserve the logical end; only an existing failed end has a failure to annotate. */
+@Suppress("UNCHECKED_CAST")
+internal fun withRemainingPlatformCall(ended: Map<String, Any?>): Map<String, Any?> {
+    if (ended["reason"] != "failed") return ended
+    val failure = ended["failure"] as? Map<String, Any?> ?: return ended
+    return ended + ("failure" to (failure + ("platformCallRemaining" to true)))
+}

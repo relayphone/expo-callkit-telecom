@@ -10,7 +10,7 @@ class NativeRoomConnectionTest {
     @Test fun reconnectWindowControlsPublicStatusWithHoldTakingPrecedence() = runBlocking {
         val room = FakeRoom()
         val status = NativeConnectionStatus()
-        val connection = NativeRoomConnection(this, { stage, _ -> status.observe(stage) }, room::release)
+        val connection = NativeRoomConnection(this, { stage, _ -> stage.connection()?.let(status::observe) }, room::release)
         connection.observe(room.events)
         try {
             assertEquals("connected", status.connected(false))

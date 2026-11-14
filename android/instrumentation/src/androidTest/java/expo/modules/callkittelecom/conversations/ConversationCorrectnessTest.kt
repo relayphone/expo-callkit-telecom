@@ -32,6 +32,7 @@ class ConversationCorrectnessTest {
         var retryGate: CompletableDeferred<Unit>? = null
         val retryEntered = CompletableDeferred<Unit>()
         var disconnects = 0
+        val causes = mutableListOf<Int>()
         var throwsRemaining = 0
         val outcomes = ArrayDeque<CallControlResult>()
         val muted = MutableSharedFlow<Boolean>(replay = 1)
@@ -55,6 +56,7 @@ class ConversationCorrectnessTest {
                     override suspend fun requestEndpointChange(endpoint: CallEndpointCompat) = CallControlResult.Success()
                     override suspend fun disconnect(cause: DisconnectCause): CallControlResult {
                         disconnects++
+                        causes += cause.code
                         disconnectEntered.complete(Unit)
                         disconnectGate?.await()
                         if (disconnects == 2) { retryEntered.complete(Unit); retryGate?.await() }
@@ -252,7 +254,7 @@ class ConversationCorrectnessTest {
         assertEquals(0, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
     }
 
-    @Test fun aLateLocalHandlerCannotReplaceAnAlreadyDisconnectingRemoteEnd() = fixture {
+    @Test fun aRemoteCompletionSettlesTheAcceptedLocalEndWithoutWaitingForItsHandler() = fixture {
         ready(); core.disconnectGate = CompletableDeferred()
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
@@ -262,14 +264,16 @@ class ConversationCorrectnessTest {
             entered.await()
             val remote = async { engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded")) }
             core.disconnectEntered.await()
+            assertTrue(withTimeout(250) { local.await() }.isSuccess)
+            assertFalse(release.isCompleted)
             release.complete(Unit)
-            assertTrue(local.await().isFailure)
             core.disconnectGate!!.complete(Unit); remote.await()
         } } finally { release.complete(Unit); ConversationActions.configure(null) }
         ended()
         assertEquals(1, core.disconnects)
-        assertEquals("remoteEnded", ended?.get("reason"))
-        assertEquals(0, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
+        assertEquals("local", ended?.get("reason"))
+        assertEquals(listOf(DisconnectCause.LOCAL), core.causes)
+        assertEquals(1, performed.count { (it["action"] as Map<*, *>)["kind"] == "end" })
     }
 
     @Test fun cancellingTheFirstLocalEndDoesNotCancelAnotherEndOrDuplicateCoreRequest() = fixture {
