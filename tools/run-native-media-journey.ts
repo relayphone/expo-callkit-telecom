@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface Command {
@@ -20,6 +20,35 @@ const execute: Execute = ({ program, args, timeout, capture }) =>
   }) ?? "";
 
 const app = "expo.modules.callkittelecom.instrumentation";
+
+/** The Kotlin fixture exports only allowlisted failure messages, never request/SDK details. */
+export function mediaFailureSummary(value: unknown): string | undefined {
+  if (value === null || typeof value !== "object") return;
+  const result = value as Record<string, unknown>;
+  if (result.passed !== false || typeof result.step !== "string" || !Array.isArray(result.failure)) return;
+  const safe = (text: string) => text.replace(/[^a-zA-Z0-9 .:_-]/g, "").slice(0, 200);
+  const causes = result.failure.flatMap((entry: unknown) => {
+    if (entry === null || typeof entry !== "object") return [];
+    const detail = entry as Record<string, unknown>;
+    return typeof detail.type === "string" && typeof detail.message === "string"
+      ? [`- ${safe(detail.type)}: ${safe(detail.message)}`] : [];
+  });
+  if (causes.length === 0) return;
+  return `### Android media failure\n\nStep: ${safe(result.step)}\n\n${causes.slice(0, 8).join("\n")}\n`;
+}
+
+function reportMediaFailure(value: unknown): void {
+  const summary = mediaFailureSummary(value);
+  if (!summary) return;
+  process.stderr.write(summary);
+  const path = process.env.GITHUB_STEP_SUMMARY;
+  if (path) appendFileSync(path, summary);
+}
+
+/** Keep CPU-heavy detector controls outside the running emulator in CI. */
+export function runNativeMediaControls(run: Execute = execute): void {
+  run({ program: "node", args: ["--test", "tools/native-media-marker.test.ts", "tools/compare-media-apm.test.ts"], timeout: 30_000 });
+}
 const checks = [
   ["journey-results", "node", "check-android-journey.ts"],
   ["answered-elsewhere-results", "node", "check-answered-elsewhere.ts"],
@@ -91,10 +120,11 @@ export function runNativeMediaJourney(
 }
 
 /** Qualifies isolated software audio on its own CI emulator and retains failures before Release reinstalls. */
-export function runNativeMediaFeasibility(output = "android/instrumentation/build", run: Execute = execute): void {
+export function runNativeMediaFeasibility(output = "android/instrumentation/build", run: Execute = execute,
+  controls: "run" | "prechecked" = "run"): void {
   mkdirSync(output, { recursive: true });
   for (const name of ["media-hook-results", "capture-trace"]) rmSync(join(output, `${name}.json`), {force: true});
-  run({ program: "node", args: ["--test", "tools/native-media-marker.test.ts", "tools/compare-media-apm.test.ts"], timeout: 30_000 });
+  if (controls === "run") runNativeMediaControls(run);
   for (const [build, classes] of [
     ["EmulatorTest", "MediaHookFeasibilityTest,MediaTestIsolationTest"],
     ["Release", "MediaTestIsolationTest"],
@@ -117,6 +147,7 @@ export function runNativeMediaFeasibility(output = "android/instrumentation/buil
             timeout: 15_000, capture: true });
           JSON.parse(contents);
           writeFileSync(join(output, `${name}.json`), contents);
+          if (name === "media-hook-results") reportMediaFailure(JSON.parse(contents));
         } catch (error) { if (failure === undefined) throw error; }
       }
     }
@@ -124,6 +155,8 @@ export function runNativeMediaFeasibility(output = "android/instrumentation/buil
 }
 
 if (import.meta.main) {
-  if (process.argv.includes("--feasibility-only")) runNativeMediaFeasibility();
+  if (process.argv.includes("--host-controls-only")) runNativeMediaControls();
+  else if (process.argv.includes("--feasibility-only")) runNativeMediaFeasibility(undefined, undefined,
+    process.argv.includes("--controls-prechecked") ? "prechecked" : "run");
   else runNativeMediaJourney(undefined, undefined, !process.argv.includes("--functional-only"));
 }

@@ -17,6 +17,88 @@ function samples(rate: number) {
   });
 }
 const pcm = samples(48_000);
+
+test("output PCM acknowledgements do not wait for a suspended detector and scoring failures stay fatal", () => {
+  const code = `
+import asyncio, base64, importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("fixture", sys.argv[1])
+fixture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixture)
+fixture.settings["deviceAuth"] = "test"
+
+class Request:
+    headers = {"Authorization": "Bearer test"}
+    match_info = {"server_id": "hooks-123"}
+    def __init__(self, first, pcm=b"", reset=False):
+        self.body = {"firstFrame": first, "sampleRate": 48000, "reset": reset,
+            "pcm16": base64.b64encode(pcm).decode(), "stats": {"fromFrame": first,
+            "frame": first + len(pcm) // 2, "counters": dict.fromkeys([
+                "concealed_samples", "packets_lost", "inserted_samples_for_deceleration",
+                "removed_samples_for_acceleration"], 0)}}
+    async def json(self): return self.body
+
+class Scorer:
+    def __init__(self):
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+    async def analyze(self, pcm, frequencies):
+        self.entered.set()
+        await self.release.wait()
+        return fixture.MarkerObservation.analyze(pcm, frequencies)
+
+async def post(first, pcm=b"", reset=False):
+    try:
+        response = await asyncio.wait_for(fixture.device_output(Request(first, pcm, reset)), .1)
+    except asyncio.TimeoutError:
+        raise AssertionError("PCM acknowledgement waited for CPU scoring")
+    assert response.status == 200
+    return json.loads(response.text)
+
+async def check():
+    scorer = Scorer()
+    fixture.analysis_worker = scorer
+    pcm = fixture.TonesV2Signal("hooks-123:toDevice", 48000).pcm(64800)
+    try:
+        await post(0, reset=True)
+        await post(0, pcm[:48000])
+        before = await post(24000, pcm[48000:96000])
+        await asyncio.wait_for(scorer.entered.wait(), 1)
+        during = await post(48000, pcm[96000:120000])
+        assert before["cleanCyclesWithPostRoll"] == during["cleanCyclesWithPostRoll"] == 0
+        assert during["frames"] == 60000
+        scorer.release.set()
+        await asyncio.wait_for(fixture.downlinks["hooks-123"].output_task, 2)
+        after = await post(60000, pcm[120000:])
+        assert after["cleanCyclesWithPostRoll"] == 1
+        assert after["firstCleanCycle"]["receiveStats"]["status"] == "clean"
+        await fixture.close_output_measurements(None)
+        class FailedScorer:
+            async def analyze(self, *_): raise RuntimeError("controlled scorer failure")
+        fixture.analysis_worker = FailedScorer()
+        await post(0, reset=True)
+        await post(0, pcm[:48000])
+        await post(24000, pcm[48000:96000])
+        await asyncio.sleep(0)
+        failed = False
+        try: await post(48000)
+        except RuntimeError: failed = True
+        assert failed, "Scorer failure must not become a successful acknowledgement"
+        print(json.dumps({"framesAcceptedWhileScoringBlocked": during["frames"],
+            "unscoredClean": during["cleanCyclesWithPostRoll"],
+            "qualifiedClean": after["cleanCyclesWithPostRoll"], "scoringFailureFatal": failed}))
+    finally:
+        scorer.release.set()
+        close = getattr(fixture, "close_output_measurements", None)
+        if close is not None: await close(None)
+asyncio.run(check())
+`;
+  const result = JSON.parse(execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", [
+    "-c", code, process.env.NATIVE_MEDIA_FIXTURE_SOURCE ?? "tools/native-media-fixture.py",
+  ], { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" }));
+  assert.deepEqual(result, { framesAcceptedWhileScoringBlocked: 60000,
+    unscoredClean: 0, qualifiedClean: 1, scoringFailureFatal: true });
+});
+
 const receiver = `
 import array, asyncio, hashlib, importlib.util, json, math, random, sys, tempfile, types
 spec = importlib.util.spec_from_file_location("fixture", "tools/native-media-fixture.py")
@@ -352,11 +434,18 @@ class Request:
 async def check():
     text_counters=${counterFormat === "Android decimal text" ? "True" : "False"}
     async def send(first,data,frame,loss,plc,reset=False,rate=48000):
-        return await f.device_output(Request({"reset":reset,"sampleRate":rate,"firstFrame":first,
+        body={"reset":reset,"sampleRate":rate,"firstFrame":first,
             "pcm16":base64.b64encode(data).decode(),"stats":{"fromFrame":frame,"frame":frame,
                 "counters":{"packets_lost":loss,"concealed_samples":str(plc) if text_counters else plc,
                             "inserted_samples_for_deceleration":"0" if text_counters else 0,
-                            "removed_samples_for_acceleration":"0" if text_counters else 0}}}))
+                            "removed_samples_for_acceleration":"0" if text_counters else 0}}}
+        response=await f.device_output(Request(body))
+        observation=f.downlinks["hooks-7"]
+        if response.status==200 and observation.output_task is not None:
+            await observation.output_task
+            body.update(reset=False,firstFrame=first+len(data)//2,pcm16="")
+            response=await f.device_output(Request(body))
+        return response
     initial=await send(0,b"",0,0,0,True)
     initial=json.loads(initial.text)
     data=f.TonesV2Signal("hooks-7:toDevice",48000).pcm(107520)
@@ -411,10 +500,16 @@ async def check():
     data=f.TonesV2Signal("hooks-7:toDevice",48000).pcm(57600)
     async def phase(counter):
         async def send(first,pcm,frame,reset=False):
-            result=await f.device_output(Request({"reset":reset,"sampleRate":48000,"firstFrame":first,
+            body={"reset":reset,"sampleRate":48000,"firstFrame":first,
                 "pcm16":base64.b64encode(pcm).decode(),"stats":{"fromFrame":frame,"frame":frame,
                 "counters":{"packets_lost":0,"concealed_samples":counter,
-                            "inserted_samples_for_deceleration":"0","removed_samples_for_acceleration":"0"}}}))
+                            "inserted_samples_for_deceleration":"0","removed_samples_for_acceleration":"0"}}}
+            result=await f.device_output(Request(body))
+            observation=f.downlinks["hooks-7"]
+            if result.status==200 and observation.output_task is not None:
+                await observation.output_task
+                body.update(reset=False,firstFrame=first+len(pcm)//2,pcm16="")
+                result=await f.device_output(Request(body))
             assert result.status==200
             return json.loads(result.text)
         await send(0,b"",0,True)

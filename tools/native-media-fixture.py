@@ -109,6 +109,11 @@ class MarkerObservation:
         self.reset()
 
     def reset(self):
+        pending = getattr(self, "output_task", None)
+        if pending is not None and not pending.done():
+            pending.cancel()
+        self.output_task = None
+        self.output_result = None
         self.epoch += 1
         self.frames = 0
         self.pcm = []
@@ -333,6 +338,26 @@ class MarkerObservation:
             self.saved = self.analyzed
         return {**self.evidence, "receiveClock": "host.monotonic_ns", "arrivals": self.arrivals,
                 "rtc": self.stats, "statsError": self.stats_error, "diagnosticsOverflow": self.diagnostics_overflow}
+
+    async def measure_output(self):
+        """Acknowledge PCM independently of CPU scoring so the next audio drain stays live."""
+        if self.output_task is not None and self.output_task.done():
+            self.output_result = self.output_task.result()
+            self.output_task = None
+        if len(self.pcm) < 34560:
+            self.output_result = await self.measure()
+        elif self.output_task is None and self.frames > self.analyzed:
+            self.output_task = asyncio.create_task(self.measure())
+            self.output_task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+        if self.output_result is None:
+            raise RuntimeError("Output capture baseline missing")
+        return self.output_result
+
+    async def close_output(self):
+        if self.output_task is not None:
+            self.output_task.cancel()
+            await asyncio.gather(self.output_task, return_exceptions=True)
+            self.output_task = None
 
     @staticmethod
     def inbound_reports(reports):
@@ -624,6 +649,9 @@ async def device_output(request):
         return web.Response(status=400)
     body = await request.json()
     if body.get("reset") is True:
+        previous = downlinks.get(server_id)
+        if previous is not None:
+            await previous.close_output()
         downlinks[server_id] = MarkerObservation(server_id + ":toDevice")
     observation = downlinks.get(server_id)
     if observation is None or body.get("sampleRate") != 48000 or body.get("firstFrame") != observation.frames:
@@ -642,7 +670,11 @@ async def device_output(request):
                               "inbound": [{name: output_counter(sample["counters"].get(name)) for name in (
                                   "inserted_samples_for_deceleration", "removed_samples_for_acceleration", "concealed_samples", "packets_lost")}]})
     return web.json_response({"running": True, "error": None, "frames": observation.frames,
-                              "generation": observation.generation, **(await observation.measure())})
+                              "generation": observation.generation, **(await observation.measure_output())})
+
+
+async def close_output_measurements(_app):
+    await asyncio.gather(*(observation.close_output() for observation in downlinks.values()))
 
 
 async def raw_signaling(request):
@@ -746,6 +778,7 @@ if __name__ == "__main__":
         analyze_stdin()
         sys.exit(0)
     app = web.Application(middlewares=[sanitized_errors])
+    app.on_cleanup.append(close_output_measurements)
     app.on_cleanup.append(analysis_worker.close)
     app.router.add_get("/health", lambda _: web.json_response({"ready": True}))
     app.router.add_get("/fixture/invitation/{server_id}", invitation)

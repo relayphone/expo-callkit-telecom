@@ -16,5 +16,10 @@ internal class EmulatorGateProbe(device: JavaAudioDeviceModule) {
         // This is the publication gate, not the physical recordingless-pump flag.
         fun captureClosed(publication: LocalTrackPublication?): Boolean =
             publication == null || publication.muted || publication.track?.enabled != true
+
+        // Track.enabled waits for the RTC executor, which may be stopping this very callback.
+        // Publication.muted is set only after Track.enabled changes; observing it is conservative.
+        fun captureClosedAtCallback(publication: LocalTrackPublication?): Boolean =
+            publication == null || publication.muted || publication.track == null
     }
 }

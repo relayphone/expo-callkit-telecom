@@ -99,7 +99,7 @@ internal class MediaGateTrace(private val now: () -> Long) {
         JSONObject().put("clock", "android.elapsedRealtimeNanos").put("overflow", overflow)
             .put("error", problem?.name ?: JSONObject.NULL)
             .put("gateSources", JSONObject().put("playback", "JavaAudioDeviceModule.audioOutput.speakerMute")
-                .put("capture", "LocalTrackPublication.muted / track.enabled / absent publication"))
+                .put("capture", "LocalTrackPublication.muted / absent track or publication; nonblocking callback entry sample"))
             .put("playbackObservation", "Callback follows AudioTrack.write; entry flag does not timestamp the earlier buffer-fill/write gate decision")
             .put("platformAcknowledgement", JSONObject().put("hold", "successful Core setInactive/setActive return")
                 .put("mute", "AudioManager microphone-mute setter return; Core flow observation is separate"))
