@@ -1,23 +1,27 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { captureMediaCommand, collectNativeMediaEvidence, mediaEvidenceNames, type CapturedOutput, type EvidenceClock } from "./native-media-evidence.ts";
 
 export interface Command {
   program: "gradle" | "adb" | "node";
   args: readonly string[];
   timeout: number;
   capture?: boolean;
+  diagnostics?: true;
 }
 
-export type Execute = (command: Command) => string;
-const execute: Execute = ({ program, args, timeout, capture }) =>
-  execFileSync(program, [...args], {
+export type Execute = (command: Command) => string | CapturedOutput;
+const execute: Execute = ({ program, args, timeout, capture, diagnostics }) => {
+  if (diagnostics) return captureMediaCommand(program, args, timeout);
+  return execFileSync(program, [...args], {
     encoding: "utf8",
     timeout,
     killSignal: "SIGKILL",
     stdio: ["ignore", capture ? "pipe" : "inherit", "inherit"],
     maxBuffer: 2 * 1024 * 1024,
   }) ?? "";
+};
 
 const app = "expo.modules.callkittelecom.instrumentation";
 
@@ -88,12 +92,13 @@ export function runNativeMediaJourney(
   function pull(name: string): string {
     const destination = join(output, `${name}.json`);
     try {
-      const contents = run({
+      const result = run({
         program: "adb",
         args: ["exec-out", "run-as", app, "cat", `files/${name}.json`],
         timeout: 15_000,
         capture: true,
       });
+      const contents = typeof result === "string" ? result : result.stdout;
       writeFileSync(`${destination}.tmp`, contents);
       renameSync(`${destination}.tmp`, destination);
       saved.add(name);
@@ -148,9 +153,10 @@ export function runNativeMediaJourney(
 
 /** Qualifies isolated software audio on its own CI emulator and retains failures before Release reinstalls. */
 export function runNativeMediaFeasibility(output = "android/instrumentation/build", run: Execute = execute,
-  controls: "run" | "prechecked" = "run"): void {
+  controls: "run" | "prechecked" = "run", timing?: EvidenceClock): void {
   mkdirSync(output, { recursive: true });
-  for (const name of ["media-hook-results", "capture-trace"]) rmSync(join(output, `${name}.json`), {force: true});
+  for (const name of mediaEvidenceNames) rmSync(join(output, `${name}.json`), {force: true});
+  rmSync(join(output, "media-evidence-reads.json"), { force: true });
   if (controls === "run") runNativeMediaControls(run);
   for (const [build, classes] of [
     ["EmulatorTest", "MediaHookFeasibilityTest,MediaTestIsolationTest"],
@@ -168,13 +174,23 @@ export function runNativeMediaFeasibility(output = "android/instrumentation/buil
       ], timeout: 5 * 60_000 }));
     } catch (error) { failure = error; throw error; }
     finally {
-      if (build === "EmulatorTest") for (const name of ["media-hook-results", "capture-trace"]) {
+      if (build === "EmulatorTest") {
         try {
-          const contents = run({ program: "adb", args: ["exec-out", "run-as", app, "cat", `files/${name}.json`],
-            timeout: 15_000, capture: true });
-          JSON.parse(contents);
-          writeFileSync(join(output, `${name}.json`), contents);
-          if (name === "media-hook-results") reportMediaFailure(JSON.parse(contents));
+          const evidence = collectNativeMediaEvidence(output, (name, timeout) => {
+            const result = run({ program: "adb", args: ["exec-out", "run-as", app, "cat", `files/${name}.json`],
+              timeout, capture: true, diagnostics: true });
+            return typeof result === "string" ? { stdout: result, stderr: "", exitCode: 0 } : result;
+          }, timing);
+          if (evidence.results["media-hook-results"]) reportMediaFailure(evidence.results["media-hook-results"]);
+          for (const message of evidence.failures) {
+            process.stderr.write(`${message}\n`);
+            const summary = process.env.GITHUB_STEP_SUMMARY;
+            if (summary) {
+              try { appendFileSync(summary, `\n${message}\n`); }
+              catch { process.stderr.write("Retain EmulatorTest evidence: could not write failure summary\n"); }
+            }
+          }
+          if (evidence.failures[0]) throw new Error(evidence.failures[0]);
         } catch (error) { if (failure === undefined) throw error; }
       }
     }
