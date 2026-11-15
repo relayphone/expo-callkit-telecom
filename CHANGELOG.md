@@ -5,6 +5,29 @@ All notable changes to `expo-callkit-telecom` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.0.0-alpha.8 (2026-11-15)
+
+### Features
+
+* **android:** add typed native `ConversationControls.*WithOutcome` calls returning
+  `Performed`, `Refused(reason)` or `Failed(code, message)` from the same source as
+  JavaScript rejections. Existing fire-and-forget controls remain source-compatible.
+* **android:** add `ConversationPlatformCalls.reconcile` with removed, still-remaining
+  and no-such-call outcomes. Late removal publishes the original platform UUID and
+  logical end timestamp, when available, through `ConversationPlatformCalls.removed`.
+  Failed ends also clear `platformCallRemaining` without changing their timestamp,
+  reason or failure kind; a reused conversation ID keeps its replacement's state.
+
+### Fixes
+
+* **android:** retain the public Core-Telecom cleanup control after the initial
+  60-second removal deadline. Retry after 10, 30, 60 and then every 120 seconds while
+  the process lives, without blocking new calls. Core-Telecom 1.0.1 cannot restore
+  the handle after process restart; `NO_SUCH_CALL` does not confirm platform removal.
+* **android:** bound all native outcome waits to 70 seconds, returning
+  `Failed(DEADLINE_EXCEEDED, ...)` if settlement never arrives. Timing out or
+  cancelling a waiter leaves the accepted command running.
+
 ## 2.0.0-alpha.7 (2026-11-14)
 
 ### Changed
