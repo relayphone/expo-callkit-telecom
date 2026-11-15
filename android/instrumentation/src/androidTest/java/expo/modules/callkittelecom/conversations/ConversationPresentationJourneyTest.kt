@@ -66,6 +66,11 @@ class ConversationPresentationJourneyTest {
     }
 
     private class Fixture {
+        private data class CardSample(val cards: List<StatusBarNotification>,
+            val selected: StatusBarNotification?, val matches: Boolean?)
+        private data class RemovalSample(val states: Map<String, String?>, val telecomCount: Int,
+            val notifications: List<CallNotificationState>)
+
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val engine = ConversationEngine.get(context)
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -231,15 +236,20 @@ class ConversationPresentationJourneyTest {
             listOf(it.id, it.notification.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name,
                 it.notification.extras.getCharSequence(Notification.EXTRA_TEXT), it.notification.flags)
         }}"
-        suspend fun card(callId: String = id, count: Int = 1, matches: (Notification) -> Boolean = { true }): StatusBarNotification = withTimeout(5000) {
-            while (true) {
-                val cards = cards()
-                val card = cards.singleOrNull { it.notification.extras
+        suspend fun card(callId: String = id, count: Int = 1, matches: (Notification) -> Boolean = { true }): StatusBarNotification {
+            val sample = awaitPresentationObservation("$stage: card callId=$callId, count=$count", read = {
+                val current = cards()
+                val selected = current.singleOrNull { it.notification.extras
                     .getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name?.toString() == callId }
-                if (cards.size == count && card != null && matches(card.notification)) return@withTimeout card
-                delay(10)
-            }
-            error("unreachable")
+                CardSample(current, selected, if (current.size == count && selected != null) matches(selected.notification) else null)
+            }, accepts = { it.cards.size == count && it.selected != null && it.matches == true }, describe = { value ->
+                "count=${value.cards.size}, selectedId=${value.selected?.id}, matches=${value.matches}, cards=${value.cards.take(8).map {
+                    val name = it.notification.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)
+                        ?.name?.toString()?.takeIf { name -> name in ids }
+                    "id=${it.id}, callId=$name, flags=${it.notification.flags}"
+                }}"
+            })
+            return checkNotNull(sample.selected)
         }
         suspend fun notification(callId: String = id, matches: (Notification) -> Boolean = { true }): Notification = withTimeout(5000) {
             while (true) {
@@ -253,11 +263,19 @@ class ConversationPresentationJourneyTest {
             }
             error("unreachable")
         }
-        suspend fun removed() = withTimeout(5000) {
-            while (ids.any { state(it) != null } || TelecomEvidence.calls().isNotEmpty() || manager.activeNotifications.any {
-                it.notification.channelId == channelId || it.notification.extras
-                    .getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name?.toString() in ids
-            }) delay(10)
+        suspend fun removed() {
+            awaitPresentationObservation("$stage: no fixture states, Telecom calls or notifications", read = {
+                val states = ids.mapNotNull { callId -> state(callId)?.let { callId to (it["status"] as? String) } }.toMap()
+                val telecomCount = TelecomEvidence.calls().size
+                val notifications = manager.activeNotifications.filter {
+                    it.notification.channelId == channelId || it.notification.extras
+                        .getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name?.toString() in ids
+                }.map { CallNotificationState(it.key, it.id, it.tag, it.notification.channelId,
+                    it.notification.flags, it.isOngoing, it.isClearable) }
+                RemovalSample(states, telecomCount, notifications)
+            }, accepts = { it.states.isEmpty() && it.telecomCount == 0 && it.notifications.isEmpty() }, describe = {
+                "states=${it.states}, telecomCount=${it.telecomCount}, notifications=${it.notifications}"
+            })
         }
         suspend fun close() {
             try {
@@ -277,11 +295,13 @@ class ConversationPresentationJourneyTest {
 
     private fun fixture(body: suspend Fixture.() -> Unit) = runBlocking {
         withContext(Dispatchers.Main) {
-            withTimeout(5000) { while (TelecomEvidence.calls().isNotEmpty()) delay(10) }
+            awaitPresentationObservation("initial CallsManager empty", { TelecomEvidence.calls().size },
+                { it == 0 }, { "telecomCount=$it" })
             val fixture = Fixture()
-            try { fixture.body() }
-            catch (error: TimeoutCancellationException) { throw AssertionError(fixture.diagnostics(), error) }
-            finally { withContext(NonCancellable) { fixture.close() } }
+            withPresentationCleanup(body = {
+                try { fixture.body() }
+                catch (error: TimeoutCancellationException) { throw AssertionError(fixture.diagnostics(), error) }
+            }, cleanup = { fixture.stage = "fixture cleanup"; fixture.close() })
         }
     }
 
@@ -1045,23 +1065,30 @@ class ConversationPresentationJourneyTest {
     }
 
     @Test fun waitingIncomingHasItsOwnNonForegroundCardAndAnswerUsesTheStablePrimaryId() = fixture {
+        stage = "primary outgoing card"
         outgoing(id); engine.report(id, mapOf("type" to "connected"))
         val foregroundId = card().id
         var waitingId = "$id-waiting"
+        stage = "first waiting card"
         incoming(waitingId)
         val waiting = card(waitingId, count = 2)
         assertNotEquals(foregroundId, waiting.id)
         assertEquals(0, waiting.notification.flags and Notification.FLAG_FOREGROUND_SERVICE)
         assertTrue(waiting.notification.flags and Notification.FLAG_INSISTENT != 0)
         assertNotNull(waiting.notification.fullScreenIntent)
+        stage = "primary alongside first waiting card"
         assertEquals(foregroundId, card(id, count = 2).id)
         ConversationControls.decline(context, waitingId)
+        stage = "primary after declining waiting call"
         assertEquals(foregroundId, card().id)
         assertEquals("connected", state()?.get("status"))
         waitingId = "$id-next-waiting"
+        stage = "second waiting card"
         incoming(waitingId)
         card(waitingId, count = 2)
+        stage = "answer second waiting call"
         withContext(Dispatchers.Default) { ConversationControls.answer(context, waitingId) }
+        stage = "answered waiting card becomes foreground"
         val answered = card(waitingId) { it.flags and Notification.FLAG_FOREGROUND_SERVICE != 0 }
         assertEquals(foregroundId, answered.id)
         assertEquals(0, answered.notification.flags and Notification.FLAG_INSISTENT)
@@ -1069,8 +1096,10 @@ class ConversationPresentationJourneyTest {
         assertEquals("held", state()?.get("status"))
         assertEquals(ConversationAction.Answer(waitingId, waitingId, "app"), actions.last { it is ConversationAction.Answer })
         ConversationControls.end(context, waitingId)
+        stage = "primary restored after answered call ends"
         assertEquals(foregroundId, card().id)
         ConversationControls.end(context, id)
+        stage = "final removal"
         removed()
     }
 }

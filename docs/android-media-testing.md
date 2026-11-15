@@ -223,3 +223,22 @@ qualification result. The weakest slot scored 0.765364.
 | 9 | 0.990580 | +0.190580 |
 | 10 | 0.801134 | +0.001134 |
 | 11 | 0.971150 | +0.171150 |
+
+## Receiver subscription readiness
+
+The media journey waits for device prejoin and the fixture's subscribed receiver within the same existing
+10-second prejoin budget, then resets measurement once. Device publisher transport readiness alone does
+not acknowledge the fixture's `track_subscribed` callback. Only the fixture's exact no-receiver response
+is pending; stopped or malformed receivers still fail. Local publication mute is asserted immediately
+at device prejoin, before receiver polling, and again afterwards. All marker checks retain their
+existing assertions and deadlines.
+
+## Presentation observation diagnostics
+
+Presentation journeys poll current notification and Telecom state under the existing 5-second bounds.
+Initial Telecom drain, card matching and final removal failures name the predicate and retain the last
+actual observation: call count, matching card identity and flags, or remaining fixture states and
+notification identities. The waiting-call journey also labels each transition. Cleanup remains
+non-cancellable; a cleanup failure is suppressed onto an earlier assertion rather than replacing it.
+These diagnostics preserve the existing card/count/flag/ID assertions and do not establish the cause
+of an older timeout that retained no predicate or last state.
