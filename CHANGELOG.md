@@ -5,6 +5,20 @@ All notable changes to `expo-callkit-telecom` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.0.0-alpha.9 (2026-11-15)
+
+### Features
+
+* **android:** expose `ConversationControls.systemOutcomes` for notification and
+  Core-Telecom Answer, Decline, End, Hold and Mute commands. Each event carries the
+  conversation ID, action, source and the same typed outcome as app controls,
+  including handler refusals and failures. Outcome waits are bounded to 70 seconds;
+  accepted commands keep running if that wait expires.
+* **android:** use extensible `SystemCommandAction` and `SystemCommandSource` value
+  classes with stable strings. Collect outcomes early: the flow has no replay and
+  drops the oldest event when its 64-event buffer overflows. Include an `else` branch
+  when matching actions or sources to handle future values.
+
 ## 2.0.0-alpha.8 (2026-11-15)
 
 ### Features
