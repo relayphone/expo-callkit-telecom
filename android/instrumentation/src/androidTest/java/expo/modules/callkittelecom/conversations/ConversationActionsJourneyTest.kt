@@ -30,12 +30,31 @@ class ConversationActionsJourneyTest {
         private val previousMedia = engine.nativeMedia
         private val previousEmit = engine.emit
         private val previousFactory = NativeMediaRegistry.factories["livekit"]
+        private val previousAdmission = engine.coreAdmission
         private val ids = mutableListOf<String>()
         val actions = CopyOnWriteArrayList<ConversationAction>()
         val prepared = CopyOnWriteArrayList<Map<String, Any?>>()
         val signals = mutableListOf<NativeMediaSignal>()
         val ended = mutableMapOf<String, String>()
         val performed = mutableListOf<Map<*, *>>()
+        val systemOutcomes = mutableListOf<SystemCommandOutcome>()
+        private val outcomeCollector = engine.jobs.launch(start = CoroutineStart.UNDISPATCHED) {
+            ConversationControls.systemOutcomes.collect { systemOutcomes += it }
+        }
+        var callbacks: CoreCallCallbacks? = null
+        val coreMuted = MutableSharedFlow<Boolean>(replay = 1)
+        fun captureCoreCallbacks() {
+            engine.coreAdmission = CoreCallAdmission { attributes, callbacks, admitted ->
+                this.callbacks = callbacks
+                previousAdmission.add(attributes, callbacks) {
+                    admitted(object : CallControlScope by this { override val isMuted: Flow<Boolean> = coreMuted })
+                }
+            }
+        }
+        suspend fun outcome(id: String, action: SystemCommandAction): SystemCommandOutcome = withTimeout(5000) {
+            while (systemOutcomes.none { it.conversationId == id && it.action == action }) delay(10)
+            systemOutcomes.single { it.conversationId == id && it.action == action }
+        }
         @Volatile var muteGate: CompletableDeferred<Unit>? = null
         val muteEntered = CompletableDeferred<Unit>()
         @Volatile var mediaMuted = false
@@ -84,7 +103,8 @@ class ConversationActionsJourneyTest {
         }
         fun state(id: String) = (engine.snapshot["conversations"] as List<*>).filterIsInstance<Map<*, *>>().firstOrNull { it["id"] == id }
         suspend fun connected(id: String) = withTimeout(5000) { while (state(id)?.get("status") != "connected") delay(10) }
-        suspend fun notificationAnswer(id: String) {
+        suspend fun notificationAnswer(id: String) = notificationAction(id, SystemCommandAction.ANSWER)
+        suspend fun notificationAction(id: String, action: SystemCommandAction) {
             val manager = InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(NotificationManager::class.java)
             val answer = withTimeout(5000) {
                 var pending: PendingIntent? = null
@@ -93,7 +113,13 @@ class ConversationActionsJourneyTest {
                         it.notification.category == Notification.CATEGORY_CALL &&
                             it.notification.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name?.toString() == id
                     }?.notification
-                    pending = notification?.extras?.getParcelable(Notification.EXTRA_ANSWER_INTENT, PendingIntent::class.java)
+                    val extra = when (action) {
+                        SystemCommandAction.ANSWER -> Notification.EXTRA_ANSWER_INTENT
+                        SystemCommandAction.DECLINE -> Notification.EXTRA_DECLINE_INTENT
+                        SystemCommandAction.END -> Notification.EXTRA_HANG_UP_INTENT
+                        else -> error("Unsupported notification action")
+                    }
+                    pending = notification?.extras?.getParcelable(extra, PendingIntent::class.java)
                     if (pending == null) delay(10)
                 }
                 checkNotNull(pending)
@@ -109,6 +135,8 @@ class ConversationActionsJourneyTest {
                 for (id in ids) if (state(id) != null) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                 ids.lastOrNull()?.let { removed(it) }
             } } finally {
+                outcomeCollector.cancelAndJoin()
+                engine.coreAdmission = previousAdmission
                 engine.policy = previousPolicy; engine.nativeMedia = previousMedia; engine.emit = previousEmit
                 if (previousFactory == null) NativeMediaRegistry.factories.remove("livekit")
                 else NativeMediaRegistry.factories["livekit"] = previousFactory
@@ -119,6 +147,161 @@ class ConversationActionsJourneyTest {
 
     private fun fixture(body: suspend Fixture.() -> Unit) = runBlocking {
         withContext(Dispatchers.Main) { val fixture = Fixture(); try { fixture.body() } finally { fixture.close() } }
+    }
+
+    @Test fun notificationAnswerDeclineAndEndEachPublishOneTypedOutcome() = fixture {
+        handler { ConversationActionResult.Proceed(grant("notification-outcome")) }
+        for (action in listOf(SystemCommandAction.ANSWER, SystemCommandAction.DECLINE, SystemCommandAction.END)) {
+            val id = incoming()
+            if (action == SystemCommandAction.END) { engine.join(id); connected(id) }
+            notificationAction(id, action)
+            val observed = outcome(id, action)
+            assertEquals(SystemCommandSource.NOTIFICATION, observed.source)
+            val performed = observed.outcome as ConversationCommandOutcome.Performed
+            assertEquals(id, performed.conversationId)
+            if (action == SystemCommandAction.ANSWER) {
+                assertTrue(performed.status in setOf(ConversationCommandStatus.CONNECTING, ConversationCommandStatus.CONNECTED))
+                engine.end(id)
+            } else {
+                assertEquals(ConversationCommandStatus.ENDED, performed.status)
+                assertEquals(ConversationEndReason.LOCAL, performed.endReason)
+            }
+            removed(id)
+            assertEquals(1, systemOutcomes.count { it.conversationId == id })
+        }
+    }
+
+    @Test fun notificationRefusalsAndThrownHandlersAreObservedWhileEndsStillDisconnect() = fixture {
+        for (action in listOf(SystemCommandAction.ANSWER, SystemCommandAction.DECLINE, SystemCommandAction.END)) {
+            for (throws in listOf(false, true)) {
+                handler { ConversationActionResult.Proceed(grant("before-end")) }
+                val id = incoming()
+                if (action == SystemCommandAction.END) { engine.join(id); connected(id) }
+                val reason = "claimLost exact reason"
+                handler {
+                    if (throws) error("private handler detail")
+                    ConversationActionResult.Refuse(reason, "answeredElsewhere")
+                }
+                notificationAction(id, action)
+                val observed = outcome(id, action)
+                assertEquals(SystemCommandSource.NOTIFICATION, observed.source)
+                if (throws) {
+                    val failure = observed.outcome as ConversationCommandOutcome.Failed
+                    assertEquals(ConversationCommandCode.HANDLER_FAILED, failure.code)
+                    assertFalse(failure.message.contains("private handler detail"))
+                } else assertEquals(ConversationCommandOutcome.Refused(reason), observed.outcome)
+                removed(id)
+                assertEquals(if (action == SystemCommandAction.ANSWER) {
+                    if (throws) "failed" else "answeredElsewhere"
+                } else "local", ended[id])
+                assertEquals(1, systemOutcomes.count { it.conversationId == id })
+            }
+        }
+    }
+
+    @Test fun coreHoldResumeAndMuteChangesPublishTelecomOutcomesWithoutBaselineOrAppEchoes() = fixture {
+        captureCoreCallbacks()
+        handler { ConversationActionResult.Proceed(grant("core-outcome")) }
+        val id = incoming()
+        ConversationControls.answerWithOutcome(engine.context, id)
+        connected(id)
+        coreMuted.emit(false)
+        withTimeout(5000) { while (signals.none { it.stage == NativeMediaStage.CORE_MUTE_OBSERVED }) delay(10) }
+        assertTrue(systemOutcomes.isEmpty())
+        checkNotNull(callbacks).deactivate()
+        assertEquals(SystemCommandOutcome(id, SystemCommandAction.HOLD, SystemCommandSource.TELECOM,
+            ConversationCommandOutcome.Performed(id, ConversationCommandStatus.HELD)), outcome(id, SystemCommandAction.HOLD))
+        checkNotNull(callbacks).activate()
+        withTimeout(5000) { while (systemOutcomes.count { it.action == SystemCommandAction.HOLD } < 2) delay(10) }
+        assertEquals(ConversationCommandStatus.CONNECTED,
+            (systemOutcomes.last().outcome as ConversationCommandOutcome.Performed).status)
+        coreMuted.emit(true)
+        val muted = outcome(id, SystemCommandAction.MUTE)
+        assertEquals(SystemCommandSource.TELECOM, muted.source)
+        assertTrue(muted.outcome is ConversationCommandOutcome.Performed)
+        assertEquals(true, state(id)?.get("isMuted"))
+        handler { ConversationActionResult.Refuse("retain OS state") }
+        coreMuted.emit(false)
+        withTimeout(5000) { while (systemOutcomes.count { it.action == SystemCommandAction.MUTE } < 2) delay(10) }
+        assertEquals(ConversationCommandOutcome.Refused("retain OS state"), systemOutcomes.last().outcome)
+        assertEquals(false, state(id)?.get("isMuted"))
+        handler { error("private hold failure") }
+        checkNotNull(callbacks).deactivate()
+        withTimeout(5000) { while (systemOutcomes.count { it.action == SystemCommandAction.HOLD } < 3) delay(10) }
+        assertEquals(ConversationCommandCode.HANDLER_FAILED,
+            (systemOutcomes.last().outcome as ConversationCommandOutcome.Failed).code)
+        assertEquals("held", state(id)?.get("status"))
+        handler { ConversationActionResult.Proceed() }
+        engine.end(id); removed(id)
+        assertEquals(listOf(SystemCommandAction.HOLD, SystemCommandAction.HOLD, SystemCommandAction.MUTE,
+            SystemCommandAction.MUTE, SystemCommandAction.HOLD),
+            systemOutcomes.map { it.action })
+    }
+
+    @Test fun aThrownCoreAnswerHandlerEmitsFailedAndStillRejectsTheCoreCallback() = fixture {
+        captureCoreCallbacks()
+        val id = incoming()
+        handler { error("private answer failure") }
+        val error = runCatching { checkNotNull(callbacks).answer(1) }.exceptionOrNull() as Exception
+        assertEquals(ConversationCommandCode.HANDLER_FAILED,
+            (CommandRejection.from(error).outcome as ConversationCommandOutcome.Failed).code)
+        val observed = outcome(id, SystemCommandAction.ANSWER)
+        assertEquals(SystemCommandSource.TELECOM, observed.source)
+        assertEquals(ConversationCommandCode.HANDLER_FAILED,
+            (observed.outcome as ConversationCommandOutcome.Failed).code)
+        removed(id)
+        assertEquals(1, systemOutcomes.count { it.conversationId == id })
+    }
+
+    @Test fun aRepeatedCoreHoldAfterAnOppositeControlIsANewObservedCommand() = fixture {
+        captureCoreCallbacks()
+        handler { ConversationActionResult.Proceed(grant("repeated-core-hold")) }
+        val id = incoming()
+        engine.join(id); connected(id)
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val heldRequests = java.util.concurrent.atomic.AtomicInteger()
+        handler { action ->
+            if (action is ConversationAction.Hold && action.held) {
+                if (heldRequests.incrementAndGet() == 1) {
+                    entered.complete(Unit); gate.await()
+                } else return@handler ConversationActionResult.Refuse("latest hold reason")
+            }
+            ConversationActionResult.Proceed()
+        }
+        try { coroutineScope {
+            val first = async(start = CoroutineStart.UNDISPATCHED) { checkNotNull(callbacks).deactivate() }
+            withTimeout(1000) { entered.await() }
+            checkNotNull(callbacks).activate()
+            checkNotNull(callbacks).deactivate()
+            gate.complete(Unit)
+            withTimeout(5000) { first.await() }
+        } } finally { gate.complete(Unit) }
+        withTimeout(5000) { while (systemOutcomes.count { it.conversationId == id } < 3) delay(10) }
+        assertEquals(3, actions.count { it is ConversationAction.Hold })
+        assertEquals(3, systemOutcomes.count { it.conversationId == id && it.source == SystemCommandSource.TELECOM })
+        assertEquals(1, systemOutcomes.count { it.outcome == ConversationCommandOutcome.Refused("latest hold reason") })
+        assertEquals("held", state(id)?.get("status"))
+        handler { ConversationActionResult.Proceed() }
+        engine.end(id); removed(id)
+    }
+
+    @Test fun appAnswerAndItsCoreEchoPublishNoSystemOutcome() = fixture {
+        captureCoreCallbacks()
+        val id = incoming()
+        val entered = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        handler { entered.complete(Unit); gate.await(); ConversationActionResult.Proceed(grant("app-echo")) }
+        try { coroutineScope {
+            val app = async(start = CoroutineStart.UNDISPATCHED) { ConversationControls.answerWithOutcome(engine.context, id) }
+            withTimeout(1000) { entered.await() }
+            val echo = async(start = CoroutineStart.UNDISPATCHED) { checkNotNull(callbacks).answer(1) }
+            gate.complete(Unit)
+            withTimeout(5000) { app.await(); echo.await() }
+        } } finally { gate.complete(Unit) }
+        connected(id); engine.end(id); removed(id)
+        assertTrue(systemOutcomes.isEmpty())
+        assertEquals(1, actions.count { it is ConversationAction.Answer })
     }
 
     @Test fun nativeAnswerWaitsForSettlementAndReturnsThePublishedPhase() = fixture {
@@ -336,6 +519,9 @@ class ConversationActionsJourneyTest {
             removed(id)
             assertEquals("failed", ended[id])
             assertEquals(mapOf("kind" to "media"), failure)
+            val observed = outcome(id, SystemCommandAction.MUTE)
+            assertEquals(SystemCommandSource.TELECOM, observed.source)
+            assertTrue(observed.outcome is ConversationCommandOutcome.Failed)
         } finally { engine.coreAdmission = originalAdmission; engine.emit = originalEmit }
     }
 

@@ -448,6 +448,50 @@ scope.launch {
 }
 ```
 
+### Observe system command outcomes
+
+Collect `ConversationControls.systemOutcomes` early, for example from your
+`Application.onCreate`, before accepting calls:
+
+```kotlin
+private val callsScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+override fun onCreate() {
+    super.onCreate()
+    callsScope.launch(start = CoroutineStart.UNDISPATCHED) {
+        ConversationControls.systemOutcomes.collect { command ->
+            // command.conversationId, command.action, command.source
+            when (val result = command.outcome) {
+                is ConversationCommandOutcome.Performed -> updateCallState(result)
+                is ConversationCommandOutcome.Refused -> showHandlerRefusal(result.reason)
+                is ConversationCommandOutcome.Failed -> showFailure(result.code.value, result.message)
+            }
+        }
+    }
+}
+```
+
+Each `SystemCommandOutcome` includes the conversation ID, typed
+`SystemCommandAction` (`ANSWER`, `DECLINE`, `END`, `HOLD`, `MUTE`),
+`SystemCommandSource` (`NOTIFICATION` or `TELECOM`) and the same
+`ConversationCommandOutcome` as app controls. `HOLD` includes resume; `MUTE`
+includes unmute. Core-Telecom system UI, Bluetooth and car controls use `TELECOM`.
+SDK notification primary actions remain SDK-owned.
+
+The flow has no replay and buffers at most 64 events for a slow collector, dropping
+the oldest buffered event on overflow. Events emitted before collection are lost;
+use conversation snapshots for current state. Collection never delays a system
+control. Outcomes use the same 70 second overall wait bound; expiry reports
+`Failed(DEADLINE_EXCEEDED, ...)` once while the accepted command continues.
+Existing handler and Core callback deadlines still apply.
+
+Core callback echoes of app or notification commands do not create duplicate
+system outcomes. Initial Core mute baseline, unchanged activation and platform
+cleanup/remote disconnects do not emit command outcomes. End and Decline still
+disconnect when a handler refuses or throws, while the observer receives the
+refusal or normalized failure. System hold/mute retain the OS state even when
+their handler refuses; that refusal is reported without undoing the observation.
+
 Other public native entries retain their signatures and behavior:
 
 | Entry | Role |
