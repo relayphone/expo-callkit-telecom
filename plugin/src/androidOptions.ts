@@ -15,6 +15,11 @@ export const withAndroidOptions: ConfigPlugin<ComposedPluginProps> = (
   props
 ) => {
   const fcmService = props.androidFcmService ?? "library";
+  if (
+    props.supportsVideo !== undefined &&
+    typeof props.supportsVideo !== "boolean"
+  )
+    throw new Error("supportsVideo must be a boolean.");
   if (fcmService !== "library" && fcmService !== "app")
     throw new Error("androidFcmService must be library or app.");
   if (
@@ -32,6 +37,10 @@ export const withAndroidOptions: ConfigPlugin<ComposedPluginProps> = (
     );
   config = withAndroidManifest(config, (mod) => {
     const manifest = mod.modResults.manifest;
+    if (props.supportsVideo === true)
+      AndroidConfig.Permissions.ensurePermissions(mod.modResults, [
+        "android.permission.CAMERA",
+      ]);
     manifest.$["xmlns:tools"] = "http://schemas.android.com/tools";
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(
       mod.modResults

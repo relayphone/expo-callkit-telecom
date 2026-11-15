@@ -34,6 +34,43 @@ projects should follow the [clean regeneration instructions](https://github.com/
 
 ## Android behavior
 
+### First-call permissions
+
+Use an SDK release that exports `getMediaPermissions`, `requestMediaPermissions`
+and `conversationMediaReadiness` through this package. Preflight microphone access
+from foreground onboarding UI; for video apps, configure the plugin with
+`supportsVideo: true` and include camera in that preflight. Audio-only Android apps
+do not receive a CAMERA manifest permission from this plugin.
+
+```ts
+import {
+  getMediaPermissions, requestMediaPermissions, conversationMediaReadiness,
+} from "expo-callkit-telecom";
+
+// Run from onboarding UI, with videoEnabled matching the app's plugin option.
+const permissions = await getMediaPermissions();
+if (!permissions.microphone.granted || (videoEnabled && !permissions.camera.granted)) {
+  await requestMediaPermissions(videoEnabled ? ["microphone", "camera"] : ["microphone"]);
+}
+
+// Before Answer, with foreground supplied by the app's current UI state.
+let readiness = await conversationMediaReadiness(conversationId);
+if (foreground && readiness.missing.length) {
+  await requestMediaPermissions(readiness.missing);
+  readiness = await conversationMediaReadiness(conversationId);
+}
+// Missing microphone: explain the requirement and offer Settings when canAskAgain is false.
+// Missing camera: answer audio-only and offer video later from foreground UI.
+```
+
+Each permission response has Expo's `status`, `granted`, `canAskAgain` and
+`expires: "never"` fields. Requests skip granted and blocked permissions and return
+the current status of both kinds. They reject with `not_foreground` without a
+resumed Activity. Reads and readiness never prompt and are safe on background or
+push paths; readiness requires camera only for an `isVideo` conversation and rejects
+an unknown ID with `unknown_conversation`. The SDK leaves prompting and the
+audio-only fallback to the app; push, Answer and reporting do not trigger a prompt.
+
 Conversation IDs are the application's exact server call IDs. The handler decides
 outgoing start placement. Answer, end, hold and mute run natively; observe snapshots
 and `actionPerformed`. Server reports communicate transport facts and do not

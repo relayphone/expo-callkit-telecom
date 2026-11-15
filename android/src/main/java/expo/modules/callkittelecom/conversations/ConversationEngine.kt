@@ -262,6 +262,7 @@ class ConversationEngine(val context: Context) {
         NativeMediaSignals.emit(serverCallId(current), stage, measurements, reason = reason)
     }
     private fun call(id: String) = calls[id] ?: error("unknown_conversation")
+    internal fun mediaPermissionVideo(id: String): Boolean? = calls[id]?.state?.get("isVideo") as? Boolean
     private class CommandOutcomeCapture : AbstractCoroutineContextElement(Key) {
         companion object Key : CoroutineContext.Key<CommandOutcomeCapture>
         var rejection: ConversationFailure? = null

@@ -22,6 +22,8 @@ export type ComposedPluginProps = VoIPConversationsPluginProps & {
   androidFcmService?: "library" | "app";
   /** Advertise hold/resume to Core-Telecom. Defaults to true. */
   androidSupportsHold?: boolean;
+  /** Enable video-call camera permission in the Android manifest. Defaults to false. */
+  supportsVideo?: boolean;
   outgoingCallTimeout?: number;
   defaultRingtoneAndroid?: string;
 };
