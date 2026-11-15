@@ -288,7 +288,13 @@ class MediaHookFeasibilityTest {
                 val grant = media.keys().asSequence().associateWith { media.get(it) }
                 assertEquals("reported", engine.incoming(IncomingCallPush(id, "event-$id",
                     mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant).payload())["status"])
-                stage(NativeMediaStage.PREJOINED)
+                step = "receiver subscription"
+                awaitMediaReceiver({ signals.any { it.stage == NativeMediaStage.PREJOINED } },
+                    { fixture("/fixture/markers/$id") }, onPrejoined = {
+                        step = "muted publication"
+                        assertTrue(hooks.publicationIdentity().muted)
+                        step = "receiver subscription"
+                    })
                 step = "muted publication"
                 assertTrue(hooks.directArrayVerified)
                 val publication = hooks.publicationIdentity()
