@@ -11,13 +11,14 @@ import io.livekit.android.room.track.LocalAudioTrack
 import io.livekit.android.room.track.LocalTrackPublication
 import io.livekit.android.room.track.RemoteAudioTrack
 import io.livekit.android.room.track.RemoteTrackPublication
+import io.livekit.android.util.flow
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.mapNotNull
 import livekit.org.webrtc.audio.JavaAudioDeviceModule
 
 /** Connected transports and decoded receive audio stay warm; Core alone authorizes audible output/capture. */
 internal class LiveKitNativeSession(private val context: Context, invitationId: String,
-    private val audioHooks: NativeAudioHooks? = null) : NativeMediaSession {
+    private val audioHooks: NativeAudioHooks? = null) : NativeMediaSession, NativeAnsweredMediaPreparation {
     private val configuration = LiveKitNativeConfiguration()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     @Volatile private var room: Room? = null
@@ -25,6 +26,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     private var microphone: LocalAudioTrack? = null
     private var publication: LocalTrackPublication? = null
     private var recording: JavaAudioDeviceModule? = null
+    private var publisherWatch: Job? = null
     private var captureEnabled = false
     private var serverId = invitationId
     @Volatile private var active = false
@@ -43,8 +45,11 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     private var warmth = NativeWarmAudio(invitationId)
     private val tracks = mutableSetOf<RemoteAudioTrack>()
 
+    override suspend fun prewarm(payload: Map<String, Any?>) = connect(payload, warmReceiver = true)
+    override suspend fun prepareForAnswer(payload: Map<String, Any?>) = connect(payload, warmReceiver = false)
+
     @Suppress("UNCHECKED_CAST")
-    override suspend fun prewarm(payload: Map<String, Any?>): Unit = withContext(Dispatchers.Main.immediate) {
+    private suspend fun connect(payload: Map<String, Any?>, warmReceiver: Boolean): Unit = withContext(Dispatchers.Main.immediate) {
         check(!closed && room == null)
         serverId = payload["serverCallId"] as? String ?: error("Invalid media invitation")
         val media = payload["media"] as? Map<String, Any?> ?: error("Missing media credentials")
@@ -80,7 +85,6 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         device.setAudioRecordEnabled(false)
         recording = device
         candidate.setSpeakerMute(true); heat.muteOutput()
-        val publisherReady = CompletableDeferred<Unit>()
         val subscriberReady = CompletableDeferred<Unit>()
         val remoteTrackReady = CompletableDeferred<Unit>()
         val transportJobs = mutableListOf<Job>()
@@ -125,7 +129,6 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         NativeMediaSignals.emit(serverId, NativeMediaStage.MEDIA_CONNECT_STARTED)
         NativeMediaSignals.emit(serverId, NativeMediaStage.SUBSCRIPTION_REQUESTED)
         NativeTransportReadiness(CoroutineScope(scope.coroutineContext + Dispatchers.IO)).apply {
-            transportJobs += watch(candidate::getPublisherRTCStats, publisherReady, NativeTransportProbe(serverId, 1L)::request)
             transportJobs += watch(candidate::getSubscriberRTCStats, subscriberReady, NativeTransportProbe(serverId, 2L)::request)
         }
         try {
@@ -136,21 +139,23 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             require(candidate.name == media["room"] && candidate.localParticipant.identity?.value == media["identity"])
             NativeMediaSignals.emit(serverId, NativeMediaStage.MEDIA_CONNECT_COMPLETED)
             NativeMediaSignals.emit(serverId, NativeMediaStage.ROOM_CONNECTED)
-            publishMutedMicrophone()
-            // The prepublished sender must be negotiated before answer. Remote media is
-            // optional: a silent/muted caller, or one not yet publishing, remains answerable.
-            publisherReady.await()
+            // Receive-only prejoin never creates or publishes a local audio track.
+            // A silent/muted caller, or one not yet publishing, remains answerable.
             try {
-                withTimeoutOrNull(2000) {
-                    remoteTrackReady.await(); subscriberReady.await()
-                    heat.awaitPlaybackStarted(); heat.awaitMutedOutput(); decode.awaitDecoded()
+                if (warmReceiver) {
+                    withTimeoutOrNull(2000) {
+                        remoteTrackReady.await(); subscriberReady.await()
+                        heat.awaitPlaybackStarted(); heat.awaitMutedOutput(); decode.awaitDecoded()
+                    }
                 }
             } catch (_: CancellationException) {
                 // Silent, unpublished or retired remote tracks must remain answerable.
                 currentCoroutineContext().ensureActive()
             }
             check(!closed && room === candidate)
-            NativeMediaSignals.emit(serverId, NativeMediaStage.PREJOINED)
+            NativeMediaSignals.emit(serverId, NativeMediaStage.PREJOINED, mapOf(
+                "localMicrophones" to if (microphone == null) 0L else 1L,
+                "localPublications" to candidate.localParticipant.trackPublications.size.toLong()))
         } catch (error: Throwable) {
             // LiveKit waits for disconnect emission; drain it before recording our release.
             observation.closeForRelease()
@@ -168,29 +173,41 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
 
     private suspend fun publishMutedMicrophone() {
         val participant = room?.localParticipant ?: error("Media not prepared")
-        recording?.setAudioRecordEnabled(false)
-        val defaults = participant.audioTrackCaptureDefaults
-        val track = participant.createAudioTrack(options = audioHooks?.captureOptions(defaults) ?: defaults)
-            .also { microphone = it }
-        // Install through the SDK dispatcher before starting the silent capture pump.
-        track.setAudioBufferCallback(audioHooks?.capture(warmth) ?: warmth)
-        NativeMediaSignals.emit(serverId, NativeMediaStage.MICROPHONE_PUBLISH_STARTED)
-        track.start(); track.enabled = false
-        try {
-            check(participant.publishAudioTrack(track))
-            publication = participant.trackPublications.values.firstOrNull { it.track === track } as? LocalTrackPublication
-                ?: error("Missing microphone publication")
-            audioHooks?.published(publication!!)
-            publication!!.muted = true
-            NativeMediaSignals.emit(serverId, NativeMediaStage.MICROPHONE_PUBLISHED)
-        } catch (error: Throwable) {
-            participant.unpublishTrack(track); track.stop(); track.stopPrewarm()
-            runCatching { track.dispose() }; throw error
+        publishNativeMicrophone(participant::permissions.flow, {
+            NativeMediaSignals.emit(serverId, NativeMediaStage.ANSWER_FAILED, reason = "PUBLISH_PERMISSION_NOT_GRANTED")
+        }) {
+            recording?.setAudioRecordEnabled(false)
+            val defaults = participant.audioTrackCaptureDefaults
+            val track = participant.createAudioTrack(options = audioHooks?.captureOptions(defaults) ?: defaults)
+                .also { microphone = it }
+            // Install through the SDK dispatcher before starting the silent capture pump.
+            track.setAudioBufferCallback(audioHooks?.capture(warmth) ?: warmth)
+            NativeMediaSignals.emit(serverId, NativeMediaStage.MICROPHONE_PUBLISH_STARTED)
+            track.start(); track.enabled = false
+            try {
+                check(participant.publishAudioTrack(track))
+                publication = participant.trackPublications.values.firstOrNull { it.track === track } as? LocalTrackPublication
+                    ?: error("Missing microphone publication")
+                audioHooks?.published(publication!!)
+                publication!!.muted = true
+                NativeMediaSignals.emit(serverId, NativeMediaStage.MICROPHONE_PUBLISHED,
+                    mapOf("localPublications" to participant.trackPublications.size.toLong()))
+            } catch (error: Throwable) {
+                participant.unpublishTrack(track); track.stop(); track.stopPrewarm()
+                runCatching { track.dispose() }; throw error
+            }
         }
     }
 
     override suspend fun activate(): Unit = withContext(Dispatchers.Main.immediate) {
-        check(!closed && room != null && publication != null)
+        check(!closed && room != null)
+        if (publication == null) {
+            val candidate = checkNotNull(room)
+            val ready = CompletableDeferred<Unit>()
+            publisherWatch = NativeTransportReadiness(CoroutineScope(scope.coroutineContext + Dispatchers.IO))
+                .watch(candidate::getPublisherRTCStats, ready, NativeTransportProbe(serverId, 1L)::request)
+            publishMutedMicrophone()
+        }
         active = true; held = false
         releaseOutput()
         setMicrophone(!muted)
@@ -242,7 +259,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             try { warmth.awaitPumpStopped() } finally { runCatching { retired?.dispose() } }
             recording?.setAudioRecordEnabled(false)
         } else {
-            // An initially muted answer retains the already-negotiated silent publication.
+            // An initially muted answer keeps its newly negotiated silent publication.
             traceNativeMute(NativeMuteStep.PUBLICATION) { publication?.muted = true }
         }
     }
@@ -254,6 +271,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         // release() initiates a local disconnect after we retire room observation.
         if (room != null) connection?.closeForRelease() else connection?.close()
         connection = null
+        publisherWatch?.cancel(); publisherWatch = null
         scope.cancel(); tracks.forEach { track -> runCatching {
             track.removeSink(pcm.decoderSink); track.removeSink(pcm.answerSink); track.removeSink(decoded)
             audioHooks?.let { track.removeSink(it.decodedSink) }

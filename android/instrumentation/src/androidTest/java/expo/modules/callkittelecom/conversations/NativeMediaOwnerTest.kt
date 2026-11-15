@@ -52,15 +52,55 @@ class NativeMediaOwnerTest {
         }
     }
 
-    @Test fun aPrewarmedSessionIgnoresTheAnswerGrant() = fixture {
+    @Test fun aPrewarmedSessionRetiresBeforeUsingTheAnswerGrant() = fixture {
         val owner = owner()
         owner.prewarm()
         withTimeout(1000) { while (!owner.isPrewarmed) delay(10) }
-        owner.answered(mapOf("provider" to "livekit", "token" to "unused"))
+        owner.answered(mapOf("provider" to "livekit", "token" to "answer-grant", "expiresAt" to System.currentTimeMillis() / 1000 + 120))
         withTimeout(1000) { activationEntered.await() }
-        assertEquals(1, creations)
+        assertEquals(2, creations)
+        assertEquals(2, invitations.size)
+        assertEquals(1, closes.get())
+        assertEquals("answer-grant", (invitations.last()["media"] as Map<*, *>)["token"])
+    }
+
+    @Test fun answerReplacementWaitsForTheRetiredSessionToActuallyClose() = fixture {
+        val owner = owner()
+        owner.prewarm()
+        withTimeout(1000) { while (!owner.isPrewarmed) delay(10) }
+        releaseClose = CompletableDeferred()
+        owner.answered(mapOf("provider" to "livekit", "token" to "answer-grant", "expiresAt" to System.currentTimeMillis() / 1000 + 120))
+        withTimeout(1000) { closeEntered.await() }
         assertEquals(1, invitations.size)
-        assertNull((invitations.single()["media"] as Map<*, *>)["token"])
+        assertEquals(0, activations.get())
+        releaseClose.complete(Unit)
+        withTimeout(1000) { activationEntered.await() }
+        assertEquals(2, invitations.size)
+        assertFalse(failed.isCompleted)
+    }
+
+    @Test fun aThrownRetirementFailureNeverPreparesOrActivatesTheReplacement() = fixture {
+        val owner = owner()
+        owner.prewarm()
+        withTimeout(1000) { while (!owner.isPrewarmed) delay(10) }
+        closeFailure = IllegalStateException("controlled close failure")
+        owner.answered(mapOf("provider" to "livekit", "token" to "answer-grant", "expiresAt" to System.currentTimeMillis() / 1000 + 120))
+        withTimeout(3000) { failed.await() }
+        assertEquals(1, invitations.size)
+        assertEquals(0, activations.get())
+        assertEquals(1, closes.get())
+    }
+
+    @Test fun aRetirementTimeoutNeverPreparesOrActivatesTheReplacement() = fixture {
+        val owner = owner()
+        owner.prewarm()
+        withTimeout(1000) { while (!owner.isPrewarmed) delay(10) }
+        releaseClose = CompletableDeferred()
+        owner.answered(mapOf("provider" to "livekit", "token" to "answer-grant", "expiresAt" to System.currentTimeMillis() / 1000 + 120))
+        withTimeout(3000) { failed.await() }
+        assertEquals(1, invitations.size)
+        assertEquals(0, activations.get())
+        assertEquals(1, closes.get())
     }
 
     @Test fun nativeActivationComesFromAudioAuthorityBeforeTransportAndCannotDuplicateOnUnmute() = fixture {
@@ -224,6 +264,9 @@ class NativeMediaOwnerTest {
         val connected = CompletableDeferred<Unit>()
         val failed = CompletableDeferred<Unit>()
         val closed = CompletableDeferred<Unit>()
+        val closeEntered = CompletableDeferred<Unit>()
+        var releaseClose = CompletableDeferred(Unit)
+        var closeFailure: Throwable? = null
         val pauseEntered = CompletableDeferred<Unit>()
         var releasePause = CompletableDeferred(Unit)
         val activations = AtomicInteger()
@@ -253,7 +296,11 @@ class NativeMediaOwnerTest {
                 playing = activations.get() > 0 && !held
             }
             override suspend fun setMuted(muted: Boolean) { this@Fixture.muted = muted }
-            override suspend fun close(reason: String) { playing = false; closes.incrementAndGet(); closed.complete(Unit) }
+            override suspend fun close(reason: String) {
+                closeEntered.complete(Unit)
+                try { releaseClose.await(); closeFailure?.let { throw it } }
+                finally { playing = false; closes.incrementAndGet(); closed.complete(Unit) }
+            }
         }
         fun owner(): NativeMediaOwner {
             val audio = NativeAudioLifecycle({ active }, { modeReads.incrementAndGet(); mode }) {

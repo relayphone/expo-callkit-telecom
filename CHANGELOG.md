@@ -5,6 +5,15 @@ All notable changes to `expo-callkit-telecom` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixes
+
+* **android:** make hidden LiveKit prejoin receive-only, with no local microphone
+  track, publication or microphone permission access before Answer. Publish once
+  on activation, preserve mute-before-answer, and use fresh credentials returned
+  by `Proceed(media)` after deliberately closing the receive-only prejoin.
+
 ## 2.0.0-alpha.9 (2026-11-15)
 
 ### Features

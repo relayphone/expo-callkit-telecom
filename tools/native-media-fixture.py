@@ -16,6 +16,7 @@ from typing import NamedTuple
 
 from aiohttp import ClientSession, WSMsgType, web
 from livekit import api, rtc
+from livekit.protocol import rtc as rtc_protocol, models as model_protocol
 from aiortc import AudioStreamTrack, RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 from aiortc.contrib.media import MediaBlackhole
 from av import AudioFrame
@@ -33,6 +34,9 @@ terminal_times = {}
 uplinks = {}
 downlinks = {}
 uplink_tasks = set()
+room_receivers = {}
+negotiations = {}
+signaling_ice = {}
 
 
 class TonesV2Signal:
@@ -124,6 +128,7 @@ class MarkerObservation:
         self.analysis_pcm = []
         self.analysis_result = None
         self.detections = []
+        self.first_marker_ns = None
         self.cycles = []
         self.started_ns = time.monotonic_ns()
         self.arrivals = []
@@ -293,6 +298,8 @@ class MarkerObservation:
                 if not self.evidence["markers"] or result["markers"]:
                     self.evidence.update(result)
                 self.evidence["markers"] = len(self.detections)
+                if self.detections and self.first_marker_ns is None:
+                    self.first_marker_ns = time.monotonic_ns()
                 # The guarded detector can place onset 20 ms early; preserve the full 150 ms tail.
                 self.evidence["markersWithPostRoll"] = sum(item["endSamples"] + 8160 <= frames for item in self.detections)
         def transport(item):
@@ -514,10 +521,11 @@ class ToneTrack(AudioStreamTrack):
         return frame
 
 
-def token(room, identity):
+def token(room, identity, can_publish=True):
     return (api.AccessToken(settings["key"], settings["secret"])
             .with_identity(identity).with_ttl(datetime.timedelta(seconds=120))
-            .with_grants(api.VideoGrants(room_join=True, room=room, can_publish=True, can_subscribe=True))
+            .with_grants(api.VideoGrants(room_join=True, room=room, can_publish=can_publish,
+                                       can_publish_data=can_publish, can_subscribe=True))
             .to_jwt())
 
 
@@ -532,6 +540,8 @@ async def publish(room_name):
             task = asyncio.create_task(observation.receive(track))
             uplink_tasks.add(task)
             task.add_done_callback(uplink_tasks.discard)
+            room_receivers.setdefault(room_name, set()).add(task)
+            task.add_done_callback(room_receivers[room_name].discard)
             # Consume receiver failures without logging private SDK exception details.
             task.add_done_callback(lambda finished: None if finished.cancelled() else finished.exception())
 
@@ -557,7 +567,7 @@ async def publish_frames(source, signal, clock=None, pause=asyncio.sleep, limit=
         await pause(max(0, started + index / 48000 - clock()) if signal else .01)
 
 
-async def credentials(server_id):
+async def credentials(server_id, can_publish=True):
     if server_id.startswith("rtc-"):
         return {"provider": "webrtc", "url": "https://10.0.2.2:9443/fixture/webrtc/" + server_id,
                 "token": settings["deviceAuth"], "expiresAt": int(time.time()) + 120, "iceServers": []}
@@ -567,7 +577,7 @@ async def credentials(server_id):
             bots[room_name] = await publish(room_name)
     identity = "device-" + server_id
     return {"provider": "livekit", "url": "wss://10.0.2.2:9443", "room": room_name,
-            "identity": identity, "token": token(room_name, identity), "expiresAt": int(time.time()) + 120}
+            "identity": identity, "token": token(room_name, identity, can_publish), "expiresAt": int(time.time()) + 120}
 
 
 def authenticated(request):
@@ -581,7 +591,7 @@ async def invitation(request):
     payload = {"eventId": "event-" + server_id, "serverCallId": server_id,
                "caller": {"handleType": "generic", "value": "fixture-caller", "displayName": "Fixture caller"}, "hasVideo": False}
     if request.query.get("media") == "1":
-        payload["media"] = await credentials(server_id)
+        payload["media"] = await credentials(server_id, can_publish=request.query.get("publish") != "0")
     return web.json_response(payload)
 
 
@@ -621,6 +631,162 @@ async def observations(request):
         terminal_times[server_id]["releasedNanos"] = time.monotonic_ns()
         gate.set()
     return response
+
+
+async def close_fixture_room(request):
+    """Retire only the completed test's peer and receiver tasks."""
+    if not authenticated(request):
+        return web.Response(status=401)
+    room_name = "native-ci-" + request.match_info["server_id"]
+    bot = bots.pop(room_name, None)
+    receivers = room_receivers.pop(room_name, set())
+    tasks = list(receivers) + ([bot[1]] if bot is not None else [])
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    if bot is not None:
+        await bot[0].disconnect()
+    uplinks.pop(room_name, None)
+    for trace in negotiations.pop(room_name, []):
+        for direction in (0, 1):
+            signaling_ice.pop((id(trace), direction), None)
+    return web.json_response({"closed": True})
+
+
+async def retain_claim_timing(request):
+    """Retain only the claim journey's numeric device-clock measurement."""
+    if not authenticated(request):
+        return web.Response(status=401)
+    server_id = request.match_info["server_id"]
+    body = await request.json()
+    nanos = {"answerRequestedNs", "prejoinClosedNs", "newConnectStartedNs", "newConnectCompletedNs",
+             "firstMarkerObservedNs", "publisherStartedNs", "publisherCompletedNs", "answerConnectedNs",
+             "claimStartedNs", "claimCompletedNs", "answerActionCompletedNs"}
+    durations = {"answerToFirstMarkerObservedMs", "swapToFirstMarkerObservedMs"}
+    if (not re.fullmatch(r"hooks-[0-9]+", server_id) or type(body) is not dict
+            or set(body) != nanos | durations | {"clock", "claimDelayMillis"}
+            or body["clock"] != "android.elapsedRealtimeNanos"
+            or type(body["claimDelayMillis"]) is not int or not 0 <= body["claimDelayMillis"] <= 2800
+            or any(type(body[key]) is not str or not re.fullmatch(r"[0-9]{1,24}", body[key]) for key in nanos)
+            or any(type(body[key]) not in (int, float) or not math.isfinite(body[key]) or body[key] < 0 for key in durations)):
+        return web.Response(status=400)
+    evidence = directory / "media-evidence"
+    evidence.mkdir(parents=True, exist_ok=True)
+    snapshot = claim_signaling_snapshot(server_id)
+    (evidence / ("claim-" + server_id + ".json")).write_text(json.dumps({**body, **snapshot}))
+    return web.json_response({"retained": True, **snapshot})
+
+
+def claim_signaling_snapshot(server_id):
+    room_name = "native-ci-" + server_id
+    observation = uplinks.get(room_name)
+    marker_end = observation.detections[0]["endSamples"] if observation is not None and observation.detections else None
+    marker_received = None if marker_end is None else next((str(observation.started_ns + at_ns)
+        for at_ns, first, count in observation.arrivals if first + count >= marker_end), None)
+    receiver = None if observation is None else {
+        "clock": "python.time.monotonic_ns", "startedNs": str(observation.started_ns),
+        "firstPcmNs": str(observation.started_ns + observation.arrivals[0][0]) if observation.arrivals else None,
+        "frames": observation.frames, "firstMarkerReceivedNs": marker_received,
+        "firstMarkerDetectedNs": str(observation.first_marker_ns) if observation.first_marker_ns is not None else None,
+    }
+    return {"negotiations": [dict(trace) for trace in negotiations.get(room_name, [])], "receiver": receiver}
+
+
+async def claim_signaling(request):
+    if not authenticated(request):
+        return web.Response(status=401)
+    server_id = request.match_info["server_id"]
+    if not re.fullmatch(r"hooks-[0-9]+", server_id):
+        return web.Response(status=400)
+    return web.json_response(claim_signaling_snapshot(server_id))
+
+
+def signaling_connection(request):
+    """Associate counters using a verified fixture token; no credential or SDP is retained."""
+    try:
+        credential = request.headers.get("Authorization", "").removeprefix("Bearer ") or request.query.get("access_token", "")
+        claims = api.TokenVerifier(settings["key"], settings["secret"]).verify(credential)
+        server_id = claims.identity.removeprefix("device-")
+        if not re.fullmatch(r"hooks-[0-9]+", server_id) or claims.video.room != "native-ci-" + server_id:
+            return None
+    except Exception:
+        return None
+    traces = negotiations.setdefault(claims.video.room, [])
+    trace = {"connection": len(traces) + 1, "publisherOffers": 0, "subscriberAnswers": 0,
+             "audioPublications": 0, "audioPublisherOffers": 0, "publisherIceRestarts": 0,
+             "decodeErrors": 0, "clock": "python.time.monotonic_ns",
+             "events": [], "truncatedEvents": 0}
+    traces.append(trace)
+    return trace
+
+
+def signaling_event(trace, direction, kind, description=None, muted=None):
+    event = {"atNs": str(time.monotonic_ns()), "direction": direction, "kind": kind}
+    if description is not None:
+        # Inspect SDP transiently; retain counts and ICE-change booleans only.
+        sections = re.split(r"(?m)^m=", description.sdp)[1:]
+        audio = [section for section in sections if section.startswith("audio ")]
+        event.update(audioSections=len(audio), dataSections=sum(section.startswith("application ") for section in sections),
+                     audioSending=sum(bool(re.search(r"(?m)^a=send(?:only|recv)\r?$", section)) for section in audio),
+                     audioSsrcs=sum(len(re.findall(r"(?m)^a=ssrc:[0-9]+ cname:", section)) for section in audio),
+                     negotiationId=description.id)
+        fingerprints = {}
+        for index, section in enumerate(sections):
+            mid = re.search(r"(?m)^a=mid:(.+)\r?$", section)
+            credentials = re.findall(r"(?m)^a=ice-ufrag:(.+)\r?$", section)
+            fingerprints[mid.group(1).strip() if mid else index] = hashlib.sha256(
+                "\n".join(sorted(set(value.strip() for value in credentials))).encode()).digest()
+        key = (id(trace), direction)
+        previous = signaling_ice.get(key)
+        # A newly added BUNDLE m-section is not an ICE restart of an existing section.
+        event["iceChanged"] = previous is not None and any(previous[mid] != value for mid, value in fingerprints.items() if mid in previous)
+        signaling_ice[key] = fingerprints
+        if direction == 0 and kind == 1:
+            trace["audioPublisherOffers"] += int(bool(audio))
+            trace["publisherIceRestarts"] += int(event["iceChanged"])
+    if muted is not None:
+        event["muted"] = muted
+    if len(trace["events"]) < 16:
+        trace["events"].append(event)
+    else:
+        trace["truncatedEvents"] += 1
+
+
+def signaling_request(trace, data):
+    if trace is None:
+        return
+    try:
+        request = rtc_protocol.SignalRequest.FromString(data)
+        kind = request.WhichOneof("message")
+        if kind == "offer":
+            trace["publisherOffers"] += 1
+            signaling_event(trace, 0, 1, request.offer)
+        elif kind == "answer":
+            trace["subscriberAnswers"] += 1
+            signaling_event(trace, 0, 2)
+        elif kind == "add_track" and request.add_track.type == model_protocol.AUDIO:
+            trace["audioPublications"] += 1
+            signaling_event(trace, 0, 3, muted=request.add_track.muted)
+        elif kind == "mute":
+            signaling_event(trace, 0, 5, muted=request.mute.muted)
+    except Exception:
+        trace["decodeErrors"] += 1
+
+
+def signaling_response(trace, data):
+    if trace is None:
+        return
+    try:
+        response = rtc_protocol.SignalResponse.FromString(data)
+        kind = response.WhichOneof("message")
+        if kind == "answer":
+            signaling_event(trace, 1, 2, response.answer)
+        elif kind == "track_published" and response.track_published.track.type == model_protocol.AUDIO:
+            signaling_event(trace, 1, 4)
+        elif kind == "join":
+            signaling_event(trace, 1, 6)
+    except Exception:
+        trace["decodeErrors"] += 1
 
 
 async def markers(request):
@@ -773,12 +939,17 @@ async def proxy(request):
     headers = {"Authorization": request.headers["Authorization"]} if "Authorization" in request.headers else {}
     async with ClientSession() as session:
         if request.headers.get("Upgrade", "").lower() == "websocket":
+            trace = signaling_connection(request)
             incoming = web.WebSocketResponse()
             await incoming.prepare(request)
             async with session.ws_connect(destination, headers=headers) as outgoing:
                 async def pipe(source, target):
                     async for message in source:
                         if message.type == WSMsgType.BINARY:
+                            if source is incoming:
+                                signaling_request(trace, message.data)
+                            else:
+                                signaling_response(trace, message.data)
                             await target.send_bytes(message.data)
                         elif message.type == WSMsgType.TEXT:
                             await target.send_str(message.data)
@@ -815,6 +986,9 @@ if __name__ == "__main__":
     app.router.add_get("/health", lambda _: web.json_response({"ready": True}))
     app.router.add_get("/fixture/invitation/{server_id}", invitation)
     app.router.add_get("/fixture/observations/{server_id}", observations)
+    app.router.add_post("/fixture/close/{server_id}", close_fixture_room)
+    app.router.add_post("/fixture/timing/{server_id}", retain_claim_timing)
+    app.router.add_get("/fixture/timing/{server_id}", claim_signaling)
     app.router.add_route("*", "/fixture/markers/{server_id}", markers)
     app.router.add_post("/fixture/output/{server_id}", device_output)
     app.router.add_get("/fixture/output/{server_id}", device_output)

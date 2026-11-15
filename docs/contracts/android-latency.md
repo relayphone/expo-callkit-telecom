@@ -1,7 +1,9 @@
 # Android native audio readiness
 
 Native media prewarms before Answer. LiveKit keeps the receive subscription and
-decoder warm and prepublishes a muted microphone using recordingless buffers.
+decoder warm without a local track, publication or microphone permission access.
+Answer performs one muted microphone publication after receiving publish permission;
+an explicit Answer grant replaces the receive-only prejoin with a new connection.
 Physical capture and audible output require a live active Core-Telecom call and
 observed communication audio mode within the existing 1500 ms authority bound.
 Hold stops physical capture and mutes output; resume requires authority again.

@@ -213,6 +213,11 @@ class NativeMediaJourneyTest {
                         val serverId = "${prefix}timing-$source-$sampleIndex-$stamp"
                         val id = incoming(serverId, source != "fetcher")
                         val prejoined = stage(serverId, NativeMediaStage.PREJOINED)
+                        if (provider == "livekit") {
+                            assertEquals(0L, prejoined.measurements["localMicrophones"])
+                            assertEquals(0L, prejoined.measurements["localPublications"])
+                            assertTrue(events(serverId).none { it.stage == NativeMediaStage.MICROPHONE_PUBLISH_STARTED })
+                        }
                         delay(150)
                         assertFalse(events(serverId).any { it.stage in setOf(NativeMediaStage.CAPTURE_STARTED,
                             NativeMediaStage.CAPTURE_BEFORE_AUTHORITY, NativeMediaStage.OUTPUT_BEFORE_AUTHORITY,
@@ -268,11 +273,11 @@ class NativeMediaJourneyTest {
                         assertTrue(authorized.elapsedRealtimeNanos <= outputAudio.elapsedRealtimeNanos)
                         assertTrue(events(serverId).none { it.stage in setOf(
                             NativeMediaStage.CAPTURE_BEFORE_AUTHORITY, NativeMediaStage.OUTPUT_BEFORE_AUTHORITY) })
-                        for (role in roles) assertTrue(stageForRole(events(serverId), NativeMediaStage.DTLS_CONNECTED, role)
+                        for (role in roles - 1L) assertTrue(stageForRole(events(serverId), NativeMediaStage.DTLS_CONNECTED, role)
                             .elapsedRealtimeNanos <= prejoined.elapsedRealtimeNanos)
                         assertEquals(1, events(serverId).count { it.stage == NativeMediaStage.MEDIA_CONNECT_STARTED })
                         if (provider == "livekit") assertTrue(stage(serverId, NativeMediaStage.MICROPHONE_PUBLISHED)
-                            .elapsedRealtimeNanos <= prejoined.elapsedRealtimeNanos)
+                            .elapsedRealtimeNanos >= accepted.elapsedRealtimeNanos)
                         val elapsedMs = (first.elapsedRealtimeNanos - requested.elapsedRealtimeNanos) / 1_000_000.0
                         assertTrue("Native answer-to-PCM exceeded bound", elapsedMs in 0.0..3000.0)
                         results += mapOf("credentials" to source, "sampleIndex" to sampleIndex,
