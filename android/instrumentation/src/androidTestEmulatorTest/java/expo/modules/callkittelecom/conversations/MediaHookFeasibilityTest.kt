@@ -34,6 +34,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
+import org.junit.rules.RuleChain
 import org.junit.Test
 import org.junit.runner.RunWith
 import kotlin.coroutines.resume
@@ -41,7 +42,9 @@ import kotlin.coroutines.resumeWithException
 
 @RunWith(AndroidJUnit4::class)
 class MediaHookFeasibilityTest {
-    @get:Rule val permissions = GrantPermissionRule.grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+    private val failureTrace = MediaQualificationFailureRule()
+    @get:Rule val rules: RuleChain = RuleChain.outerRule(failureTrace).around(
+        GrantPermissionRule.grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS))
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val settings by lazy { JSONObject(InstrumentationRegistry.getInstrumentation().context.assets
         .open("media-ci.json").bufferedReader().readText()) }
@@ -65,6 +68,9 @@ class MediaHookFeasibilityTest {
             val signals = CopyOnWriteArrayList<NativeMediaSignal>()
             val observer = NativeMediaObserver { if (it.serverCallId == id) signals += it }
             var creations = 0
+            val claimTrace = JSONObject().put("clock", "android.elapsedRealtimeNanos").put("claimDelayMillis", claimDelayMillis)
+                .put("grant", grant).put("muteBeforeAnswer", muteBeforeAnswer)
+            failureTrace.snapshot = { mediaQualificationTrace(claim = claimTrace) }
             var failure: Throwable? = null
             val permissionChecks = MediaPermissionObservation.microphoneChecks.get()
             NativeMediaRegistry.factories["livekit"] = {
@@ -108,7 +114,9 @@ class MediaHookFeasibilityTest {
                 assertTrue(present())
                 assertEquals("ringing", current()?.get("status"))
                 assertTrue(events(NativeMediaStage.PREWARM_LOST).isEmpty())
-                assertEquals(1, fixture("/fixture/observations/$id").getInt("clients"))
+                val clients = fixture("/fixture/observations/$id").getInt("clients")
+                claimTrace.put("clients", clients).put("clientObservationNs", android.os.SystemClock.elapsedRealtimeNanos().toString())
+                assertEquals(1, clients)
                 assertTrue(events(NativeMediaStage.MICROPHONE_PUBLISH_STARTED).isEmpty())
                 assertTrue(events(NativeMediaStage.CAPTURE_STARTED).isEmpty())
                 assertEquals(0, hooks.captureSampleRate)
@@ -143,7 +151,7 @@ class MediaHookFeasibilityTest {
                         var snapshot: JSONObject
                         do {
                             delay(20)
-                            snapshot = fixture("/fixture/timing/$id")
+                            snapshot = fixture("/fixture/timing/$id").also { claimTrace.put("signaling", it) }
                         } while (audioOffers(snapshot.getJSONArray("negotiations").getJSONObject(1)).isEmpty())
                         snapshot
                     }
@@ -185,7 +193,8 @@ class MediaHookFeasibilityTest {
                     .put("answerToFirstMarkerObservedMs", (observed - requested) / 1_000_000.0)
                     .put("swapToFirstMarkerObservedMs", (observed - retired.elapsedRealtimeNanos) / 1_000_000.0)
                 if (!muteBeforeAnswer) InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply { putString("claimUplinkTiming", timing.toString()) })
-                val snapshot = if (muteBeforeAnswer) fixture("/fixture/timing/$id") else fixture("/fixture/timing/$id", body = timing)
+                val snapshot = (if (muteBeforeAnswer) fixture("/fixture/timing/$id") else fixture("/fixture/timing/$id", body = timing))
+                    .also { claimTrace.put("signaling", it) }
                 val negotiations = snapshot.getJSONArray("negotiations")
                 assertEquals(2, negotiations.length())
                 assertEquals(0, negotiations.getJSONObject(0).getInt("audioPublications"))
@@ -211,6 +220,7 @@ class MediaHookFeasibilityTest {
                 val timing = org.json.JSONArray(signals.takeLast(64).map { JSONObject().put("stage", it.stage.value)
                     .put("atNs", it.elapsedRealtimeNanos.toString()).put("measurements", JSONObject(it.measurements))
                     .put("permissionUnavailable", it.reason == "PUBLISH_PERMISSION_NOT_GRANTED") })
+                claimTrace.put("creations", creations).put("signals", timing).put("truncatedEvents", maxOf(0, signals.size - 64))
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply { putString("claimFailureTimeline", timing.toString()) })
                 throw error
             } finally {
@@ -429,6 +439,11 @@ class MediaHookFeasibilityTest {
         }.array())
 
     private fun journey(rate: Int) = runBlocking {
+        val forcedFailure = InstrumentationRegistry.getArguments().getString("mediaForceRecordinglessFailure") == "true"
+        if (forcedFailure) for (name in listOf("media-hook-results.json", "capture-trace.json")) {
+            val file = context.filesDir.resolve(name)
+            check(!file.exists() || file.delete()) { "Could not clear stale control evidence" }
+        }
         withContext(Dispatchers.Main) {
             val engine = ConversationEngine.get(context)
             val previousMedia = engine.nativeMedia; val previousPolicy = engine.policy
@@ -454,7 +469,23 @@ class MediaHookFeasibilityTest {
             var heldRequested = false
             var muteDiagnosticDone = false
             var muteDiagnosticError: Throwable? = null
-            val evidence = JSONObject().put("captureRate", rate).put("profile", "tones-v2")
+            val evidence = JSONObject().put("captureRate", rate).put("profile", "tones-v2").put("pipeline", "unobserved")
+            val progress = MediaSourceProgress()
+            var roomCleanupCompleted = false
+            val receiverWait = JSONObject().put("clock", "android.elapsedRealtimeNanos").put("budgetMs", 10_000)
+            var receiverReads = 0
+            fun receiverTime(key: String) = receiverWait.put(key, android.os.SystemClock.elapsedRealtimeNanos().toString())
+            fun receiverSnapshot() = receiverWait.put("reads", receiverReads).put("signals", org.json.JSONArray(
+                signals.filter { it.stage in setOf(NativeMediaStage.MEDIA_CONNECT_STARTED,
+                    NativeMediaStage.MEDIA_CONNECT_COMPLETED, NativeMediaStage.MICROPHONE_PUBLISH_STARTED,
+                    NativeMediaStage.MICROPHONE_PUBLISHED, NativeMediaStage.PREJOINED,
+                    NativeMediaStage.SUBSCRIPTION_REQUESTED, NativeMediaStage.REMOTE_SUBSCRIBED) }.map {
+                    JSONObject().put("stage", it.stage.value).put("atNs", it.elapsedRealtimeNanos.toString())
+                }))
+            val publications = MediaEvidencePublications()
+            failureTrace.snapshot = { mediaQualificationTrace(hooks.outputConsumerTrace.snapshot(), receiverSnapshot(),
+                evidence.optJSONObject("outputServerTrace") ?: evidence.optJSONObject("toDevice")?.optJSONObject("outputConsumerTrace"),
+                publications) }
             fun present() = (engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id }
             suspend fun traceMuteTransition() {
                 muteDiagnosticDone = true
@@ -502,7 +533,17 @@ class MediaHookFeasibilityTest {
                 step = "muted answer"
                 engine.join(id); stage(NativeMediaStage.CONNECTED)
                 step = "receiver subscription"
-                awaitMediaReceiver({ true }, { fixture("/fixture/markers/$id") })
+                receiverTime("startedNs")
+                awaitMediaReceiver({ true },
+                    {
+                        receiverTime("lastReadStartedNs")
+                        receiverReads++
+                        fixture("/fixture/markers/$id").also {
+                            receiverTime("lastReadCompletedNs")
+                            receiverWait.put("lastRunning", it.opt("running"))
+                        }
+                    })
+                receiverTime("completedNs")
                 step = "muted publication"
                 assertTrue(hooks.directArrayVerified)
                 val publication = hooks.publicationIdentity()
@@ -541,13 +582,17 @@ class MediaHookFeasibilityTest {
                 assertTrue(peer.getBoolean("muted"))
                 val wordsBefore = hooks.generatedWords.get()
                 var injected = hooks.injectedFrames.get()
+                var sampledAtNs = android.os.SystemClock.elapsedRealtimeNanos()
                 var recordingless = hooks.recordinglessCallbacks.get()
                 repeat(31) {
                     delay(100)
                     val next = hooks.injectedFrames.get()
+                    val nextSampledAtNs = android.os.SystemClock.elapsedRealtimeNanos()
+                    progress.record(sampledAtNs, nextSampledAtNs, injected, next)
+                    if (forcedFailure && it == 0) fail("Recordingless source stopped")
                     assertTrue("Recordingless source stopped", next > injected)
                     assertTrue("The recordingless pacing callback must stay live", hooks.recordinglessCallbacks.get() > recordingless)
-                    injected = next; recordingless = hooks.recordinglessCallbacks.get()
+                    injected = next; sampledAtNs = nextSampledAtNs; recordingless = hooks.recordinglessCallbacks.get()
                     peer = fixture("/fixture/markers/$id")
                     healthy(peer, generation)
                     assertTrue(peer.getBoolean("muted")); assertTrue(publication.muted)
@@ -652,18 +697,26 @@ class MediaHookFeasibilityTest {
                 stage(NativeMediaStage.CLOSED)
             } catch (error: Throwable) {
                 caught = error
-                if (step == "answered output") runCatching {
-                    evidence.put("outputServerTrace", fixture("/fixture/output/$id"))
-                }.onFailure { evidence.put("outputServerTraceReadError", it.javaClass.simpleName) }
-                runCatching { evidence.put("fromDevice", fixture("/fixture/markers/$id")) }
-                InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
-                    putString("tonesV2Failure", runCatching { fixture("/fixture/markers/$id").put("captureRate", hooks.captureSampleRate).toString() }.getOrDefault("unavailable"))
-                    putString("mediaHookFailure", "step=$step, error=$error, signals=${signals.map { it.stage }}")
-                    putString("pipeline", pipeline)
-                })
-                throw AssertionError("step=$step, causes=${mediaFailureDetails(error)}, captureRate=${hooks.captureSampleRate}, " +
-                    "injected=${hooks.injectedFrames.get()}, decoded=${runCatching { hooks.decoded() }.getOrNull()}, " +
-                    "output=${runCatching { hooks.output() }.getOrNull()}", error)
+                rethrowMediaJourneyFailure(context.filesDir.resolve("media-hook-results.json"), evidence, error,
+                    "realRecordinglessCapturePublicationGateDecodedAndPostMuteOutput", step, android.os.Process.myPid(),
+                    forcedFailure, progress, receiverWait.put("reads", receiverReads)
+                        .put("failureObservedNs", android.os.SystemClock.elapsedRealtimeNanos().toString())) {
+                    if (step == "answered output") runCatching {
+                        evidence.put("outputServerTrace", fixture("/fixture/output/$id"))
+                    }.onFailure { evidence.put("outputServerTraceReadError", it.javaClass.simpleName) }
+                    runCatching { evidence.put("fromDevice", fixture("/fixture/markers/$id")) }
+                    InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
+                        putString("tonesV2Failure", runCatching { fixture("/fixture/markers/$id").put("captureRate", hooks.captureSampleRate).toString() }.getOrDefault("unavailable"))
+                        putString("mediaHookFailure", "step=$step, error=$error, signals=${signals.map { it.stage }}")
+                        putString("pipeline", pipeline)
+                    })
+                    evidence.put("failure", org.json.JSONArray(mediaFailureDetails(error).map {
+                        JSONObject().put("type", it.type).put("message", it.message)
+                    })).put("hookObservations", JSONObject().put("captureRate", hooks.captureSampleRate)
+                        .put("injectedFrames", hooks.injectedFrames.get())
+                        .put("decoded", runCatching { hooks.decoded().toString() }.getOrNull())
+                        .put("output", runCatching { hooks.output().toString() }.getOrNull()))
+                }
             } finally {
                 val primary = caught
                 if (heldRequested && !muteDiagnosticDone && present()) {
@@ -675,13 +728,15 @@ class MediaHookFeasibilityTest {
                 }
                 apmMonitor?.cancel()
                 try {
-                    writeMediaEvidence(context.filesDir.resolve("media-hook-results.json"), evidence.put("step", step)
-                        .put("outputConsumerTrace", hooks.outputConsumerTrace.snapshot())
-                        .put("passed", caught == null).put("pipeline", pipeline)
-                        .put("muteTimings", org.json.JSONArray(signals.filter {
-                            it.measurements.containsKey("operationId") && NativeMuteStep.entries.any { step ->
-                                it.stage == step.entered || it.stage == step.exited
-                            }
+                    publications.write(MediaEvidencePublications.File.RESULTS) {
+                        writeMediaEvidence(context.filesDir.resolve("media-hook-results.json"), evidence.put("step", step)
+                            .put("receiverWait", receiverSnapshot())
+                            .put("outputConsumerTrace", hooks.outputConsumerTrace.snapshot())
+                            .put("passed", caught == null).put("pipeline", pipeline)
+                            .put("muteTimings", org.json.JSONArray(signals.filter {
+                                it.measurements.containsKey("operationId") && NativeMuteStep.entries.any { step ->
+                                    it.stage == step.entered || it.stage == step.exited
+                                }
                         }.takeLast(64).map {
                             JSONObject().put("operationId", it.measurements.getValue("operationId").toString())
                                 .put("stage", it.stage.value).put("elapsedRealtimeNanos", it.elapsedRealtimeNanos.toString())
@@ -692,8 +747,11 @@ class MediaHookFeasibilityTest {
                         }))
                         .put("gateTrace", hooks.gateTrace.snapshot().put("muteDiagnosticError",
                             muteDiagnosticError?.javaClass?.simpleName ?: JSONObject.NULL)).toString())
-                    writeMediaEvidence(context.filesDir.resolve("capture-trace.json"), hooks.trace.snapshot()
-                        .put("postApm", hooks.postApm.finish()).toString())
+                    }
+                    publications.write(MediaEvidencePublications.File.CAPTURE) {
+                        writeMediaEvidence(context.filesDir.resolve("capture-trace.json"), hooks.trace.snapshot()
+                            .put("postApm", hooks.postApm.finish()).toString())
+                    }
                     InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                         putString("captureTraceFile", "capture-trace.json")
                     })
@@ -709,6 +767,7 @@ class MediaHookFeasibilityTest {
                                     if (present()) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                                     while (present() || TelecomEvidence.calls().isNotEmpty()) delay(20)
                                     fixture("/fixture/close/$id", reset = true)
+                                    roomCleanupCompleted = true
                                 }
                             } catch (cleanup: Throwable) {
                                 val primary = caught
@@ -722,6 +781,12 @@ class MediaHookFeasibilityTest {
                                 else NativeMediaRegistry.factories["livekit"] = previousFactory
                                 engine.nativeMedia = previousMedia; engine.policy = previousPolicy
                                 engine.actions.resetBridge(); engine.actions.acceptUnhandled = previousAccept; engine.emit = previousEmitter
+                                if (caught != null) try {
+                                    evidence.put("cleanup", JSONObject().put("roomLeft", roomCleanupCompleted &&
+                                        signals.any { it.stage == NativeMediaStage.CLOSED })
+                                        .put("captureStopped", hooks.isClosed))
+                                    writeMediaEvidence(context.filesDir.resolve("media-hook-results.json"), evidence.toString())
+                                } catch (diagnostic: Throwable) { caught?.addSuppressed(diagnostic) }
                             }
                         }
                     }

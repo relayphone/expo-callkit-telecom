@@ -53,6 +53,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
         fun snapshot() = Observation(blocks.get(), frames.get(), nonzero.get(), tones.get())
     }
     private val closed = AtomicBoolean()
+    val isClosed: Boolean get() = synchronized(outputLock) { closed.get() && !captureOutput }
     private val failure = AtomicReference<MediaHookFailure?>(null)
     private val decoded = AtomicReference(Window())
     private val output = AtomicReference(Window())
