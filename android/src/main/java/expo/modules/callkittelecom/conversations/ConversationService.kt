@@ -309,7 +309,7 @@ class ConversationService : Service() {
                 builder.addExtras(Bundle().apply { putCharSequence(NotificationCompat.EXTRA_TEXT, content.heldSummary) })
             }
             content.extraActions.forEach { builder.addAction(it) }
-            builder.setStyle(if (ringing) NotificationCompat.CallStyle.forIncomingCall(person, action("end"), action("join"))
+            builder.setStyle(if (ringing) NotificationCompat.CallStyle.forIncomingCall(person, action("decline"), action("join"))
                 else NotificationCompat.CallStyle.forOngoingCall(person, action("end")))
             return builder.build().apply {
                 if (ringing) flags = flags or Notification.FLAG_INSISTENT
@@ -357,11 +357,13 @@ class ConversationReceiver : BroadcastReceiver() {
         val engine = ConversationEngine.get(context)
         engine.jobs.launch {
             try { when (intent.action) {
-                "join" -> engine.join(id, NativeActionOrigin.SYSTEM)
                 "retryEnd" -> engine.retryPlatformRemoval(id)
-                else -> engine.end(id, NativeActionOrigin.SYSTEM)
+                else -> engine.notificationCommand(id, when (intent.action) {
+                    "join" -> SystemCommandAction.ANSWER
+                    "decline" -> SystemCommandAction.DECLINE
+                    else -> SystemCommandAction.END
+                })
             } }
-            catch (_: Exception) { /* The native engine owns failure and terminal state. */ }
             finally { pending.finish() }
         }
     }

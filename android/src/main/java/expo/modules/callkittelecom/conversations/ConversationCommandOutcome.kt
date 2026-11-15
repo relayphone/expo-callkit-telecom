@@ -29,7 +29,7 @@ enum class ConversationEndReason(val value: String) {
     ANSWERED_ELSEWHERE("answeredElsewhere"), DECLINED_ELSEWHERE("declinedElsewhere");
 }
 
-/** Settlement of an app-origin native command. Refusal reasons retain the handler's exact text. */
+/** Settlement of a native command. Refusal reasons retain the handler's exact text. */
 sealed interface ConversationCommandOutcome {
     /** State has been published. Answer can reach CONNECTING before media connects. */
     data class Performed(val conversationId: String, val status: ConversationCommandStatus,

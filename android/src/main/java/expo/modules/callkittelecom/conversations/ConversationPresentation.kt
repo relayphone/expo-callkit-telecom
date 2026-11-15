@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.drawable.Icon
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.SharedFlow
 
 /** The notification's ringing, ongoing or retained ending presentation. */
 enum class CallPhase { RINGING, ONGOING, ENDING }
@@ -143,6 +144,14 @@ internal class CallNotificationRoster {
  */
 object ConversationControls {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    internal val systemCommandOutcomes = SystemCommandOutcomes()
+
+    /**
+     * System command settlements, without replay. Collect early, for example in Application.onCreate.
+     * A slow collector can lag by 64 events; overflow drops the oldest buffered event.
+     * App command echoes, initial Core mute state and platform cleanup do not emit outcomes.
+     */
+    @JvmStatic val systemOutcomes: SharedFlow<SystemCommandOutcome> get() = systemCommandOutcomes.flow
 
     /** Answer through the native action handler with origin `app`. */
     @JvmStatic fun answer(context: Context, conversationId: String) {

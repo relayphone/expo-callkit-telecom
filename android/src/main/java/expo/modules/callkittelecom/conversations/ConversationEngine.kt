@@ -11,6 +11,8 @@ import android.net.Uri
 import android.telecom.DisconnectCause
 import androidx.core.telecom.*
 import java.time.Instant
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.onEach
@@ -260,12 +262,67 @@ class ConversationEngine(val context: Context) {
         NativeMediaSignals.emit(serverCallId(current), stage, measurements, reason = reason)
     }
     private fun call(id: String) = calls[id] ?: error("unknown_conversation")
+    private class CommandOutcomeCapture : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<CommandOutcomeCapture>
+        var rejection: ConversationFailure? = null
+    }
     internal suspend fun commandOutcome(id: String, ending: Boolean = false,
                                         command: suspend () -> Unit): ConversationCommandOutcome = try {
         val current = call(id)
-        command()
-        if (ending) current.logicalEnd.await() else performedCommand(id, current.state)
+        val capture = CommandOutcomeCapture()
+        withContext(capture) { command() }
+        capture.rejection?.let { CommandRejection.from(it).outcome }
+            ?: if (ending) current.logicalEnd.await() else performedCommand(id, current.state)
     } catch (error: Exception) { CommandRejection.from(error).outcome }
+
+    internal suspend fun notificationCommand(id: String, action: SystemCommandAction): ConversationCommandOutcome =
+        systemCommand(id, action, SystemCommandSource.NOTIFICATION, ending = action != SystemCommandAction.ANSWER) {
+            when (action) {
+                SystemCommandAction.ANSWER -> join(id, NativeActionOrigin.SYSTEM)
+                SystemCommandAction.DECLINE, SystemCommandAction.END -> end(id, NativeActionOrigin.SYSTEM)
+                else -> error("unsupported")
+            }
+        }
+
+    private suspend fun systemCommand(id: String, action: SystemCommandAction, source: SystemCommandSource,
+                                      ending: Boolean = false, propagateFailure: Boolean = false,
+                                      command: suspend () -> Unit): ConversationCommandOutcome = jobs.async {
+        var failure: Exception? = null
+        val accepted = jobs.async {
+            commandOutcome(id, ending) {
+                try { command() }
+                catch (error: Exception) { failure = error; throw error }
+            }
+        }
+        val outcome = ConversationControls.systemCommandOutcomes.observe(id, action, source, accepted)
+        // Core still receives its original error, including media failure that terminates the call.
+        if (propagateFailure) failure?.let { throw it }
+        outcome
+    }.await()
+
+    private suspend fun coreCommand(id: String, action: NativePerformedAction, command: suspend () -> Unit) {
+        val current = call(id)
+        val unchanged = when (action) {
+            NativePerformedAction.Answer -> current.state["status"] != "ringing"
+            is NativePerformedAction.Hold -> (current.state["status"] == "held") == action.held &&
+                current.receipts.keys.none { it is NativePerformedAction.Hold }
+            is NativePerformedAction.Mute -> current.state["isMuted"] == action.muted &&
+                current.receipts.keys.none { it is NativePerformedAction.Mute }
+            else -> false
+        }
+        if (reusableReceipt(current, action) != null || unchanged) { command(); return }
+        val kind = when (action) {
+            NativePerformedAction.Answer -> SystemCommandAction.ANSWER
+            NativePerformedAction.End -> if (current.state["status"] == "ringing") SystemCommandAction.DECLINE else SystemCommandAction.END
+            is NativePerformedAction.Hold -> SystemCommandAction.HOLD
+            is NativePerformedAction.Mute -> SystemCommandAction.MUTE
+            else -> error("unsupported")
+        }
+        systemCommand(id, kind, SystemCommandSource.TELECOM, ending = action == NativePerformedAction.End,
+            propagateFailure = true) {
+            if (action is NativePerformedAction.Mute) command() else withTimeout(4500) { command() }
+        }
+    }
     private fun live(current: Call): Boolean = calls[current.state["id"] as String] === current &&
         identities.isCurrent(current.reservation) && !current.terminal && !current.ending && !current.localEndPending && current.incoming?.intent == null
     private fun requireLive(current: Call) { check(live(current)) { "unknown_conversation" } }
@@ -461,7 +518,7 @@ class ConversationEngine(val context: Context) {
             try {
                 signal(call, NativeMediaStage.CORE_ADD_REQUESTED)
                 coreAdmission.add(attributes, CoreCallCallbacks(
-                    answer = { if (calls[id] === call) answerFromSystem(id) },
+                    answer = { if (calls[id] === call) coreCommand(id, NativePerformedAction.Answer) { answerFromSystem(id) } },
                     disconnect = { cause -> withTimeout(4500) { if (calls[id] === call) {
                         if (call.terminal) Unit
                         else if (call.localEndPending && call.receipts[NativePerformedAction.End]?.completedRemotely == true) {
@@ -477,12 +534,14 @@ class ConversationEngine(val context: Context) {
                             call.failure = EndedFailure.FRAMEWORK_RESET
                             terminal(id, "failed")
                         }
-                        else native(id, NativePerformedAction.End, NativeActionOrigin.SYSTEM)
+                        else coreCommand(id, NativePerformedAction.End) { native(id, NativePerformedAction.End, NativeActionOrigin.SYSTEM) }
                     } } },
                     activate = { withTimeout(4500) { check(call.permitted.await());
                         // Initial activation remains valid when this call does not offer hold/resume.
-                        if (calls[id] === call && call.capabilities.supportsHold) hold(id, false, NativeActionOrigin.SYSTEM) } },
-                    deactivate = { withTimeout(4500) { if (calls[id] === call) hold(id, true, NativeActionOrigin.SYSTEM) } })) {
+                        if (calls[id] === call && call.capabilities.supportsHold)
+                            coreCommand(id, NativePerformedAction.Hold(false)) { hold(id, false, NativeActionOrigin.SYSTEM) } } },
+                    deactivate = { withTimeout(4500) { if (calls[id] === call)
+                        coreCommand(id, NativePerformedAction.Hold(true)) { hold(id, true, NativeActionOrigin.SYSTEM) } } })) {
                     if (calls[id] !== call || !identities.isCurrent(call.reservation) || call.terminal) {
                         launch(start = CoroutineStart.UNDISPATCHED) {
                             withContext(NonCancellable) {
@@ -515,7 +574,7 @@ class ConversationEngine(val context: Context) {
                         signal(call, NativeMediaStage.CORE_MUTE_OBSERVED, mapOf("muted" to if (muted) 1L else 0L))
                     }.coreMuteChanges().collect { muted ->
                         if (live(call) && call.state["isMuted"] != muted) {
-                            try { mute(id, muted, NativeActionOrigin.SYSTEM) }
+                            try { coreCommand(id, NativePerformedAction.Mute(muted)) { mute(id, muted, NativeActionOrigin.SYSTEM) } }
                             catch (error: Exception) {
                                 if (error !is CancellationException && live(call)) call.failure = EndedFailure.MEDIA
                                 throw error
@@ -631,18 +690,21 @@ class ConversationEngine(val context: Context) {
         runCatching { observer.observed(NativeControlObservation(id, kind, closed, point, android.os.SystemClock.elapsedRealtimeNanos(), origin)) }
     }
 
+    private fun reusableReceipt(current: Call, action: NativePerformedAction): NativeActionReceipt? =
+        current.receipts[action]?.takeIf {
+            when (action) {
+                is NativePerformedAction.Hold -> it.controlRevision == current.holdRevision
+                is NativePerformedAction.Mute -> it.controlRevision == current.muteRevision
+                else -> true
+            }
+        }
+
     private suspend fun native(id: String, action: NativePerformedAction, origin: NativeActionOrigin,
                                request: (suspend () -> Unit)? = null) {
         val current = call(id)
         observeControl(id, action, origin, NativeControlPoint.REQUESTED)
         @Suppress("UNCHECKED_CAST") val serverId = (current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String
-        val previous = current.receipts[action]
-        val reusable = when (action) {
-            is NativePerformedAction.Hold -> previous?.controlRevision == current.holdRevision
-            is NativePerformedAction.Mute -> previous?.controlRevision == current.muteRevision
-            else -> true
-        }
-        val receipt = previous?.takeIf { reusable } ?: run {
+        val receipt = reusableReceipt(current, action) ?: run {
             val revision = when (action) {
                 is NativePerformedAction.Hold -> ++current.holdRevision
                 is NativePerformedAction.Mute -> ++current.muteRevision
@@ -664,6 +726,10 @@ class ConversationEngine(val context: Context) {
         try {
             val decision = receipt.decide(ConversationActionDecision(jobs, { stage, reason -> signal(current, stage, reason = reason) }))
             if (receipt.completedRemotely) return
+            // System end/hold/mute must retain their effects even when the handler refuses or fails.
+            // Report that same decision without introducing a new Core callback exception.
+            if (decision is ConversationActionResult.Refuse)
+                currentCoroutineContext()[CommandOutcomeCapture]?.rejection = receipt.rejection()
             val canRefuse = receipt.conversationAction?.canRefuse(origin.wireValue) == true
             if (decision is ConversationActionResult.Refuse && canRefuse) {
                 if (action == NativePerformedAction.Answer) {
