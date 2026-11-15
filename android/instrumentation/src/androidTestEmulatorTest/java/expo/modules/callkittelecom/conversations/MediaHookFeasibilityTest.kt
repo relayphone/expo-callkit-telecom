@@ -29,6 +29,10 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Response
 import java.io.IOException
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.URI
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -99,6 +103,7 @@ class MediaHookFeasibilityTest {
                         ConversationActionResult.Proceed(claimed.keys().asSequence().associateWith { claimed.get(it) })
                     } else ConversationActionResult.Proceed()
                 })
+                packetClockSamples(id)
                 assertEquals("reported", engine.incoming(IncomingCallPush(id, "event-$id",
                     mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = prejoin).payload())["status"])
                 val joined = stage(NativeMediaStage.PREJOINED)
@@ -170,6 +175,7 @@ class MediaHookFeasibilityTest {
                 val uplink = receiving.await()
                 assertTrue(uplink.getLong("cleanCyclesWithPostRoll") > 0)
                 val observed = checkNotNull(first)
+                packetClockSamples(id)
                 val timing = JSONObject().put("clock", "android.elapsedRealtimeNanos").put("claimDelayMillis", claimDelayMillis)
                     .put("answerRequestedNs", requested.toString()).put("prejoinClosedNs", retired.elapsedRealtimeNanos.toString())
                     .put("newConnectStartedNs", connect.elapsedRealtimeNanos.toString())
@@ -198,6 +204,11 @@ class MediaHookFeasibilityTest {
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                     putString("claimNegotiationCounts", negotiations.toString())
                     putString("claimReceiverTiming", snapshot.getJSONObject("receiver").toString())
+                    putString("claimStageTimeline", JSONObject().put("clock", "android.elapsedRealtimeNanos")
+                        .put("events", org.json.JSONArray(signals.take(128).map {
+                            JSONObject().put("stage", it.stage.value).put("atNs", it.elapsedRealtimeNanos.toString())
+                                .put("measurements", JSONObject(it.measurements))
+                        })).put("truncatedEvents", maxOf(0, signals.size - 128)).toString())
                 })
                 val offers = audioOffers(negotiations.getJSONObject(1))
                 assertEquals("Answer negotiates its audio sender exactly once", 1, offers.size)
@@ -227,6 +238,38 @@ class MediaHookFeasibilityTest {
                 if (previousFactory == null) NativeMediaRegistry.factories.remove("livekit")
                 else NativeMediaRegistry.factories["livekit"] = previousFactory
                 engine.nativeMedia = previousMedia; engine.policy = previousPolicy
+                }
+            }
+        }
+    }
+
+    private suspend fun packetClockSamples(id: String) {
+        val port = InstrumentationRegistry.getArguments().getString("claimClockPort")?.toInt() ?: return
+        require(port in 1024..65535)
+        withContext(Dispatchers.IO) {
+            DatagramSocket().use { socket ->
+                socket.soTimeout = 1000
+                val host = InetAddress.getByName(InstrumentationRegistry.getArguments().getString("claimClockHost")
+                    ?: URI(settings.getString("baseUrl")).host)
+                repeat(3) {
+                    val sequence = android.os.SystemClock.elapsedRealtimeNanos()
+                    val payload = ByteBuffer.allocate(16).put("claimclk".toByteArray(Charsets.US_ASCII)).putLong(sequence).array()
+                    val before = android.os.SystemClock.elapsedRealtimeNanos()
+                    socket.send(DatagramPacket(payload, payload.size, host, port))
+                    val reply = DatagramPacket(ByteArray(17), 17)
+                    socket.receive(reply)
+                    val after = android.os.SystemClock.elapsedRealtimeNanos()
+                    check(reply.address == host && reply.port == port && reply.length == payload.size &&
+                        reply.data.copyOf(reply.length).contentEquals(payload))
+                    val fixtureBefore = android.os.SystemClock.elapsedRealtimeNanos()
+                    val fixtureAt = fixture("/fixture/timing/$id").getJSONObject("clockSample").getString("atNs")
+                    val fixtureAfter = android.os.SystemClock.elapsedRealtimeNanos()
+                    InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
+                        putString("claimPacketClock", JSONObject().put("clock", "android.elapsedRealtimeNanos")
+                            .put("sequence", sequence.toString()).put("beforeNs", before.toString())
+                            .put("afterNs", after.toString()).put("fixtureBeforeNs", fixtureBefore.toString())
+                            .put("fixtureAtNs", fixtureAt).put("fixtureAfterNs", fixtureAfter.toString()).toString())
+                    })
                 }
             }
         }

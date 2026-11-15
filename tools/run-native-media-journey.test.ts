@@ -507,3 +507,5 @@ for (const [index, name] of [
       f.close();
     }
   });
+import "./emulator-packets.test.ts";
+import "./claim-transport-timing.test.ts";

@@ -689,7 +689,8 @@ def claim_signaling_snapshot(server_id):
         "frames": observation.frames, "firstMarkerReceivedNs": marker_received,
         "firstMarkerDetectedNs": str(observation.first_marker_ns) if observation.first_marker_ns is not None else None,
     }
-    return {"negotiations": [dict(trace) for trace in negotiations.get(room_name, [])], "receiver": receiver}
+    return {"negotiations": [dict(trace) for trace in negotiations.get(room_name, [])], "receiver": receiver,
+            "clockSample": {"clock": "python.time.monotonic_ns", "atNs": str(time.monotonic_ns())}}
 
 
 async def claim_signaling(request):

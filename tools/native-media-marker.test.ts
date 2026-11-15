@@ -51,6 +51,7 @@ spec = importlib.util.spec_from_file_location("fixture", "tools/native-media-fix
 fixture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fixture)
 fixture.settings["deviceAuth"] = "test"
+fixture.time.monotonic_ns = lambda: 123456
 class Request:
     headers = {"Authorization": "Bearer test"}
     match_info = {"server_id": "hooks-123"}
@@ -82,15 +83,16 @@ async def check():
             answerToFirstMarkerObservedMs=4000.5, swapToFirstMarkerObservedMs=1200.25)
         assert (await fixture.retain_claim_timing(Request(body))).status == 200
         saved = fixture.directory / "media-evidence" / "claim-hooks-123.json"
-        assert json.loads(saved.read_text()) == {**body, "negotiations": [], "receiver": None}
+        clock = {"clock": "python.time.monotonic_ns", "atNs": "123456"}
+        assert json.loads(saved.read_text()) == {**body, "negotiations": [], "receiver": None, "clockSample": clock}
         assert (await fixture.retain_claim_timing(Request({**body, "credentials": "private"}))).status == 400
         assert (await fixture.retain_claim_timing(Request({**body, "publisherStartedNs": "private"}))).status == 400
         assert (await fixture.retain_claim_timing(Request({**body, "answerToFirstMarkerObservedMs": float("nan")}))).status == 400
-        assert json.loads(saved.read_text()) == {**body, "negotiations": [], "receiver": None}
+        assert json.loads(saved.read_text()) == {**body, "negotiations": [], "receiver": None, "clockSample": clock}
         fixture.uplinks["native-ci-hooks-123"] = SimpleNamespace(started_ns=100, arrivals=[[25, 0, 480]], frames=480,
             detections=[{"endSamples": 480}], first_marker_ns=200)
         snapshot = json.loads((await fixture.claim_signaling(Request())).text)
-        assert snapshot == {"negotiations": [], "receiver": {"clock": "python.time.monotonic_ns", "startedNs": "100",
+        assert snapshot == {"negotiations": [], "clockSample": clock, "receiver": {"clock": "python.time.monotonic_ns", "startedNs": "100",
             "firstPcmNs": "125", "frames": 480, "firstMarkerReceivedNs": "125", "firstMarkerDetectedNs": "200"}}
         unauthorized = Request()
         unauthorized.headers = {}

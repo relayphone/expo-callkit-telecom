@@ -14,6 +14,8 @@
     "skipLibCheck": true
   },
   "include": [
+    "tools/emulator-packets*.ts",
+    "tools/claim-transport-timing*.ts",
     "tools/android-push-faults*.ts",
     "tools/android-emulator-executor*.ts",
     "tools/android-emulator-budget*.ts",
