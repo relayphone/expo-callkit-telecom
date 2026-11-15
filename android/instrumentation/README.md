@@ -61,6 +61,26 @@ from another process. Functional CI retains this file even on failure; parse a
 saved artifact with `node tools/android-push-faults.ts --file <path>`. The log
 contains delivery and token observations, with no media credentials or payloads.
 
+## Cold-process push journey
+
+`node tools/android-push-faults.ts emulator-5554 cold-start` force-stops the host,
+confirms no process remains, then explicitly launches the shell fixture carrying
+an invitation into `CallPushIntake`. A new PID must journal process start, intake,
+ringing, posted Answer/Decline actions, a performed notification Answer and cleanup
+under the same call, event and delivery IDs. The host also checks Telecom and
+notification cleanup. Each device wait keeps a five-second bound.
+
+Process start uses `Process.getStartElapsedRealtime()` (millisecond precision,
+serialized as nanoseconds); subsequent observations use `elapsedRealtimeNanos`.
+The CLI derives durations only within that device clock. Functional CI runs this
+after the standard journeys and retains the new journal under `coldStart` in
+`push-fault-events.json`, preserving the earlier process's fault events.
+
+This is a cold-start intake/bootstrap qualification with media disabled and a
+native handler that proceeds. It does not deliver FCM: Android does not deliver
+ordinary FCM messages to force-stopped apps until an explicit launch clears the
+stopped state. The activity remains debug/emulator-only and shell protected.
+
 The exploratory DND study and its measurements are preserved on
 [`archive/android-telecom-research`](https://github.com/relayphone/expo-callkit-telecom/tree/archive/android-telecom-research).
 The active suite keeps `DndMatrixTest` for functional filtering and

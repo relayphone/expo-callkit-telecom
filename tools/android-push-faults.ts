@@ -1,24 +1,33 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { setTimeout } from "node:timers/promises";
+import { collectAndroidEmulatorState } from "./check-android-journey-state.ts";
 
 const app = "expo.modules.callkittelecom.instrumentation";
 const activity = `${app}/expo.modules.callkittelecom.conversations.PushFaultActivity`;
-type Execute = (args: readonly string[]) => string;
-const execute: Execute = args => execFileSync("adb", [...args], {
-  encoding: "utf8", timeout: 15_000, maxBuffer: 512 * 1024,
+type Execute = (args: readonly string[], timeoutMillis?: number) => string;
+const execute: Execute = (args, timeoutMillis = 15_000) => execFileSync("adb", [...args], {
+  encoding: "utf8", timeout: timeoutMillis, killSignal: "SIGKILL",
+  maxBuffer: args.includes("dumpsys") ? 8 * 1024 * 1024 : 512 * 1024,
   stdio: ["ignore", "pipe", "pipe"],
 });
 
 type Delivery = { callId: string; deliveryId: string; eventId: string; delayMillis: number };
 export type PushFaultCommand = (Delivery & { kind: "deliver" | "drop" | "duplicate" })
+  | (Delivery & { kind: "cold-start" })
   | { kind: "rebind-empty-token"; deliveryId: string } | { kind: "reset" };
 type Phase = "scheduled" | "dropped" | "recognized" | "unrecognized" | "failed" | "cancelled";
+const coldStages = ["processStarted", "intake", "ringing", "presented", "answered", "cleaned"] as const;
+type ColdStage = (typeof coldStages)[number] | "failed";
 export type PushFaultEvent = (Delivery & { kind: "delivery"; phase: Phase; elapsedRealtimeNanos: string })
+  | (Delivery & { kind: "coldStart"; stage: ColdStage; elapsedRealtimeNanos: string })
   | { kind: "tokenRebind"; deliveryId: string; tokenState: "absent" | "empty";
     tokenPresent: boolean; tokenEmpty: boolean; revisionBefore: number; revisionAfter: number;
     sameSnapshot: boolean; elapsedRealtimeNanos: string };
-export type PushFaultLog = { schemaVersion: 1; processId: number; events: PushFaultEvent[] };
+type NativePushFaultLog = { schemaVersion: 1; processId: number; events: PushFaultEvent[] };
+export type ColdPushReceipt = { previousProcessId: number | null; journal: NativePushFaultLog };
+export type PushFaultLog = NativePushFaultLog & { coldStart?: ColdPushReceipt };
 
 function record(value: unknown): Record<string, unknown> {
   assert.ok(value !== null && typeof value === "object" && !Array.isArray(value), "Expected a record");
@@ -43,9 +52,10 @@ export function parsePushFaultCommand(value: unknown): PushFaultCommand {
   switch (command.kind) {
     case "reset": return { kind: "reset" };
     case "rebind-empty-token": return { kind: command.kind, deliveryId: text(command.deliveryId, 128) };
-    case "deliver": case "drop": case "duplicate": {
+    case "deliver": case "drop": case "duplicate": case "cold-start": {
       const request = delivery(command);
       if (command.kind === "duplicate") text(request.deliveryId, 126);
+      if (command.kind === "cold-start") assert.equal(request.delayMillis, 0);
       return { kind: command.kind, ...request };
     }
     default: throw new Error("Unknown push fixture command");
@@ -53,7 +63,7 @@ export function parsePushFaultCommand(value: unknown): PushFaultCommand {
 }
 
 /** Times remain decimal strings so device nanoseconds never lose precision in JSON consumers. */
-export function parsePushFaultLog(value: unknown): PushFaultLog {
+function parseNativePushFaultLog(value: unknown): NativePushFaultLog {
   const log = record(value);
   assert.equal(log.schemaVersion, 1);
   const processId = integer(log.processId);
@@ -64,6 +74,11 @@ export function parsePushFaultLog(value: unknown): PushFaultLog {
     const elapsedRealtimeNanos = text(event.elapsedRealtimeNanos, 19);
     assert.match(elapsedRealtimeNanos, /^\d+$/);
     assert.ok(BigInt(elapsedRealtimeNanos) <= 9_223_372_036_854_775_807n);
+    if (event.kind === "coldStart") {
+      const stage = event.stage;
+      assert.ok(stage === "failed" || coldStages.some(value => value === stage), "Unknown cold-start stage");
+      return { kind: "coldStart", ...delivery(event), stage: stage as ColdStage, elapsedRealtimeNanos };
+    }
     if (event.kind === "delivery") {
       const phase = event.phase;
       assert.ok(phase === "scheduled" || phase === "dropped" || phase === "recognized" ||
@@ -78,6 +93,35 @@ export function parsePushFaultLog(value: unknown): PushFaultLog {
       sameSnapshot: boolean(event.sameSnapshot), elapsedRealtimeNanos };
   });
   return { schemaVersion: 1, processId, events };
+}
+
+/** A host receipt keeps the earlier fault journal intact alongside the new process's journal. */
+export function parsePushFaultLog(value: unknown): PushFaultLog {
+  const native = parseNativePushFaultLog(value);
+  const cold = record(value).coldStart;
+  if (cold === undefined) return native;
+  const proof = record(cold);
+  const previousProcessId = proof.previousProcessId === null ? null : integer(proof.previousProcessId);
+  if (previousProcessId !== null) assert.ok(previousProcessId > 0);
+  const journal = parseNativePushFaultLog(proof.journal);
+  assert.notEqual(journal.processId, previousProcessId, "Cold start reused the previous process");
+  return { ...native, coldStart: { previousProcessId, journal } };
+}
+
+/** Derive durations exclusively from the new process's device monotonic timestamps. */
+export function coldPushTimings(receipt: ColdPushReceipt, request: Delivery) {
+  const log = receipt.journal;
+  assert.notEqual(log.processId, receipt.previousProcessId);
+  assert.deepEqual(log.events.map(event => event.kind === "coldStart" ? event.stage : event.kind), coldStages,
+    "Cold push did not ring, present, answer and clean up in order");
+  for (const event of log.events) assert.deepEqual(delivery(record(event)), request, "Cold push identity changed");
+  const times = log.events.map(event => BigInt(event.elapsedRealtimeNanos));
+  assert.ok(times.every((time, index) => index === 0 || time >= times[index - 1]!), "Cold push time moved backwards");
+  return { clock: "android.elapsedRealtimeNanos" as const,
+    processToIntakeNanos: (times[1]! - times[0]!).toString(),
+    intakeToPresentationNanos: (times[3]! - times[1]!).toString(),
+    processToPresentationNanos: (times[3]! - times[0]!).toString(),
+    processToAnswerNanos: (times[4]! - times[0]!).toString() };
 }
 
 function emulator(serial: string, run: Execute): void {
@@ -98,7 +142,7 @@ export function triggerPushFault(serial: string, input: PushFaultCommand, run: E
   for (const request of requests) {
     const args = ["am", "start", "-W", "-n", activity, "--es", "command", request.kind];
     if (request.kind !== "reset") args.push("--es", "deliveryId", request.deliveryId);
-    if (request.kind === "deliver" || request.kind === "drop") args.push("--es", "callId", request.callId,
+    if (request.kind === "deliver" || request.kind === "drop" || request.kind === "cold-start") args.push("--es", "callId", request.callId,
       "--es", "eventId", request.eventId, "--el", "delayMillis", String(request.delayMillis));
     const result = run(["-s", serial, "shell", args.map(quote).join(" ")]);
     assert.match(result, /^Status: ok\r?$/m, "Push fixture activity did not start");
@@ -117,6 +161,60 @@ export function readPushFaultLog(serial: string, run: Execute = execute): PushFa
   return log;
 }
 
+/** Force-stop first, then explicitly cold-launch the shell fixture carrying the push into the real intake. */
+export async function runColdPushJourney(serial: string, input: Delivery, run: Execute = execute,
+  timing = { now: () => performance.now(), pause: (ms: number) => setTimeout(ms) },
+  retain: (receipt: ColdPushReceipt) => void = () => {}): Promise<ColdPushReceipt> {
+  const request = delivery(record(input));
+  assert.equal(request.delayMillis, 0);
+  let commandDeadline = timing.now() + 40_000;
+  const bounded: Execute = args => {
+    const remaining = Math.ceil(commandDeadline - timing.now());
+    assert.ok(remaining > 0, "Cold push command budget expired");
+    const result = run(args, Math.min(15_000, remaining));
+    assert.ok(timing.now() < commandDeadline, "Cold push command budget expired");
+    return result;
+  };
+  emulator(serial, bounded);
+  const pid = () => {
+    const value = bounded(["-s", serial, "shell", `pidof ${app} || true`]).trim();
+    assert.match(value, /^(?:[1-9]\d*)?$/);
+    return value ? integer(Number(value), 2_147_483_647) : null;
+  };
+  const previousProcessId = pid();
+  for (const permission of ["RECORD_AUDIO", "POST_NOTIFICATIONS"])
+    bounded(["-s", serial, "shell", "pm", "grant", app, `android.permission.${permission}`]);
+  const stopArgs = ["-s", serial, "shell", "am", "force-stop", app];
+  bounded(stopArgs);
+  assert.equal(pid(), null, "Force-stop left the process alive");
+  let passed = false;
+  let stages: string[] = [];
+  try {
+    triggerPushFault(serial, { ...request, kind: "cold-start" }, bounded);
+    commandDeadline = Math.min(commandDeadline, timing.now() + 20_000);
+    while (timing.now() < commandDeadline) {
+      let journal: NativePushFaultLog | undefined;
+      try { journal = parseNativePushFaultLog(readPushFaultLog(serial, bounded)); }
+      catch { /* A cold launch can precede the first atomic journal flush. Never accept a stale process. */ }
+      if (journal) {
+        const receipt = { previousProcessId, journal };
+        retain(receipt);
+        stages = journal.events.map(event => event.kind === "coldStart" ? event.stage : event.kind);
+        if (stages.includes("cleaned")) {
+          coldPushTimings(receipt, request);
+          const state = collectAndroidEmulatorState(serial, app, bounded);
+          assert.equal(state.calls.length, 0, "Cold push left a Telecom call");
+          assert.equal(state.notifications.callPresent, false, "Cold push left a call notification");
+          passed = true;
+          return receipt;
+        }
+      }
+      await timing.pause(100);
+    }
+    throw new Error(`Cold push did not complete; last stages: ${stages.join(",") || "unavailable"}`);
+  } finally { if (!passed) run(stopArgs, 5000); }
+}
+
 if (import.meta.main) {
   try {
     const serial = process.argv[2] ?? "emulator-5554";
@@ -125,8 +223,22 @@ if (import.meta.main) {
       console.log(JSON.stringify(parsePushFaultLog(JSON.parse(readFileSync(process.argv[3], "utf8")))));
     } else {
       const command = process.argv[3] ?? "events";
-      if (command !== "events") triggerPushFault(serial, parsePushFaultCommand(JSON.parse(command)));
-      console.log(JSON.stringify(readPushFaultLog(serial)));
+      if (command === "cold-start") {
+        const output = process.argv[4];
+        const previous = output ? parsePushFaultLog(JSON.parse(readFileSync(output, "utf8"))) : undefined;
+        const id = `cold-${process.hrtime.bigint()}`;
+        const request = { callId: id, deliveryId: `${id}-delivery`, eventId: `${id}-invite`, delayMillis: 0 };
+        const receipt = await runColdPushJourney(serial, request, execute, undefined, coldStart => {
+          if (output && previous) {
+            writeFileSync(`${output}.tmp`, JSON.stringify({ ...previous, coldStart }));
+            renameSync(`${output}.tmp`, output);
+          }
+        });
+        console.log(JSON.stringify({ ...receipt, timings: coldPushTimings(receipt, request) }));
+      } else {
+        if (command !== "events") triggerPushFault(serial, parsePushFaultCommand(JSON.parse(command)));
+        console.log(JSON.stringify(readPushFaultLog(serial)));
+      }
     }
   } catch { console.error("Android push fixture failed."); process.exitCode = 1; }
 }
