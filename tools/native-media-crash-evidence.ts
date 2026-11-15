@@ -37,25 +37,36 @@ export function parseMediaExits(text: string): Exit[] {
 }
 
 /** Arbitrary messages, exception details, thread names, notification text and memory dumps are removed. */
-export function sanitizeMediaCrash(text: string, secrets: readonly string[] = []): string {
-  return sanitizeFixtureLog(text, secrets).split(/\r?\n/).slice(-crashLimits.lines).map(line => {
+export function sanitizeMediaCrash(text: string, secrets: readonly string[] = [], edge: "head" | "tail" = "tail"): string {
+  const lines = sanitizeFixtureLog(text, secrets).split(/\r?\n/);
+  return (edge === "head" ? lines.slice(0, crashLimits.lines) : lines.slice(-crashLimits.lines)).map(line => {
     // logcat threadtime metadata is numeric; its free-form tag and message are not trusted.
     const prefix = /^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\s+(\d+)\s+(\d+)\s+[VDIWEF]\s+[^:]*:\s?/.exec(line);
-    const body = (prefix ? line.slice(prefix[0].length) : line).trim();
+    const body = (prefix ? line.slice(prefix[0].length) : line).trim()
+      .replace(/^(?:runtime|check_jni|thread)\.cc:\d+\]\s*/, "")
+      .replace(/^Abort message: '/, "");
     const metadata = prefix ? `${prefix[1]} pid=${prefix[2]} tid=${prefix[3]} ` : "";
     let safe = "[REDACTED]";
     const signal = /^(?:Fatal )?signal (\d{1,3})\b.*?\bcode (-?\d{1,4})\b/i.exec(body);
     const process = /^pid: (\d+), tid: (\d+),/.exec(body);
     const java = /^(?:Caused by: )?((?:java|javax|android|androidx|kotlin|kotlinx|org\.webrtc|io\.livekit|expo\.modules\.callkittelecom)\.[A-Za-z0-9_.$]*(?:Exception|Error))\b/.exec(body);
-    const frame = /^at ((?:java|javax|android|androidx|kotlin|kotlinx|org\.webrtc|io\.livekit|expo\.modules\.callkittelecom)\.[A-Za-z0-9_.$<>]+)\(([A-Za-z0-9_$]+\.(?:java|kt):\d+|Native Method|Unknown Source)\)$/.exec(body);
+    // ART adds a return type and argument types; retain only the method and source location.
+    const frameBody = body.replace(/^at [A-Za-z0-9_.$\[\]]+ /, "at ")
+      .replace(/\([A-Za-z0-9_.$,\[\] ]*\) \(/, "(");
+    const frame = /^at ((?:java|javax|android|androidx|kotlin|kotlinx|org\.webrtc|io\.livekit|expo\.modules\.callkittelecom)\.[A-Za-z0-9_.$<>]+)\(([A-Za-z0-9_$]+\.(?:java|kt):\d+|Native Method|Unknown Source)\)$/.exec(frameBody);
     const native = /^#(\d+)\s+pc\s+([a-f0-9]+)\s+(\S+)/i.exec(body);
     const library = native && /^(lib[A-Za-z0-9_.+-]+\.so|[A-Za-z0-9_.+-]+\.(?:oat|odex))$/.exec(basename(native[3]!).split("!").at(-1)!);
+    const symbol = native && /\s+\(((?:art|webrtc|rtc)::[A-Za-z0-9_:~<>]{1,160})(?=[(+])/.exec(body);
+    const jni = body.startsWith("JNI DETECTED ERROR IN APPLICATION:");
+    const call = jni && /\bJNI (Call(?:Static|Nonvirtual)?(?:Void|Object|Boolean|Byte|Char|Short|Int|Long|Float|Double)Method[AV]?)\b/.exec(body);
+    const pending = jni && /\bpending exception (java\.lang\.[A-Za-z]{1,96}(?:Exception|Error))\b/.exec(body);
     const anr = /^----- pid (\d+) at (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/.exec(body);
-    if (signal) safe = `signal=${signal[1]} code=${signal[2]}`;
+    if (jni) safe = "JNI DETECTED ERROR IN APPLICATION" + (call ? ` call=${call[1]}` : "") + (pending ? ` pending=${pending[1]}` : "");
+    else if (signal) safe = `signal=${signal[1]} code=${signal[2]}`;
     else if (process) safe = `pid=${process[1]} tid=${process[2]}`;
     else if (java) safe = java[1]!;
     else if (frame) safe = `at ${frame[1]}(${frame[2]})`;
-    else if (native && library) safe = `#${native[1]} pc ${native[2]} ${library[1]}`;
+    else if (native && library) safe = `#${native[1]} pc ${native[2]} ${library[1]}` + (symbol ? ` ${symbol[1]}` : "");
     else if (anr) safe = `anr pid=${anr[1]} at ${anr[2]}`;
     else if (body.startsWith("FATAL EXCEPTION:")) safe = "FATAL EXCEPTION [thread redacted]";
     else if (body.startsWith("ANR in ")) safe = "ANR [process details redacted]";
@@ -124,7 +135,9 @@ export function collectMediaCrashEvidence(output: string, command: ReadCrashComm
       .slice(0, crashLimits.traceFiles);
     for (const [index, name] of names.entries()) {
       const source = `${kind}-${index + 1}` as const;
-      save(source, sanitizeMediaCrash(capture(source, ["shell", "head", "-c", String(crashLimits.rawBytes), `${directory}/${name}`]), secrets));
+      const raw = capture(source, ["shell", "head", "-c", String(crashLimits.rawBytes), `${directory}/${name}`]);
+      if (raw.split(/\r?\n/).length > crashLimits.lines) attempts.findLast(a => a.source === source)!.truncated = true;
+      save(source, sanitizeMediaCrash(raw, secrets, "head"));
     }
   }
   const exit = (name: "app" | "tests") => {
