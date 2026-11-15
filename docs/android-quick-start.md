@@ -424,6 +424,10 @@ status, `Refused(reason)` with the handler's exact text, or `Failed(code, messag
 or `unsupported`. Native Core errors also retain `nativeCode`. Both paths use the
 same rejection normalizer.
 
+`ConversationCommandStatus` and `ConversationEndReason` remain enums matching the
+shared cross-platform contract's closed string sets. A change to that contract can
+add enum values.
+
 Answer completes after the answer command and its state publication; `CONNECTING`
 can precede media connection. End and Decline complete after the logical end is
 published and include its `ConversationEndReason`. Platform removal can continue
@@ -477,6 +481,11 @@ Each `SystemCommandOutcome` includes the conversation ID, typed
 `ConversationCommandOutcome` as app controls. `HOLD` includes resume; `MUTE`
 includes unmute. Core-Telecom system UI, Bluetooth and car controls use `TELECOM`.
 SDK notification primary actions remain SDK-owned.
+
+`SystemCommandAction` and `SystemCommandSource` are extensible value classes with
+companion constants and stable lowercase `.value` strings, such as `answer` and
+`telecom`. New values may be added in future releases. A `when` expression over
+either type needs an `else` branch; use `.value` to handle an unfamiliar value.
 
 The flow has no replay and buffers at most 64 events for a slow collector, dropping
 the oldest buffered event on overflow. Events emitted before collection are lost;

@@ -9,6 +9,41 @@ import org.junit.Test
 class SystemCommandOutcomesTest {
     private val performed = ConversationCommandOutcome.Performed("call", ConversationCommandStatus.HELD)
 
+    @Test fun actionAndSourceConstantsHaveStableStringValues() {
+        assertEquals(listOf("answer", "decline", "end", "hold", "mute"), listOf(
+            SystemCommandAction.ANSWER, SystemCommandAction.DECLINE, SystemCommandAction.END,
+            SystemCommandAction.HOLD, SystemCommandAction.MUTE).map { it.value })
+        assertEquals(listOf("notification", "telecom"), listOf(
+            SystemCommandSource.NOTIFICATION, SystemCommandSource.TELECOM).map { it.value })
+    }
+
+    @Test fun futureActionAndSourceValuesReachCollectorsAndUseTheElseBranch() = runBlocking {
+        val stream = SystemCommandOutcomes()
+        val observed = async(start = CoroutineStart.UNDISPATCHED) { stream.flow.first() }
+        val action = SystemCommandAction.from("tones")
+        val source = SystemCommandSource.from("accessibility")
+        stream.observe("call", action, source, CompletableDeferred(performed))
+        val command = withTimeout(1000) { observed.await() }
+        assertEquals(SystemCommandOutcome("call", action, source, performed), command)
+        val actionLabel = when (command.action) {
+            SystemCommandAction.ANSWER -> "Answer"
+            SystemCommandAction.DECLINE -> "Decline"
+            SystemCommandAction.END -> "End"
+            SystemCommandAction.HOLD -> "Hold"
+            SystemCommandAction.MUTE -> "Mute"
+            else -> command.action.value
+        }
+        val sourceLabel = when (command.source) {
+            SystemCommandSource.NOTIFICATION -> "Notification"
+            SystemCommandSource.TELECOM -> "Telecom"
+            else -> command.source.value
+        }
+        assertEquals("tones", actionLabel)
+        assertEquals("accessibility", sourceLabel)
+        assertNotEquals(SystemCommandAction.MUTE, command.action)
+        assertNotEquals(SystemCommandSource.TELECOM, command.source)
+    }
+
     @Test fun hasNoReplayAndBroadcastsTheSameTypedSettlementToActiveCollectors() = runBlocking {
         val stream = SystemCommandOutcomes()
         stream.observe("old", SystemCommandAction.END, SystemCommandSource.NOTIFICATION, CompletableDeferred(performed))

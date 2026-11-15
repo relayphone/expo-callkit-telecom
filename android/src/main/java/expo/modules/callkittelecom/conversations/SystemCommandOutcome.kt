@@ -5,11 +5,34 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
-/** Primary system control, including hold/resume and mute/unmute. */
-enum class SystemCommandAction { ANSWER, DECLINE, END, HOLD, MUTE }
+/**
+ * Primary system control, including hold/resume and mute/unmute.
+ * Values are extensible; a `when` expression must include an `else` branch.
+ */
+@JvmInline
+value class SystemCommandAction private constructor(val value: String) {
+    companion object {
+        val ANSWER = SystemCommandAction("answer")
+        val DECLINE = SystemCommandAction("decline")
+        val END = SystemCommandAction("end")
+        val HOLD = SystemCommandAction("hold")
+        val MUTE = SystemCommandAction("mute")
+        internal fun from(value: String) = SystemCommandAction(value)
+    }
+}
 
-/** Where the system control entered the SDK. */
-enum class SystemCommandSource { NOTIFICATION, TELECOM }
+/**
+ * Where the system control entered the SDK.
+ * Values are extensible; a `when` expression must include an `else` branch.
+ */
+@JvmInline
+value class SystemCommandSource private constructor(val value: String) {
+    companion object {
+        val NOTIFICATION = SystemCommandSource("notification")
+        val TELECOM = SystemCommandSource("telecom")
+        internal fun from(value: String) = SystemCommandSource(value)
+    }
+}
 
 /** Settlement of a system-origin command, using the same outcomes as app controls. */
 data class SystemCommandOutcome(
