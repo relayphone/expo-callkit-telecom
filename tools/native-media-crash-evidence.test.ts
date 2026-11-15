@@ -87,6 +87,47 @@ test("collects both package exits and readable traces, rejects unsafe names and 
   assert.doesNotMatch(artifacts, /private-secret|private-auth|notification-text|\.\.\//);
 });
 
+test("keeps ART crash classifications and code locations without abort payloads", () => {
+  const raw = `11-15 20:19:31.004 3631 3631 F art: runtime.cc:718] JNI DETECTED ERROR IN APPLICATION: JNI CallVoidMethodV called with pending exception java.lang.AssertionError: notification-text private-secret
+11-15 20:19:31.004 3631 3631 F art: runtime.cc:718]   at void org.webrtc.ThreadUtils.checkIsOnMainThread() (ThreadUtils.java:55)
+11-15 20:19:31.004 3631 3631 F art: runtime.cc:718]   at org.webrtc.AudioTrack.run(AudioTrack.java:56)
+Abort message: 'JNI DETECTED ERROR IN APPLICATION: private-secret'
+#01 pc 000abc /apex/private/lib64/libart.so (art::JavaVMExt::JniAbort(char const*, char const*)+160) (BuildId: notification-text)
+#02 pc 000def /data/private/base.apk!libjingle_peerconnection_so.so (private-secret+20)
+runtime.cc:718] at java.lang.private_secret.run(File.java:1)
+Abort message: 'notification-text private-secret'
+`;
+  const sanitized = sanitizeMediaCrash(raw, ["private-secret", "private_secret"]);
+  assert.match(sanitized, /JNI DETECTED ERROR IN APPLICATION call=CallVoidMethodV pending=java.lang.AssertionError/);
+  assert.match(sanitized, /at org.webrtc.ThreadUtils.checkIsOnMainThread\(ThreadUtils.java:55\)/);
+  assert.match(sanitized, /at org.webrtc.AudioTrack.run\(AudioTrack.java:56\)/);
+  assert.match(sanitized, /#01 pc 000abc libart.so art::JavaVMExt::JniAbort/);
+  assert.match(sanitized, /#02 pc 000def libjingle_peerconnection_so.so\n/);
+  assert.doesNotMatch(sanitized, /notification-text|private|char const|BuildId|Abort message|apex/);
+});
+
+test("keeps the beginning of long tombstones and ANRs while keeping logcat tails", t => {
+  const f = fixture(t);
+  const trace = `pid: 3631, tid: 3631, name: notification-text >>> private-package <<<
+signal 6 (SIGABRT), code -1 (SI_QUEUE), fault addr --------
+#00 pc 000abc /apex/private/lib64/libc.so (abort+12)
+${"memory near private-secret\n".repeat(3000)}`;
+  collectMediaCrashEvidence(f.output, args => args.includes("exit-info") ? success(exit(5, 6))
+    : args.includes("ls") ? success(args.at(-1) === "/data/anr" ? "traces.txt" : "tombstone_00")
+    : args[0] === "logcat" ? success("private-secret\n".repeat(3000) + "signal 6 (SIGABRT), code -1 (SI_QUEUE)")
+    : success(trace), () => 0, ["private-secret"]);
+  for (const name of ["tombstone-1", "anr-1"]) {
+    const saved = readFileSync(join(f.output, `${name}.txt`), "utf8");
+    assert.match(saved, /pid=3631 tid=3631/);
+    assert.match(saved, /signal=6 code=-1/);
+    assert.match(saved, /#00 pc 000abc libc.so/);
+    assert.doesNotMatch(saved, /private|notification-text/);
+  }
+  assert.match(readFileSync(join(f.output, "crash.txt"), "utf8"), /signal=6 code=-1/);
+  const report = JSON.parse(readFileSync(join(f.output, "collection.json"), "utf8"));
+  assert(report.attempts.find((a: { source: string }) => a.source === "tombstone-1").truncated);
+});
+
 test("caps raw reads, every file and total artifacts while marking truncation", t => {
   const f = fixture(t);
   const huge = (`at java.${"A".repeat(1800)}.run(File.java:1)\n`).repeat(2000);
