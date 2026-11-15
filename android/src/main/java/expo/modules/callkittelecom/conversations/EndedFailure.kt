@@ -52,3 +52,11 @@ internal fun withRemainingPlatformCall(ended: Map<String, Any?>): Map<String, An
     val failure = ended["failure"] as? Map<String, Any?> ?: return ended
     return ended + ("failure" to (failure + ("platformCallRemaining" to true)))
 }
+
+/** Clear uncertainty without replacing the original logical end or its failure. */
+@Suppress("UNCHECKED_CAST")
+internal fun withoutRemainingPlatformCall(ended: Map<String, Any?>): Map<String, Any?> {
+    val failure = ended["failure"] as? Map<String, Any?> ?: return ended
+    if (failure["platformCallRemaining"] != true) return ended
+    return ended + ("failure" to (failure - "platformCallRemaining"))
+}

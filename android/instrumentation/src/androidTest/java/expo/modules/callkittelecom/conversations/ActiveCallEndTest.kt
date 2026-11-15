@@ -14,6 +14,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
@@ -37,6 +38,9 @@ class ActiveCallEndTest {
         private val previousHandler = ConversationActions.handler
         private val previousFactory = NativeMediaRegistry.factories["livekit"]
         private val previousRemovalDeadline = engine.platformRemovalDeadlineMillis
+        private val previousLateBackoff = engine.lateRemovalBackoffMillis
+        private val previousRemovalClock = engine.platformRemovalNowMillis
+        var removalClock = 0L
         private var realControls: CallControlScope? = null
         val coreClosed = CompletableDeferred<Unit>()
         var disconnects = 0
@@ -56,6 +60,7 @@ class ActiveCallEndTest {
             NativeMediaSignals.observers += observer
             engine.actions.resetBridge(); engine.actions.acceptUnhandled = true
             ConversationActions.configure(null)
+            engine.platformRemovalNowMillis = { removalClock }
             engine.nativeMedia = AndroidNativeMedia.LIVEKIT
             engine.policy = JSONObject(mapOf("media" to "livekit", "credentials" to "fromPush", "prewarm" to false))
             engine.coreAdmission = CoreCallAdmission { attributes, callbacks, admitted ->
@@ -192,6 +197,8 @@ class ActiveCallEndTest {
             try {
                 disconnectFailures = 0
                 if (state() != null) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+                removalClock += 10_000
+                engine.reconcilePlatformCall(id)
                 // If the assertion caught an orphaned platform call, release it before the next test.
                 if (TelecomEvidence.calls().isNotEmpty()) realControls?.disconnect(DisconnectCause(DisconnectCause.LOCAL))
                 withTimeout(5000) {
@@ -201,6 +208,8 @@ class ActiveCallEndTest {
             } finally {
                 engine.coreAdmission = previousAdmission; engine.nativeMedia = previousMedia
                 engine.platformRemovalDeadlineMillis = previousRemovalDeadline
+                engine.lateRemovalBackoffMillis = previousLateBackoff
+                engine.platformRemovalNowMillis = previousRemovalClock
                 NativeMediaSignals.observers -= observer
                 engine.policy = previousPolicy; engine.emit = previousEmit
                 engine.actions.resetBridge(); engine.actions.acceptUnhandled = previousAccept
@@ -404,5 +413,55 @@ class ActiveCallEndTest {
         assertEquals(mapOf("kind" to "server", "platformCallRemaining" to true), terminal?.get("failure"))
         assertEquals("The second snapshot annotates the same logical end", 2, terminalSnapshots)
         assertEquals(1, session.closes)
+    }
+
+    @Test fun laterRetryRemovesThePlatformCallAndPublishesTheUnchangedLogicalEnd() = fixture {
+        engine.platformRemovalDeadlineMillis = 80
+        engine.lateRemovalBackoffMillis = { 200 }
+        answer()
+        disconnectFailures = 1
+        coroutineScope {
+            val removed = async(start = CoroutineStart.UNDISPATCHED) { ConversationPlatformCalls.removed.first { it.conversationId == id } }
+            try {
+                ConversationEnds.report(context, id, "failed")
+                withTimeout(3000) { while ((terminal?.get("failure") as? Map<*, *>)?.get("platformCallRemaining") != true) delay(5) }
+                val logicalAt = terminal?.get("at")
+                coreClosed.await()
+                assertTrue("Initial deadline does not imply OS removal", TelecomEvidence.calls().isNotEmpty())
+                withTimeout(5000) { removed.await() }
+                assertEquals(id, removed.await().conversationId)
+                assertEquals(logicalAt, removed.await().endedAt?.toString())
+                assertEquals(logicalAt, terminal?.get("at"))
+                assertEquals("failed", terminal?.get("reason"))
+                assertEquals(mapOf("kind" to "server"), terminal?.get("failure"))
+                assertEquals(3, terminalSnapshots)
+                assertEquals(2, disconnects)
+                withTimeout(3000) { while (TelecomEvidence.calls().isNotEmpty() || notificationPresent() || service() != null) delay(10) }
+                assertEquals(1, session.closes)
+            } finally { removed.cancel() }
+        }
+    }
+
+    @Test fun publicReconcileReportsStuckCoalescesTapsAndCanRemoveAfterDeadline() = fixture {
+        engine.platformRemovalDeadlineMillis = 80
+        engine.lateRemovalBackoffMillis = { 120_000 }
+        answer()
+        assertEquals(PlatformCallReconcileOutcome.NO_SUCH_CALL, ConversationPlatformCalls.reconcile(context, "missing-$id"))
+        assertEquals(PlatformCallReconcileOutcome.NO_SUCH_CALL, ConversationPlatformCalls.reconcile(context, id))
+        disconnectFailures = Int.MAX_VALUE
+        ConversationEnds.report(context, id, "failed")
+        withTimeout(3000) { while (signals.none { it.stage == NativeMediaStage.PLATFORM_REMOVAL_FAILED }) delay(5) }
+        coreClosed.await()
+        val logicalAt = terminal?.get("at")
+        assertEquals(PlatformCallReconcileOutcome.STILL_REMAINING, ConversationPlatformCalls.reconcile(context, id))
+        val attempts = disconnects
+        repeat(20) { assertEquals(PlatformCallReconcileOutcome.STILL_REMAINING, ConversationPlatformCalls.reconcile(context, id)) }
+        assertEquals(attempts, disconnects)
+        disconnectFailures = 0
+        removalClock += 10_000
+        assertEquals(PlatformCallReconcileOutcome.REMOVED, withContext(Dispatchers.Default) { ConversationPlatformCalls.reconcile(context, id) })
+        assertEquals(logicalAt, terminal?.get("at"))
+        assertEquals(mapOf("kind" to "server"), terminal?.get("failure"))
+        withTimeout(3000) { while (TelecomEvidence.calls().isNotEmpty()) delay(10) }
     }
 }

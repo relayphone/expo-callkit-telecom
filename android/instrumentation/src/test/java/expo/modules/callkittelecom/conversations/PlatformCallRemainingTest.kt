@@ -13,6 +13,8 @@ class PlatformCallRemainingTest {
             assertEquals(mapOf("kind" to kind.kind, "platformCallRemaining" to true), remaining["failure"])
             assertEquals(mapOf("kind" to kind.kind), logical["failure"])
             assertEquals(remaining, withRemainingPlatformCall(remaining))
+            assertEquals(logical, withoutRemainingPlatformCall(remaining))
+            assertSame(logical, withoutRemainingPlatformCall(logical))
         }
     }
 

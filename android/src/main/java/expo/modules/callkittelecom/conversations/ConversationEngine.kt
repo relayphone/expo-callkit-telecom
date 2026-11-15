@@ -111,6 +111,7 @@ class ConversationEngine(val context: Context) {
     private class Call(val state: MutableMap<String, Any?>, val reservation: NativeIdentityReservations.Reservation,
                        val capabilities: ConversationCapabilities, val expiresAtMillis: Long?) {
         val ready = CompletableDeferred<CallControlScope>()
+        var controls: CallControlScope? = null
         val permitted = CompletableDeferred<Boolean>()
         var job: Job? = null
         var collectors: Job? = null
@@ -141,12 +142,19 @@ class ConversationEngine(val context: Context) {
         val logicalEnd = CompletableDeferred<ConversationCommandOutcome.Performed>()
         var terminalIntent: NativeEndedIntake.Intent? = null
         lateinit var disconnect: CoreCallDisconnect
+        var removalDeadlineExpired = false
+        var platformCallId: java.util.UUID? = null
+        var removalIdReused = false
         /** Why the call failed, when that is known before it ends. */
         var failure: EndedFailure? = null
     }
     private val identities = NativeIdentityReservations()
     internal var nativeMedia = AndroidNativeMedia.from(metadata?.getString("ExpoCallKitTelecomAndroidNativeMedia"))
     private val calls = linkedMapOf<String, Call>()
+    // Retired controls never reserve an app ID or participate in live-call admission.
+    private val removals = linkedSetOf<Call>()
+    private val admissions = linkedSetOf<Call>()
+    private val retiredUpdates = linkedMapOf<String, Call>()
     private val recent = mutableMapOf<String, Pair<Long, Map<String, Any?>>>()
     private val incomingTasks = mutableMapOf<String, CompletableDeferred<Map<String, Any?>>>()
     private val endedIntake = NativeEndedIntake()
@@ -166,6 +174,8 @@ class ConversationEngine(val context: Context) {
     internal var incomingTimeoutMillis = (metadata?.getInt("ExpoCallKitTelecomIncomingCallTimeout", 45) ?: 45).coerceAtLeast(1).toLong()*1000
     internal var incomingRingDeadline = IncomingRingDeadline()
     internal var platformRemovalDeadlineMillis = PLATFORM_REMOVAL_DEADLINE_MILLIS
+    internal var platformRemovalNowMillis: () -> Long = { System.nanoTime() / 1_000_000 }
+    internal var lateRemovalBackoffMillis: (Int) -> Long = ::coreLateRemovalBackoffMillis
     internal var capabilities = ConversationCapabilities(metadata?.getBoolean("ExpoCallKitTelecomSupportsHold", true) ?: true)
     internal var answerTimeoutMillis = (metadata?.getInt("ExpoCallKitTelecomFulfillAnswerCallTimeout", 30) ?: 30).coerceAtLeast(1).toLong() * 1000
     private var revision = 0L
@@ -187,7 +197,8 @@ class ConversationEngine(val context: Context) {
     }
     private fun publish() {
         refreshProximity()
-        val states = calls.filterValues { it.visible }.map { (id, call) -> publicState(id, call) }.sortedBy { it["id"] as String }
+        val states = (retiredUpdates.filterKeys { it !in calls } + calls.filterValues { it.visible })
+            .map { (id, call) -> publicState(id, call) }.sortedBy { it["id"] as String }
         if (snapshot["conversations"] != states) {
             snapshot = mapOf("revision" to ++revision, "conversations" to states)
             ConversationService.refresh(context, states.filter { it["status"] != "ended" })
@@ -229,7 +240,9 @@ class ConversationEngine(val context: Context) {
                 refreshRoutes()
             }
             publish()
-        } } finally { flushingTerminals = false }
+        }
+            if (retiredUpdates.isNotEmpty()) { retiredUpdates.clear(); publish() }
+        } finally { flushingTerminals = false }
     }
     private fun releaseTerminal(id: String, current: Call) {
         if (calls[id] !== current || !current.terminal || current.holdingTerminal) return
@@ -409,13 +422,14 @@ class ConversationEngine(val context: Context) {
     private fun create(reservation: NativeIdentityReservations.Reservation, member: Map<String, Any?>, video: Boolean,
                        payload: Map<String, Any?>?): Call {
         val id = reservation.id
+        (removals + admissions).filter { it.reservation.id == id }.forEach { it.removalIdReused = true }
         val incoming = payload != null
         val supported = capabilities.copy(supportsTones = nativeMedia == AndroidNativeMedia.LIVEKIT)
         val call = Call(linkedMapOf("id" to id, "direction" to if (incoming) "incoming" else "outgoing",
             "status" to if (incoming) "ringing" else "dialing", "members" to listOf(member),
             "isMuted" to false, "isVideo" to video, "payload" to payload?.filterKeys { it != "media" },
             "capabilities" to supported.snapshot()), reservation, supported, (payload?.get("expiresAtMillis") as? Number)?.toLong())
-        call.disconnect = CoreCallDisconnect(jobs, platformRemovalDeadlineMillis)
+        call.disconnect = CoreCallDisconnect(jobs, platformRemovalDeadlineMillis, nowMillis = platformRemovalNowMillis)
         call.visible = !incoming
         calls[id] = call
         call.audio = NativeAudioLifecycle({ live(call) && call.active }, { audio.mode }) { event ->
@@ -442,6 +456,7 @@ class ConversationEngine(val context: Context) {
             if (incoming) CallAttributesCompat.DIRECTION_INCOMING else CallAttributesCompat.DIRECTION_OUTGOING,
             if (video) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL,
             call.capabilities.telecom, preferredStartingCallEndpoint = preferredEndpoint)
+        admissions += call
         call.job = jobs.launch {
             try {
                 signal(call, NativeMediaStage.CORE_ADD_REQUESTED)
@@ -512,6 +527,7 @@ class ConversationEngine(val context: Context) {
                         }
                     }
                     // Install ownership/cleanup before waking incoming or retained end work.
+                    call.controls = this
                     call.ready.complete(this)
                 }
             } catch (e: Exception) { call.ready.completeExceptionally(e) }
@@ -525,6 +541,7 @@ class ConversationEngine(val context: Context) {
                     terminal(id, call.state["endReason"] as? String ?: "failed",
                         call.nonActionEnd || !call.receipts.containsKey(NativePerformedAction.End))
                 }
+                admissions.remove(call)
             }
         }
         try { withTimeout(6000) { call.ready.await() } }
@@ -775,6 +792,19 @@ class ConversationEngine(val context: Context) {
         }
     }
     internal fun retryPlatformRemoval(id: String) { calls[id]?.takeIf { it.terminal }?.disconnect?.retryNow() }
+
+    internal suspend fun reconcilePlatformCall(id: String): PlatformCallReconcileOutcome {
+        val current = calls[id]?.takeIf { it.disconnect.started || it.localEndPending }
+            ?: if (id in calls) null else removals.lastOrNull { it.reservation.id == id }
+        if (current == null) return PlatformCallReconcileOutcome.NO_SUCH_CALL
+        if (!current.disconnect.started) {
+            if (current.controls == null) return PlatformCallReconcileOutcome.STILL_REMAINING
+            completePendingLocalEnd(id, current)
+        }
+        if (!current.disconnect.reconcile()) return PlatformCallReconcileOutcome.STILL_REMAINING
+        if (current.removalDeadlineExpired) completeLateRemoval(current)
+        return PlatformCallReconcileOutcome.REMOVED
+    }
     internal suspend fun hold(id: String, held: Boolean, origin: NativeActionOrigin = NativeActionOrigin.APP) {
         val current = call(id)
         requireLive(current)
@@ -909,18 +939,29 @@ class ConversationEngine(val context: Context) {
     }
     private fun startCoreRemoval(current: Call, controls: CallControlScope, cause: DisconnectCause): Deferred<CoreDisconnectOutcome> {
         val started = current.disconnect.started
+        if (!started) {
+            current.platformCallId = controls.getCallId().uuid
+            removals += current
+        }
         val completion = current.disconnect.start { controls.disconnect(cause) }
         if (!started) jobs.launch {
             val outcome = completion.await()
             if (outcome == CoreDisconnectOutcome.DEADLINE_EXPIRED) {
+                current.removalDeadlineExpired = true
                 @Suppress("UNCHECKED_CAST")
                 val ended = current.state["ended"] as? Map<String, Any?>
                 val updated = ended?.let(::withRemainingPlatformCall)
                 if (updated != null && updated !== ended) {
                     current.state["ended"] = updated
-                    current.visible = true
-                    pendingTerminals[current.reservation.id] = current
-                    publish()
+                    val id = current.reservation.id
+                    if (calls[id] === current) {
+                        current.visible = true
+                        pendingTerminals[id] = current
+                        publish()
+                    } else if (!current.removalIdReused && id !in calls) {
+                        retiredUpdates[id] = current
+                        publish()
+                    }
                 }
                 signal(current, NativeMediaStage.PLATFORM_REMOVAL_FAILED, mapOf(
                     "attemptCount" to current.disconnect.attempts.toLong(),
@@ -929,8 +970,32 @@ class ConversationEngine(val context: Context) {
             current.job?.cancel()
             releaseTerminal(current.reservation.id, current)
             publish()
+            if (outcome == CoreDisconnectOutcome.REMOVED) removals.remove(current)
+            else {
+                var attempt = 1
+                while (!current.disconnect.removed) {
+                    delay(lateRemovalBackoffMillis(attempt))
+                    if (attempt < 4) attempt++
+                    current.disconnect.reconcile()
+                }
+                completeLateRemoval(current)
+            }
         }
         return completion
+    }
+    @Suppress("UNCHECKED_CAST")
+    private fun completeLateRemoval(current: Call) {
+        if (!removals.remove(current)) return
+        val id = current.reservation.id
+        val ended = current.state["ended"] as? Map<String, Any?>
+        val updated = ended?.let(::withoutRemainingPlatformCall)
+        if (updated != null && updated !== ended) {
+            current.state["ended"] = updated
+            // A retired end must never replace a new conversation with the same app ID.
+            if (!current.removalIdReused && id !in calls) { retiredUpdates[id] = current; publish() }
+        }
+        ConversationPlatformCalls.didRemove(PlatformCallRemoved(id, checkNotNull(current.platformCallId),
+            (ended?.get("at") as? String)?.let(Instant::parse)))
     }
     private fun terminal(id: String, reason: String, publishNow: Boolean = true) {
         val current = calls[id] ?: return
@@ -951,6 +1016,15 @@ class ConversationEngine(val context: Context) {
         pendingTerminals[id] = current
         current.media?.close(if (reason == "local" && current.state["connectedAt"] == null) "declined" else "ended")
         actions.cancel(id)
+        if (current.failure == EndedFailure.FRAMEWORK_RESET && !current.disconnect.started) {
+            current.controls?.let {
+                // An immediate result must not release the unpublished logical end.
+                val held = current.holdingTerminal
+                current.holdingTerminal = true
+                startCoreRemoval(current, it, DisconnectCause(DisconnectCause.LOCAL))
+                current.holdingTerminal = held
+            }
+        }
         if (publishNow) publish()
     }
     private fun preferredStartingEndpoint(video: Boolean): CallEndpointCompat? {

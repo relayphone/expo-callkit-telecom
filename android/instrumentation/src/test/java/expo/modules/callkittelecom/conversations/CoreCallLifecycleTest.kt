@@ -52,6 +52,55 @@ class CoreCallLifecycleTest {
         assertEquals(listOf(100L, 250L, 500L, 1000L, 2000L, 5000L, 5000L, 5000L),
             (1..8).map(::coreRemovalBackoffMillis))
         assertEquals(60_000L, PLATFORM_REMOVAL_DEADLINE_MILLIS)
+        assertEquals(listOf(10_000L, 30_000L, 60_000L, 120_000L, 120_000L, 120_000L),
+            (1..6).map(::coreLateRemovalBackoffMillis))
+    }
+
+    @Test fun reconcileAfterDeadlineRetainsTheRequestAndThrottlesRepeatedFailures() = runBlocking {
+        var now = 0L
+        var requests = 0
+        val disconnect = CoreCallDisconnect(this, deadlineMillis = 10, nowMillis = { now })
+        assertEquals(CoreDisconnectOutcome.DEADLINE_EXPIRED, disconnect.remove {
+            if (++requests < 3) CallControlResult.Error(73) else CallControlResult.Success()
+        })
+        assertFalse(disconnect.reconcile())
+        repeat(100) { assertFalse(disconnect.reconcile()) }
+        assertEquals(2, requests)
+        assertEquals(73, disconnect.lastErrorCode)
+        now = 10_000
+        assertTrue(disconnect.reconcile())
+        assertTrue(disconnect.reconcile())
+        assertEquals(3, requests)
+    }
+
+    @Test fun reconcileSharesARequestAfterDeadlineAndSurvivesCancelledWaiters() = runBlocking {
+        var requests = 0
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val disconnect = CoreCallDisconnect(this, deadlineMillis = 10)
+        assertEquals(CoreDisconnectOutcome.DEADLINE_EXPIRED, disconnect.remove {
+            if (++requests == 1) CallControlResult.Error(73) else {
+                entered.complete(Unit); release.await(); CallControlResult.Success()
+            }
+        })
+        val first = async { disconnect.reconcile() }
+        entered.await()
+        val second = async(start = CoroutineStart.UNDISPATCHED) { disconnect.reconcile() }
+        first.cancelAndJoin()
+        assertEquals(2, requests)
+        release.complete(Unit)
+        assertTrue(second.await())
+    }
+
+    @Test fun suspendedReconcileIsBoundedAndDoesNotClaimRemoval() = runBlocking {
+        var requests = 0
+        val disconnect = CoreCallDisconnect(this, deadlineMillis = 10, reconcileTimeoutMillis = 10)
+        assertEquals(CoreDisconnectOutcome.DEADLINE_EXPIRED, disconnect.remove {
+            requests++; awaitCancellation()
+        })
+        assertFalse(disconnect.reconcile())
+        assertFalse(disconnect.removed)
+        assertEquals(2, requests)
     }
 
     @Test fun deadlineAlsoBoundsASuspendedRequestAndRetainsDiagnostics() = runBlocking {
