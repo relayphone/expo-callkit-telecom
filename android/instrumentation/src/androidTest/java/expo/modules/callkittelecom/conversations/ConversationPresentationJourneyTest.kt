@@ -1,7 +1,9 @@
 package expo.modules.callkittelecom.conversations
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.ActivityManager
+import android.app.AppOpsManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -19,10 +21,12 @@ import android.net.Uri
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
+import android.os.Process
 import android.os.SystemClock
 import android.os.Bundle
 import android.provider.Settings
 import android.service.notification.StatusBarNotification
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.app.NotificationCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -131,7 +135,7 @@ class ConversationPresentationJourneyTest {
             withTimeout(5000) { while (alerts(notificationId).none { it.postTime == updated.postTime }) delay(10) }
             return updated
         }
-        private suspend fun shell(command: String) = withContext(Dispatchers.IO) {
+        suspend fun shell(command: String) = withContext(Dispatchers.IO) {
             val result = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
             ParcelFileDescriptor.AutoCloseInputStream(result).use { it.readBytes() }
             Unit
@@ -168,6 +172,60 @@ class ConversationPresentationJourneyTest {
             if (!alreadyAllowed) shell("appops set ${context.packageName} USE_FULL_SCREEN_INTENT allow")
             try { body() }
             finally { if (!alreadyAllowed) shell("appops set ${context.packageName} USE_FULL_SCREEN_INTENT default") }
+        }
+        suspend fun withFullScreenDenied(body: suspend () -> Unit) {
+            val operations = context.getSystemService(AppOpsManager::class.java)
+            val operation = requireNotNull(AppOpsManager.permissionToOp(Manifest.permission.USE_FULL_SCREEN_INTENT))
+            fun mode() = operations.unsafeCheckOpRawNoThrow(operation,
+                Process.myUid(), context.packageName)
+            val originalMode = mode()
+            val restore = when (originalMode) {
+                AppOpsManager.MODE_ALLOWED -> "allow"
+                AppOpsManager.MODE_IGNORED -> "ignore"
+                AppOpsManager.MODE_ERRORED -> "deny"
+                AppOpsManager.MODE_DEFAULT -> "default"
+                AppOpsManager.MODE_FOREGROUND -> "foreground"
+                else -> error("Unexpected full-screen app-op mode: $originalMode")
+            }
+            try {
+                shell("appops set ${context.packageName} USE_FULL_SCREEN_INTENT deny")
+                assertEquals(AppOpsManager.MODE_ERRORED, mode())
+                assertFalse(manager.canUseFullScreenIntent())
+                body()
+            } finally {
+                withContext(NonCancellable) {
+                    shell("appops set ${context.packageName} USE_FULL_SCREEN_INTENT $restore")
+                    assertEquals("The original full-screen app-op must be restored", originalMode, mode())
+                }
+            }
+        }
+        /** Observe the heads-up card without opening the notification shade. */
+        suspend fun headsUpAnswer(): AccessibilityNodeInfo = withContext(Dispatchers.IO) {
+            withTimeout(5000) {
+                while (true) {
+                    val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+                    for (root in automation.windows.mapNotNull { it.root }) {
+                        if (root.packageName?.toString() != "com.android.systemui") continue
+                        val pending = java.util.ArrayDeque<AccessibilityNodeInfo>().apply { add(root) }
+                        val nodes = mutableListOf<AccessibilityNodeInfo>()
+                        while (pending.isNotEmpty() && nodes.size < 512) {
+                            val node = pending.removeFirst()
+                            nodes += node
+                            for (index in 0 until minOf(node.childCount, 32)) {
+                                if (pending.size >= 512) break
+                                node.getChild(index)?.let { pending.add(it) }
+                            }
+                        }
+                        fun visible(value: String) = nodes.firstOrNull { it.isVisibleToUser &&
+                            (it.text?.toString() == value || it.contentDescription?.toString() == value) }
+                        val answer = visible("Answer")
+                        if (visible(id) != null && visible("Decline") != null && answer?.isClickable == true && answer.isEnabled)
+                            return@withTimeout answer
+                    }
+                    delay(25)
+                }
+                error("unreachable")
+            }
         }
         fun diagnostics() = "stage=$stage, states=${ids.associateWith { state(it)?.get("status") }}, cards=${cards().map {
             listOf(it.id, it.notification.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name,
@@ -756,6 +814,75 @@ class ConversationPresentationJourneyTest {
                 if (outcome == "answered") engine.report(callId, mapOf("type" to "ended", "reason" to "remoteEnded"))
                 removed()
             }
+        }
+    }
+
+    @Test fun deniedFullScreenIntentKeepsAHeadsUpCallThatAnswersFromTheNotification() = fixture {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val originalFlags = automation.serviceInfo.flags
+        automation.serviceInfo = automation.serviceInfo.apply {
+            flags = originalFlags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
+        try {
+            withFullScreenDenied {
+                PresentationRingingActivity.reset()
+                val screen = PendingIntent.getActivity(context, 0,
+                    Intent(context, PresentationRingingActivity::class.java).setAction(id)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+                ConversationPresentation.configure { _, _ -> CallNotificationContent(title = id, fullScreenIntent = screen) }
+                wakeScreen()
+                shell("wm dismiss-keyguard")
+                shell("cmd statusbar collapse")
+                backgroundApp()
+                stage = "home screen before denied full-screen incoming call"
+                withTimeout(5000) {
+                    while (automation.rootInActiveWindow?.packageName?.toString().let {
+                        it == null || it == context.packageName || it == "com.android.systemui"
+                    }) delay(25)
+                }
+
+                val ringingAt = SystemClock.elapsedRealtimeNanos()
+                incoming()
+                val ringing = card().notification
+                assertNotNull(ringing.extras.getParcelable(Notification.EXTRA_ANSWER_INTENT, PendingIntent::class.java))
+                assertNotNull(ringing.extras.getParcelable(Notification.EXTRA_DECLINE_INTENT, PendingIntent::class.java))
+                stage = "ringing Telecom call with full-screen intent denied"
+                withTimeout(5000) { while (TelecomEvidence.calls().singleOrNull()?.contains("state=RINGING") != true) delay(25) }
+                stage = "visible heads-up caller, Answer and Decline without expanding the shade"
+                val answer = headsUpAnswer()
+                val visibleAt = SystemClock.elapsedRealtimeNanos()
+                assertEquals(0, PresentationRingingActivity.deliveries)
+                assertEquals("ringing", state()?.get("status"))
+                assertTrue("Click the visible SystemUI Answer button", withContext(Dispatchers.IO) {
+                    answer.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                })
+                stage = "notification answer receipt and active Telecom call"
+                withTimeout(5000) {
+                    while (state()?.get("status") != "connecting" || performed.none {
+                        it["origin"] == "system" && (it["action"] as Map<*, *>)["kind"] == "answer"
+                    } || TelecomEvidence.calls().singleOrNull()?.contains("state=ACTIVE") != true) delay(25)
+                }
+                assertEquals(listOf(ConversationAction.Answer(id, id, "system")), actions.toList())
+                assertEquals(1, performed.count { (it["action"] as Map<*, *>)["kind"] == "answer" })
+                assertEquals(0, PresentationRingingActivity.deliveries)
+                engine.report(id, mapOf("type" to "connected"))
+                notification { it.flags and Notification.FLAG_INSISTENT == 0 }
+                InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
+                    putString("fsiDeniedObservation", JSONObject(mapOf("fullScreenAllowed" to false,
+                        "headsUpVisible" to true, "answerVisible" to true, "declineVisible" to true,
+                        "telecomState" to "ACTIVE", "fullScreenDeliveries" to PresentationRingingActivity.deliveries,
+                        "ringingNanos" to ringingAt, "headsUpNanos" to visibleAt,
+                        "answeredNanos" to SystemClock.elapsedRealtimeNanos())).toString())
+                })
+                engine.end(id)
+                removed()
+            }
+        } finally {
+            automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
+            PresentationRingingActivity.close()
+            wakeScreen()
         }
     }
 
