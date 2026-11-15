@@ -59,7 +59,62 @@ export function mediaFailureSummary(value: unknown): string | undefined {
       ? [`- ${safe(detail.type)}: ${safe(detail.message)}`] : [];
   });
   if (causes.length === 0) return;
-  return `### Android media failure\n\nStep: ${safe(result.step)}\n\n${causes.slice(0, 8).join("\n")}\n${muteTimingSummary(result.muteTimings)}`;
+  return `### Android media failure\n\nStep: ${safe(result.step)}\n\n${causes.slice(0, 8).join("\n")}\n${muteTimingSummary(result.muteTimings)}${outputConsumerSummary(result)}`;
+}
+
+/** Compare durations only within each named monotonic clock; retain no request or PCM fields. */
+export function outputConsumerSummary(value: unknown): string {
+  const object = (value: unknown): Record<string, unknown> | undefined =>
+    value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  const nanos = (value: unknown): bigint | undefined =>
+    typeof value === "string" && /^\d{1,24}$/.test(value) ? BigInt(value) : undefined;
+  const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  const ms = (value: bigint) => `${value / 1_000_000n}.${(value % 1_000_000n / 1_000n).toString().padStart(3, "0")}`;
+  const result = object(value);
+  if (!result) return "";
+  const device = object(result.outputConsumerTrace);
+  const server = object(result.outputServerTrace) ?? object(object(result.toDevice)?.outputConsumerTrace);
+  const lines: string[] = [];
+  for (const [domain, trace, clock] of [["device", device, "android.elapsedRealtimeNanos"],
+    ["fixture", server, "host.monotonic_ns"]] as const) {
+    if (!trace || trace.clock !== clock) continue;
+    lines.push(`${domain} clock: ${clock}`);
+    const guard = object(trace.guard);
+    if (guard && [guard.capturedFrames, guard.drainedFrames, guard.pendingFrames, guard.limitFrames].every(count)) {
+      const at = nanos(guard.atNs);
+      lines.push(`Drain guard: captured=${guard.capturedFrames}, drained=${guard.drainedFrames}, pending=${guard.pendingFrames}, limit=${guard.limitFrames}${at === undefined ? "" : `, atNs=${at}`}`);
+    }
+    const enqueue = object(trace.enqueue);
+    const entered = nanos(enqueue?.enteredNs), exited = nanos(enqueue?.exitedNs), gap = nanos(enqueue?.largestGapNs);
+    if (entered !== undefined && exited !== undefined && exited >= entered)
+      lines.push(`ENQUEUE: enteredNs=${entered}, exitedNs=${exited}, durationMs=${ms(exited - entered)}${gap === undefined ? "" : `, largestGapMs=${ms(gap)}`}`);
+    const allowed = new Set(["WAIT", "RTC_STATS", "DRAIN", "HTTP_ACK", "ENQUEUE", "SCORE", "HTTP_RESPONSE"]);
+    const observed = nanos(trace.observedAtNs);
+    const timings = (Array.isArray(trace.stages) ? trace.stages.slice(-128) : []).flatMap((value: unknown) => {
+      const span = object(value);
+      if (!span || typeof span.stage !== "string" || !allowed.has(span.stage) || typeof span.completed !== "boolean") return [];
+      const entered = nanos(span.enteredNs), exited = span.exitedNs === null ? observed : nanos(span.exitedNs);
+      if (entered === undefined || exited === undefined || exited < entered) return [];
+      const queued = nanos(span.queuedNs);
+      return [{ stage: span.stage, entered, exited, duration: exited - entered,
+        state: span.exitedNs === null ? "active" : span.completed ? "completed" : "failed",
+        queue: queued !== undefined && queued <= entered ? entered - queued : undefined }];
+    });
+    const describe = (span: typeof timings[number]) =>
+      `${span.stage}, durationMs=${ms(span.duration)}, state=${span.state}, enteredNs=${span.entered}, exitedNs=${span.exited}${span.queue === undefined ? "" : `, queueMs=${ms(span.queue)}`}`;
+    const slowest = timings.reduce<typeof timings[number] | undefined>((a, b) => !a || b.duration > a.duration ? b : a, undefined);
+    if (slowest) lines.push(`Slowest measured ${domain} stage: ${describe(slowest)}`);
+    const last = timings.at(-1);
+    if (last) lines.push(`Last ${domain} stage: ${describe(last)}`);
+    for (const stage of allowed) {
+      const latest = timings.findLast(span => span.stage === stage);
+      if (latest && latest !== slowest && latest !== last) lines.push(`Measured ${domain} stage: ${describe(latest)}`);
+    }
+    for (const active of timings.filter(span => span.state === "active").slice(-4))
+      lines.push(`Active ${domain} stage: ${describe(active)}`);
+    if (count(trace.droppedSpans) && trace.droppedSpans > 0) lines.push(`${domain} trace dropped spans: ${trace.droppedSpans}`);
+  }
+  return lines.length ? `\n### Output consumer timing\n\n${lines.join("\n")}\n` : "";
 }
 
 function muteTimingSummary(value: unknown): string {

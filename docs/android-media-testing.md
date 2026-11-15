@@ -242,3 +242,22 @@ notification identities. The waiting-call journey also labels each transition. C
 non-cancellable; a cleanup failure is suppressed onto an earlier assertion rather than replacing it.
 These diagnostics preserve the existing card/count/flag/ID assertions and do not establish the cause
 of an older timeout that retained no predicate or last state.
+
+## Output consumer diagnostics
+
+`media-hook-results.json` retains `outputConsumerTrace` with exact captured, drained and pending frame
+counts at the existing 24,000-frame drain guard. It records capture start, the first/latest PCM enqueue,
+the largest enqueue gap, and bounded spans for the 100 ms wait, RTC stats, drain and HTTP acknowledgement.
+Device timestamps use `android.elapsedRealtimeNanos` and decimal nanosecond strings.
+
+Each output response includes the fixture's bounded enqueue, response preparation and score spans in
+`toDevice.outputConsumerTrace`. Scoring retains queue/entry/exit times and completion state. A read-only,
+authenticated diagnostic fetch on answered-output failure retains `outputServerTrace`, including a score
+still in flight. These timestamps use `host.monotonic_ns`; never subtract device and host timestamps.
+
+The failure summary prints the guard counts, enqueue timing, active/last stages and slowest measured
+stage within each clock, plus the latest timing for other observed stages. A slow measured stage is
+evidence of time spent there, not proof of a causal relationship between overlapping operations.
+Spans are capped at 128 per clock and report dropped entries; they contain no PCM, URLs or credentials.
+The output buffer, 24,000-frame guard, 5-second output budget, scoring criteria and fatal controls are
+unchanged. No consumer scheduling, transport or scoring behavior is repaired by these diagnostics.

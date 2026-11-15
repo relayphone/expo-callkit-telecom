@@ -128,19 +128,25 @@ class MediaHookFeasibilityTest {
     }
 
     private suspend fun outputAudio(id: String, hooks: EmulatorMediaHooks, record: (JSONObject) -> Unit): JSONObject {
-        val baseline = withTimeout(2000) { hooks.outputStats(baseline = true) }
+        val trace = hooks.outputConsumerTrace
+        trace.begin()
+        val baseline = trace.measure(OutputConsumerTrace.Stage.RTC_STATS) { withTimeout(2000) { hooks.outputStats(baseline = true) } }
         try {
             return withTimeout(5000) {
-                fixture("/fixture/output/$id", body = JSONObject().put("reset", true).put("sampleRate", 48000)
-                    .put("firstFrame", 0).put("pcm16", "").put("stats", baseline))
+                trace.measure(OutputConsumerTrace.Stage.HTTP_ACK) {
+                    fixture("/fixture/output/$id", body = JSONObject().put("reset", true).put("sampleRate", 48000)
+                        .put("firstFrame", 0).put("pcm16", "").put("stats", baseline))
+                }
                 hooks.startOutputCapture()
                 var peer: JSONObject
                 do {
-                    delay(100)
-                    val stats = hooks.outputStats()
-                    val (first, bytes) = hooks.drainOutput()
-                    peer = fixture("/fixture/output/$id", body = JSONObject().put("sampleRate", 48000)
-                        .put("firstFrame", first).put("pcm16", Base64.getEncoder().encodeToString(bytes)).put("stats", stats))
+                    trace.measure(OutputConsumerTrace.Stage.WAIT) { delay(100) }
+                    val stats = trace.measure(OutputConsumerTrace.Stage.RTC_STATS) { hooks.outputStats() }
+                    val (first, bytes) = trace.measure(OutputConsumerTrace.Stage.DRAIN) { hooks.drainOutput() }
+                    peer = trace.measure(OutputConsumerTrace.Stage.HTTP_ACK) {
+                        fixture("/fixture/output/$id", body = JSONObject().put("sampleRate", 48000)
+                            .put("firstFrame", first).put("pcm16", Base64.getEncoder().encodeToString(bytes)).put("stats", stats))
+                    }
                     assertTrue(peer.isNull("error")); assertTrue(peer.getBoolean("running"))
                     record(peer)
                 } while (peer.getLong("cleanCyclesWithPostRoll") < 1)
@@ -438,6 +444,9 @@ class MediaHookFeasibilityTest {
                 stage(NativeMediaStage.CLOSED)
             } catch (error: Throwable) {
                 caught = error
+                if (step == "answered output") runCatching {
+                    evidence.put("outputServerTrace", fixture("/fixture/output/$id"))
+                }.onFailure { evidence.put("outputServerTraceReadError", it.javaClass.simpleName) }
                 runCatching { evidence.put("fromDevice", fixture("/fixture/markers/$id")) }
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                     putString("tonesV2Failure", runCatching { fixture("/fixture/markers/$id").put("captureRate", hooks.captureSampleRate).toString() }.getOrDefault("unavailable"))
@@ -459,6 +468,7 @@ class MediaHookFeasibilityTest {
                 apmMonitor?.cancel()
                 try {
                     writeMediaEvidence(context.filesDir.resolve("media-hook-results.json"), evidence.put("step", step)
+                        .put("outputConsumerTrace", hooks.outputConsumerTrace.snapshot())
                         .put("passed", caught == null).put("pipeline", pipeline)
                         .put("muteTimings", org.json.JSONArray(signals.filter {
                             it.measurements.containsKey("operationId") && NativeMuteStep.entries.any { step ->

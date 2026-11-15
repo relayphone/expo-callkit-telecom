@@ -27,6 +27,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     private val requestedRate: Int = 48000, private val emission: Boolean = true) : NativeAudioHooks {
     val trace = MediaCaptureTrace()
     val gateTrace = MediaGateTrace(SystemClock::elapsedRealtimeNanos)
+    val outputConsumerTrace = OutputConsumerTrace(SystemClock::elapsedRealtimeNanos)
     @Volatile private var gateProbe: EmulatorGateProbe? = null
     override fun audioDeviceCreated(device: JavaAudioDeviceModule) { gateProbe = EmulatorGateProbe(device) }
     val postApm = MediaApmCapture(markerId, SystemClock::elapsedRealtimeNanos)
@@ -101,16 +102,18 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     fun observeOutput(enabled: Boolean) { observingOutput.set(enabled) }
     fun startOutputCapture() = synchronized(outputLock) {
         available(); outputFrames = 0; drainedFrames = 0; captureOutput = true
+        outputConsumerTrace.captureStarted()
     }
     fun stopOutputCapture() = synchronized(outputLock) { captureOutput = false }
     private fun capturedOutputFrames() = synchronized(outputLock) { outputFrames }
     fun drainOutput(): Pair<Int, ByteArray> = synchronized(outputLock) {
         available()
         val count = outputFrames - drainedFrames
-        check(count <= 24000) { "Output capture consumer fell behind" }
+        outputConsumerTrace.checkDrain(outputFrames, drainedFrames)
         val first = drainedFrames
         val bytes = ByteBuffer.allocate(count * 2).order(ByteOrder.LITTLE_ENDIAN)
         while (drainedFrames < outputFrames) bytes.putShort(outputPcm[drainedFrames++])
+        outputConsumerTrace.drained(outputFrames, drainedFrames)
         first to bytes.array()
     }
     suspend fun outputStats(baseline: Boolean = false): JSONObject {
@@ -217,6 +220,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
                     if (samples.sampleRate != 48000 || samples.channelCount !in 1..2 ||
                         samples.audioFormat != AudioFormat.ENCODING_PCM_16BIT) failure.set(MediaHookFailure.UNSUPPORTED_PCM)
                     else {
+                        val enqueueEntered = SystemClock.elapsedRealtimeNanos()
                         val pcm = ByteBuffer.wrap(samples.data).order(ByteOrder.nativeOrder())
                         while (pcm.remaining() >= samples.channelCount * 2) {
                             val value = pcm.short
@@ -224,6 +228,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
                             if (outputFrames == outputPcm.size) { failure.set(MediaHookFailure.OUTPUT_TAP_UNAVAILABLE); break }
                             outputPcm[outputFrames++] = value
                         }
+                        outputConsumerTrace.enqueued(outputFrames, drainedFrames, enqueueEntered, SystemClock.elapsedRealtimeNanos())
                     }
                 }
             }
