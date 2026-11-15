@@ -21,6 +21,27 @@ const execute: Execute = ({ program, args, timeout, capture }) =>
 
 const app = "expo.modules.callkittelecom.instrumentation";
 
+function mediaPhase(name: string, operation: () => void): void {
+  const started = performance.now();
+  let result = "failed";
+  try { operation(); result = "passed"; }
+  finally {
+    const summary = process.env.GITHUB_STEP_SUMMARY;
+    if (summary) appendFileSync(summary, `### Android media: ${name}\n\n| Result | Duration |\n| --- | --- |\n| ${result} | ${((performance.now() - started) / 1000).toFixed(3)} s |\n\n`);
+  }
+}
+
+/** Compile both app/test variants before boot; connected execution keeps its existing deadline. */
+export function buildNativeMediaApks(run: Execute = execute): void {
+  for (const build of ["EmulatorTest", "Release"] as const) {
+    mediaPhase(`build ${build} APKs`, () => run({ program: "gradle", args: [
+      "-p", "android/instrumentation", `:assemble${build}`, `:assemble${build}AndroidTest`,
+      `-PmediaTestBuildType=${build.charAt(0).toLowerCase()}${build.slice(1)}`,
+      "--no-daemon", "--max-workers=2", "--stacktrace",
+    ], timeout: 5 * 60_000 }));
+  }
+}
+
 /** The Kotlin fixture exports only allowlisted failure messages, never request/SDK details. */
 export function mediaFailureSummary(value: unknown): string | undefined {
   if (value === null || typeof value !== "object") return;
@@ -131,14 +152,14 @@ export function runNativeMediaFeasibility(output = "android/instrumentation/buil
   ] as const) {
     let failure: unknown;
     try {
-      run({ program: "gradle", args: [
+      mediaPhase(`test ${build}`, () => run({ program: "gradle", args: [
         "-p", "android/instrumentation", `:connected${build}AndroidTest`,
         `-PmediaTestBuildType=${build.charAt(0).toLowerCase()}${build.slice(1)}`,
         "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
         `-Pandroid.testInstrumentationRunnerArguments.class=${classes.split(",")
           .map((name) => `expo.modules.callkittelecom.conversations.${name}`).join(",")}`,
         "--no-daemon", "--max-workers=2", "--stacktrace",
-      ], timeout: 5 * 60_000 });
+      ], timeout: 5 * 60_000 }));
     } catch (error) { failure = error; throw error; }
     finally {
       if (build === "EmulatorTest") for (const name of ["media-hook-results", "capture-trace"]) {
@@ -156,6 +177,7 @@ export function runNativeMediaFeasibility(output = "android/instrumentation/buil
 
 if (import.meta.main) {
   if (process.argv.includes("--host-controls-only")) runNativeMediaControls();
+  else if (process.argv.includes("--build-feasibility-only")) buildNativeMediaApks();
   else if (process.argv.includes("--feasibility-only")) runNativeMediaFeasibility(undefined, undefined,
     process.argv.includes("--controls-prechecked") ? "prechecked" : "run");
   else runNativeMediaJourney(undefined, undefined, !process.argv.includes("--functional-only"));
