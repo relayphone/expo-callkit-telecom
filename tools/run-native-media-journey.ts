@@ -59,7 +59,41 @@ export function mediaFailureSummary(value: unknown): string | undefined {
       ? [`- ${safe(detail.type)}: ${safe(detail.message)}`] : [];
   });
   if (causes.length === 0) return;
-  return `### Android media failure\n\nStep: ${safe(result.step)}\n\n${causes.slice(0, 8).join("\n")}\n`;
+  return `### Android media failure\n\nStep: ${safe(result.step)}\n\n${causes.slice(0, 8).join("\n")}\n${muteTimingSummary(result.muteTimings)}`;
+}
+
+function muteTimingSummary(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  const steps = [
+    ["Serial lock acquire", "muteSerial"], ["Session mute", "muteSession"],
+    ["Publication mute", "mutePublication"], ["Capture boundary wait", "muteBoundary"],
+  ] as const;
+  type Boundary = { time: bigint; completed: boolean };
+  const operations = new Map<string, Map<string, Boundary>>();
+  const decimal = (text: unknown): text is string => typeof text === "string" && /^[0-9]{1,19}$/.test(text)
+    && BigInt(text) <= 9_223_372_036_854_775_807n;
+  for (const entry of value.slice(-64)) {
+    if (entry === null || typeof entry !== "object") continue;
+    const item = entry as Record<string, unknown>;
+    if (!decimal(item.operationId) || !decimal(item.elapsedRealtimeNanos) ||
+      !steps.some(([, stage]) => item.stage === `${stage}Entered` || item.stage === `${stage}Exited`)) continue;
+    if (typeof item.stage !== "string" || (item.stage.endsWith("Exited") && item.completed !== 0 && item.completed !== 1)) continue;
+    const boundaries = operations.get(item.operationId) ?? new Map<string, Boundary>();
+    if (!boundaries.has(item.stage)) boundaries.set(item.stage, { time: BigInt(item.elapsedRealtimeNanos), completed: item.completed === 1 });
+    operations.set(item.operationId, boundaries);
+  }
+  if (operations.size === 0) return "";
+  const rows = [...operations].slice(-8).flatMap(([id, boundaries]) => steps.map(([name, stage]) => {
+    const entered = boundaries.get(`${stage}Entered`);
+    const exited = boundaries.get(`${stage}Exited`);
+    const elapsed = entered && exited ? exited.time - entered.time : undefined;
+    const duration = elapsed !== undefined && elapsed >= 0n
+      ? `${elapsed / 1_000_000n}.${(elapsed % 1_000_000n / 1_000n).toString().padStart(3, "0")}` : "unavailable";
+    const state = elapsed !== undefined && elapsed < 0n ? "invalid order"
+      : exited ? exited.completed ? "completed" : "failed/cancelled" : entered ? "exit not observed" : "not entered";
+    return `| ${id} | ${name} | ${entered?.time ?? "unavailable"} | ${exited?.time ?? "unavailable"} | ${duration} | ${state} |`;
+  }));
+  return `\nMute boundaries (monotonic device nanoseconds; duration in ms):\n\n| Operation | Work | Entry ns | Exit ns | Duration ms | Result |\n| --- | --- | --- | --- | --- | --- |\n${rows.join("\n")}\n`;
 }
 
 function reportMediaFailure(value: unknown): void {

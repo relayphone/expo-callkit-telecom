@@ -454,6 +454,15 @@ class MediaHookFeasibilityTest {
                 try {
                     writeMediaEvidence(context.filesDir.resolve("media-hook-results.json"), evidence.put("step", step)
                         .put("passed", caught == null).put("pipeline", pipeline)
+                        .put("muteTimings", org.json.JSONArray(signals.filter {
+                            it.measurements.containsKey("operationId") && NativeMuteStep.entries.any { step ->
+                                it.stage == step.entered || it.stage == step.exited
+                            }
+                        }.takeLast(64).map {
+                            JSONObject().put("operationId", it.measurements.getValue("operationId").toString())
+                                .put("stage", it.stage.value).put("elapsedRealtimeNanos", it.elapsedRealtimeNanos.toString())
+                                .put("completed", it.measurements["completed"] ?: JSONObject.NULL)
+                        }))
                         .put("failure", org.json.JSONArray(caught?.let(::mediaFailureDetails).orEmpty().map {
                             JSONObject().put("type", it.type).put("message", it.message)
                         }))

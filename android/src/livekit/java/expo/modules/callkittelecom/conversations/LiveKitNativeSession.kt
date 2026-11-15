@@ -235,7 +235,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             withTimeout(1500) { ready.await() }
         } else if (captureEnabled) {
             // Runtime recordingless toggles are asynchronous; detach the sender to stop physical capture.
-            publication?.muted = true
+            traceNativeMute(NativeMuteStep.PUBLICATION) { publication?.muted = true }
             val retired = microphone
             retired?.let { room?.localParticipant?.unpublishTrack(it); it.stopPrewarm() }
             publication = null; microphone = null; captureEnabled = false
@@ -243,7 +243,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             recording?.setAudioRecordEnabled(false)
         } else {
             // An initially muted answer retains the already-negotiated silent publication.
-            publication?.muted = true
+            traceNativeMute(NativeMuteStep.PUBLICATION) { publication?.muted = true }
         }
     }
     override suspend fun close(reason: String): Unit = withContext(Dispatchers.Main.immediate) {

@@ -120,6 +120,43 @@ function hookResult() {
 function captureResult() {
   return { clock: "android.elapsedRealtimeNanos", overflow: false, columns: [], callbacks: [], apmStates: [], rtc: [], postApm: {} };
 }
+
+test("mute failure summary distinguishes lock waiting from session work with exact monotonic timestamps", () => {
+  const at = 9_007_199_254_740_993n;
+  const event = (operationId: string, stage: string, offset: bigint, completed?: number) => ({
+    operationId, stage, elapsedRealtimeNanos: (at + offset).toString(), completed,
+  });
+  const summary = mediaFailureSummary({ passed: false, step: "mute diagnostic",
+    failure: [{ type: "TimeoutCancellationException", message: "Timed out waiting for 1000 ms" }], muteTimings: [
+      event("1", "muteSerialEntered", 0n), event("1", "muteSerialExited", 1_000_000_000n, 0),
+      event("2", "muteSerialEntered", 2_000_000_000n), event("2", "muteSerialExited", 2_001_234_567n, 1),
+      event("2", "muteSessionEntered", 2_001_234_568n), event("2", "mutePublicationEntered", 2_002_000_000n),
+      event("2", "mutePublicationExited", 2_003_000_000n, 1), event("2", "muteBoundaryEntered", 2_004_000_000n),
+    ] })!;
+  assert.ok(summary.includes(`| 1 | Serial lock acquire | ${at} | ${at + 1_000_000_000n} | 1000.000 | failed/cancelled |`));
+  assert.match(summary, /\| 1 \| Session mute \| unavailable \| unavailable \| unavailable \| not entered \|/);
+  assert.match(summary, /\| 2 \| Serial lock acquire .* 1\.234 \| completed \|/);
+  assert.match(summary, /\| 2 \| Session mute .* exit not observed \|/);
+  assert.match(summary, /\| 2 \| Publication mute .* 1\.000 \| completed \|/);
+  assert.match(summary, /\| 2 \| Capture boundary wait .* exit not observed \|/);
+  assert.match(summary, /Timed out waiting for 1000 ms/);
+});
+
+test("mute summary rejects unsafe fields, bounds evidence and does not invent negative durations", () => {
+  const summary = mediaFailureSummary({ passed: false, step: "mute diagnostic", failure: [{ type: "Error", message: "failed" }],
+    muteTimings: [null, { operationId: "secret", stage: "muteSerialEntered", elapsedRealtimeNanos: "1" },
+      { operationId: "1", stage: "credential", elapsedRealtimeNanos: "1" },
+      { operationId: "1", stage: "muteSerialEntered", elapsedRealtimeNanos: 12 },
+      { operationId: "1", stage: "muteSerialEntered", elapsedRealtimeNanos: "9223372036854775808" },
+      ...Array.from({ length: 100 }, (_, n) => ({ operationId: String(n + 2), stage: "muteSerialEntered", elapsedRealtimeNanos: "2" })),
+      { operationId: "101", stage: "muteSerialExited", elapsedRealtimeNanos: "1", completed: 0 },
+    ] })!;
+  assert.doesNotMatch(summary, /secret|credential|9223372036854775808/);
+  assert.equal(summary.split("\n").filter(row => row.startsWith("| ")).length, 34);
+  assert.match(summary, /\| 101 \| Serial lock acquire \| 2 \| 1 \| unavailable \| invalid order \|/);
+  assert.doesNotMatch(summary, /^\| 2 \|/m);
+});
+
 function fixture() {
   const output = mkdtempSync(join(tmpdir(), "native-media-journey-"));
   const calls: Command[] = [];

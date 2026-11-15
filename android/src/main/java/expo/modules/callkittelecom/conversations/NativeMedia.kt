@@ -157,7 +157,15 @@ internal class NativeMediaController(private val context: Context, private val p
         setDesiredMuted(true)
         if (!activated) return
         toneJobs.forEach { it.cancel() }
-        val work = operations.async { withTimeout(1000) { serial.withLock { check(!closed); session?.setMuted(true) } } }
+        val work = operations.async(NativeMuteTrace(payload["serverCallId"] as? String ?: "")) {
+            withTimeout(1000) {
+                traceNativeMute(NativeMuteStep.SERIAL) { serial.lock() }
+                try {
+                    check(!closed)
+                    traceNativeMute(NativeMuteStep.SESSION) { session?.setMuted(true) }
+                } finally { serial.unlock() }
+            }
+        }
         try { work.await() } finally { work.cancel() }
     }
     override fun setDesiredMuted(muted: Boolean) { check(!closed); desiredMuted = muted; unmuteJob?.cancel() }

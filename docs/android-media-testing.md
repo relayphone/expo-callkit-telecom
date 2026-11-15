@@ -116,6 +116,13 @@ callbacks are explicit. Missing evidence cannot establish a boundary fix.
 The bounded mute diagnostic runs only after the held verdict, so it cannot
 change that verdict. It adds no delay or tolerance to the silence assertion.
 
+`muteTimings` retains the last 64 controller mute boundaries, correlated by
+operation ID, alongside `gateTrace`. Device monotonic nanoseconds are decimal
+strings. On failure the host summary shows entry, exit, duration and completion
+for serial-lock acquisition, session mute, publication mute and capture-boundary
+wait. Failed/cancelled exits and work not reached are explicit; no deadline is
+extended by this tracing.
+
 Output PCM acknowledgements do not wait for detector scoring. Scoring runs in the
 existing bounded analysis worker, and responses report only completed results.
 The observed frame positions, contiguous PCM, three-second analysis retention,

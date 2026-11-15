@@ -23,6 +23,16 @@ carry a serverCallId, a monotonic timestamp and numeric measurements. The
 `ROOM_DISCONNECTED` signal carries an empty `serverCallId` by design, with the
 reason name only in `reason` and no room or participant identifiers.
 
+An active controller mute emits `MUTE_SERIAL_ENTERED`/`EXITED` for serial-lock
+acquisition and `MUTE_SESSION_ENTERED`/`EXITED` around the session call, including
+its dispatcher switch. LiveKit adds `MUTE_PUBLICATION_ENTERED`/`EXITED` around the
+publication setter and `MUTE_BOUNDARY_ENTERED`/`EXITED` around the capture-pump
+stop wait. Each pair shares a numeric `operationId`. Exit measurements contain
+`completed=1` on normal return or `0` on failure/cancellation. Timestamps are
+captured at each boundary before main-thread delivery. Missing downstream
+entries identify work that was not reached; an exit alone does not prove success.
+The controller's 1000 ms mute deadline and the pump's 900 ms wait remain in force.
+
 For outgoing, answered and held calls, disconnect reasons have these outcomes:
 
 | Reason | Outcome |

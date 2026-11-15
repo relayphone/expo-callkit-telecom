@@ -84,7 +84,9 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
         stoppedReady.get().complete(Unit)
     }
 
-    suspend fun awaitPumpStopped() { if (pumpActive.get()) withTimeout(900) { stoppedReady.get().await() } }
+    suspend fun awaitPumpStopped() = traceNativeMute(NativeMuteStep.BOUNDARY) {
+        if (pumpActive.get()) withTimeout(900) { stoppedReady.get().await() }
+    }
 
     fun playbackStarted() {
         if (closed.get()) return
