@@ -1093,7 +1093,9 @@ class ConversationPresentationJourneyTest {
         assertEquals(foregroundId, answered.id)
         assertEquals(0, answered.notification.flags and Notification.FLAG_INSISTENT)
         assertNull(answered.notification.fullScreenIntent)
-        assertEquals("held", state()?.get("status"))
+        awaitPresentationObservation("$stage: original call held after waiting-call Answer",
+            read = { state()?.get("status") }, accepts = { it == "held" },
+            describe = { "callId=$id, status=$it" })
         assertEquals(ConversationAction.Answer(waitingId, waitingId, "app"), actions.last { it is ConversationAction.Answer })
         ConversationControls.end(context, waitingId)
         stage = "primary restored after answered call ends"
