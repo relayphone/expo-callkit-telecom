@@ -522,3 +522,16 @@ for (const [index, name] of [
       f.close();
     }
   });
+
+test("receiver failure summary separates prejoin from peer polling without copying arbitrary fields", () => {
+  const result = { passed: false, step: "receiver subscription", failure: [{ type: "TimeoutCancellationException", message: "Timed out waiting for 10000 ms" }],
+    receiverWait: { clock: "android.elapsedRealtimeNanos", budgetMs: 10_000, startedNs: "123", failureObservedNs: "10123",
+      signals: [{ stage: "microphonePublishStarted", atNs: "125" }, { stage: "private-secret", atNs: "127" }],
+      lastReadCompletedNs: "secret", token: "private-secret" } };
+  const summary = mediaFailureSummary(result)!;
+  assert.match(summary, /prejoinedObservedNs: unobserved/);
+  assert.match(summary, /lastReadStartedNs: unobserved/);
+  assert.match(summary, /microphonePublishStarted: 125/);
+  assert.match(summary, /shared budget 10000 ms/);
+  assert.ok(!summary.includes("secret"));
+});

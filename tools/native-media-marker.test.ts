@@ -265,6 +265,91 @@ snapshot = json.dumps(trace)
 assert "private" not in snapshot and len(snapshot) < 8192
 `;
   execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], { timeout: 15_000, killSignal: "SIGKILL" });
+
+});
+
+test("receiver diagnostics retain peer callbacks, authenticated server time and delayed scheduler observations", () => {
+  const code = `
+import asyncio, base64, hashlib, importlib.util, json, pathlib, sys, tempfile, types
+spec = importlib.util.spec_from_file_location("fixture", "tools/native-media-fixture.py")
+fixture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixture)
+fixture.settings.update(key="test-key", secret="test-secret-that-is-never-evidence")
+
+async def check():
+    with tempfile.TemporaryDirectory() as directory:
+        output = pathlib.Path(directory) / "receiver.json"
+        trace = fixture.ReceiverTrace("hooks-123", output)
+        fixture.receiver_traces["hooks-123"] = trace
+        class Room:
+            def __init__(self): self.callbacks = {}; self.local_participant = self
+            def on(self, name):
+                def register(callback): self.callbacks[name] = callback; return callback
+                return register
+            async def connect(self, url, token):
+                assert url == "ws://127.0.0.1:7880"
+                assert fixture.rtc.RoomOptions().auto_subscribe
+            async def publish_track(self, *args): pass
+        room = Room()
+        fixture.rtc.Room = lambda: room
+        fixture.rtc.AudioSource = lambda *args: object()
+        fixture.rtc.LocalAudioTrack.create_audio_track = lambda *args: object()
+        async def receive(*args): pass
+        fixture.MarkerObservation.receive = receive
+        _, publisher = await fixture.publish("native-ci-hooks-123")
+        publisher.cancel()
+        await asyncio.gather(publisher, return_exceptions=True)
+        audio = fixture.rtc.TrackKind.KIND_AUDIO
+        publication = types.SimpleNamespace(kind=audio, sid="TR_123")
+        participant = types.SimpleNamespace(identity="device-hooks-123")
+        room.callbacks["track_published"](publication, participant)
+        room.callbacks["track_subscribed"](types.SimpleNamespace(kind=audio), publication, participant)
+        room.callbacks["track_subscription_failed"](participant, "TR_123", "secret SDK details")
+        await asyncio.sleep(0)
+        event = {"event": "track_published", "createdAt": "12345", "room": {"name": "native-ci-hooks-123"},
+                 "participant": {"identity": "device-hooks-123"}, "track": {"sid": "TR_123"}}
+        body = json.dumps(event)
+        digest = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
+        auth = fixture.api.AccessToken(fixture.settings["key"], fixture.settings["secret"]).with_sha256(digest).to_jwt()
+        class Request:
+            headers = {"Authorization": auth}
+            async def text(self): return body
+        assert (await fixture.receiver_webhook(Request())).status == 200
+        Request.headers = {"Authorization": "invalid-secret"}
+        assert (await fixture.receiver_webhook(Request())).status == 401
+        trace.sample_loop(100, 500)
+        trace.sample_loop(600, 550)
+        stored = json.loads(output.read_text())
+        assert [e["stage"] for e in stored["events"]] == ["autoSubscribeRequested", "peerConnected",
+            "trackPublishedCallback", "trackSubscribedCallback", "trackSubscriptionFailed", "serverTrackPublished"]
+        assert stored["events"][-1]["serverCreatedAtSeconds"] == "12345"
+        assert all(int(e["atNs"]) > 0 and e["unixMs"] > 0 for e in stored["events"])
+        assert stored["clock"] == "host.monotonic_ns"
+        assert [s["lagNs"] for s in stored["loopSamples"]] == ["400", "0"]
+        for i in range(300): trace.sample_loop(i, i + 1)
+        assert len(trace.snapshot()["loopSamples"]) == 240
+        assert fixture.receiver_trace("native-ci-hooks-123-token") is None
+        trace.event("receiverRead", "secret SDK details")
+        assert "trackSid" not in trace.events[-1]
+        assert "secret" not in output.read_text()
+        blocked = pathlib.Path(directory) / "blocked"
+        blocked.write_text("file, not a directory")
+        trace.output = blocked / "receiver.json"
+        fixture.uplinks.pop("native-ci-hooks-123")
+        room.callbacks["track_subscribed"](types.SimpleNamespace(kind=audio), publication, participant)
+        trace.sample_loop(100, 500)
+        assert "native-ci-hooks-123" in fixture.uplinks
+        assert trace.snapshot()["persistenceError"] == "FileExistsError"
+        trace.output = output
+        trace.flush()
+        assert json.loads(output.read_text())["persistenceError"] == "FileExistsError"
+        await asyncio.sleep(0)
+        print(json.dumps({"events": len(stored["events"]), "serverClock": stored["serverClock"], "lagNs": "400"}))
+asyncio.run(check())
+`;
+  const value = JSON.parse(execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code],
+    { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" }));
+  assert.deepEqual(value, { events: 6, serverClock: "livekit.webhook.created_at.unix_seconds", lagNs: "400" });
 });
 
 test("output PCM acknowledgements do not wait for a suspended detector and scoring failures stay fatal", () => {
