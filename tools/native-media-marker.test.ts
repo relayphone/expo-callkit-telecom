@@ -18,6 +18,81 @@ function samples(rate: number) {
 }
 const pcm = samples(48_000);
 
+test("client observations use active SFU membership before peer updates arrive", () => {
+  const code = `
+import asyncio, importlib.util, json
+from types import SimpleNamespace
+spec = importlib.util.spec_from_file_location("fixture", "tools/native-media-fixture.py")
+fixture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixture)
+fixture.settings.update(key="test-key", secret="local-test-secret-with-at-least-32-bytes", deviceAuth="test")
+class Request:
+    headers = {"Authorization": "Bearer test"}
+    match_info = {"server_id": "hooks-123"}
+active = fixture.model_protocol.ParticipantInfo.ACTIVE
+def participant(identity, state=active):
+    return fixture.model_protocol.ParticipantInfo(identity=identity, state=state)
+class Service:
+    rows = [participant("device-hooks-123")]
+    calls = 0
+    closes = 0
+    failed = False
+    async def list_participants(self, request):
+        assert request.room == "native-ci-hooks-123"
+        self.calls += 1
+        if self.failed: raise RuntimeError("private service error")
+        return fixture.api.ListParticipantsResponse(participants=self.rows)
+    async def __aenter__(self): return SimpleNamespace(room=self)
+    async def __aexit__(self, *_): self.closes += 1
+service = Service()
+def client(url, key, secret):
+    assert url == "http://127.0.0.1:7880" and key == fixture.settings["key"] and secret == fixture.settings["secret"]
+    return service
+fixture.api.LiveKitAPI = client
+room = SimpleNamespace(remote_participants={})
+fixture.bots["native-ci-hooks-123"] = (room, None)
+async def clients(request=None):
+    return json.loads((await fixture.observations(request or Request())).text)["clients"]
+async def check():
+    # The receiver is active while the publisher's batched participant view is empty.
+    assert await clients() == 1
+    assert service.calls == service.closes == 1
+    service.rows = [participant("device-hooks-123"), participant("fixture-publisher"),
+        participant("device-joining", fixture.model_protocol.ParticipantInfo.JOINING),
+        participant("device-joined", fixture.model_protocol.ParticipantInfo.JOINED),
+        participant("device-left", fixture.model_protocol.ParticipantInfo.DISCONNECTED)]
+    assert await clients() == 1
+    service.rows.append(participant("device-duplicate"))
+    assert await clients() == 2  # A duplicate still fails the unchanged one-client assertion.
+    service.rows = []
+    assert await clients() == 0
+    service.failed = True
+    try:
+        await clients()
+        assert False, "API failure must not become a zero-client observation"
+    except RuntimeError: pass
+    assert service.calls == service.closes == 5
+    failed = await fixture.sanitized_errors(Request(), fixture.observations)
+    assert failed.status == 500 and "private" not in failed.text
+    assert service.calls == service.closes == 6
+    invalid = Request()
+    invalid.headers = {}
+    assert (await fixture.observations(invalid)).status == 401 and service.calls == 6
+    fixture.bots.clear()
+    assert await clients() == 0 and service.calls == 6
+    fixture.raw_peers["hooks-123"] = (SimpleNamespace(connectionState="connected"), None, "test")
+    assert await clients() == 1 and service.calls == 6
+    fixture.raw_peers["hooks-123"][0].connectionState = "closed"
+    assert await clients() == 0 and service.calls == 6
+    gate = fixture.terminal_gates["hooks-123"] = asyncio.Event()
+    fixture.terminal_times["hooks-123"] = {}
+    response = json.loads((await fixture.observations(Request())).text)
+    assert response["clients"] == 0 and response["terminalPending"] is True and gate.is_set()
+asyncio.run(check())
+`;
+  execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], { timeout: 15_000, killSignal: "SIGKILL" });
+});
+
 test("receive-only prejoin and publish claim use different tokens for the same participant", () => {
   const code = `
 import asyncio, importlib.util

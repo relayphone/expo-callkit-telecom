@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { captureMediaCommand, collectNativeMediaEvidence, mediaEvidenceNames, type CapturedOutput, type EvidenceClock } from "./native-media-evidence.ts";
+import { withMediaCrashEvidence } from "./native-media-crash-evidence.ts";
+import { collectEmulatorBudget } from "./android-emulator-budget.ts";
 
 export interface Command {
   program: "gradle" | "adb" | "node";
@@ -289,7 +291,15 @@ export function runNativeMediaFeasibility(output = "android/instrumentation/buil
 if (import.meta.main) {
   if (process.argv.includes("--host-controls-only")) runNativeMediaControls();
   else if (process.argv.includes("--build-feasibility-only")) buildNativeMediaApks();
-  else if (process.argv.includes("--feasibility-only")) runNativeMediaFeasibility(undefined, undefined,
-    process.argv.includes("--controls-prechecked") ? "prechecked" : "run");
+  else if (process.argv.includes("--feasibility-only")) {
+    const operation = () => {
+      if (process.argv.includes("--crash-evidence")) console.log(JSON.stringify(collectEmulatorBudget()));
+      runNativeMediaFeasibility(undefined, undefined,
+        process.argv.includes("--controls-prechecked") ? "prechecked" : "run");
+    };
+    if (process.argv.includes("--crash-evidence"))
+      withMediaCrashEvidence(operation, "android/instrumentation/build/media-crash-evidence");
+    else operation();
+  }
   else runNativeMediaJourney(undefined, undefined, !process.argv.includes("--functional-only"));
 }
