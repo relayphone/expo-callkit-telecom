@@ -21,6 +21,10 @@ enum class NativeMediaStage(val value: String) {
     TERMINAL_SIGNAL_COMPLETED("terminalSignalCompleted"),
     CORE_ADD_REQUESTED("coreAddRequested"), CORE_ADMITTED("coreAdmitted"), CORE_LATE_DISCONNECTED("coreLateDisconnected"),
     CORE_MUTE_OBSERVED("coreMuteObserved"),
+    MUTE_SERIAL_ENTERED("muteSerialEntered"), MUTE_SERIAL_EXITED("muteSerialExited"),
+    MUTE_SESSION_ENTERED("muteSessionEntered"), MUTE_SESSION_EXITED("muteSessionExited"),
+    MUTE_PUBLICATION_ENTERED("mutePublicationEntered"), MUTE_PUBLICATION_EXITED("mutePublicationExited"),
+    MUTE_BOUNDARY_ENTERED("muteBoundaryEntered"), MUTE_BOUNDARY_EXITED("muteBoundaryExited"),
     PLATFORM_REMOVAL_FAILED("platformRemovalFailed"),
     CREDENTIALS_STARTED("credentialsStarted"), CREDENTIALS_RESOLVED("credentialsResolved"),
     MEDIA_CONNECT_STARTED("mediaConnectStarted"), MEDIA_CONNECT_COMPLETED("mediaConnectCompleted"),
@@ -37,7 +41,10 @@ enum class NativeMediaStage(val value: String) {
     OUTPUT_RELEASED("outputReleased"), OUTPUT_MUTE_BOUNDARY_MISSED("outputMuteBoundaryMissed")
 }
 
-/** Native observations contain no credentials/audio. ROOM_DISCONNECTED has an empty serverCallId and a reason name. */
+/** Native observations contain no credentials/audio. ROOM_DISCONNECTED has an empty serverCallId and a reason name.
+ * MUTE_* pairs share an operationId. EXITED has completed=1 only on normal return; elapsedRealtimeNanos
+ * is captured at the work boundary, before delivery on main. SERIAL covers acquisition, not lock ownership.
+ */
 data class NativeMediaSignal(val serverCallId: String, val stage: NativeMediaStage,
     val elapsedRealtimeNanos: Long, val measurements: Map<String, Long> = emptyMap(), val reason: String? = null)
 
