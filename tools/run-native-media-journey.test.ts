@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   mkdtempSync,
+  existsSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -130,11 +131,27 @@ function fixture() {
   };
 }
 
+test("an unavailable push journal cannot retain a previous run's diagnostic file", () => {
+  const f = fixture();
+  const failure = new Error("suite failed before push journey");
+  const path = join(f.output, "push-fault-events.json");
+  try {
+    writeFileSync(path, "old push evidence");
+    assert.throws(() => runNativeMediaJourney(f.output, command => {
+      if (command.program === "gradle") throw failure;
+      if (command.args.at(-1) === "files/push-fault-events.json") throw new Error("unavailable");
+      return f.run(command);
+    }), error => error === failure);
+    assert.ok(!existsSync(path));
+    assert.ok(!existsSync(`${path}.tmp`));
+  } finally { f.close(); }
+});
+
 test("runs the complete functional suite once and checks all four results", () => {
   const f = fixture();
   try {
     runNativeMediaJourney(f.output, f.run);
-    assert.equal(f.calls.length, 16);
+    assert.equal(f.calls.length, 18);
     assert.deepEqual(f.calls[0], {
       program: "gradle",
       args: [
@@ -181,8 +198,11 @@ test("runs the complete functional suite once and checks all four results", () =
         timeout: 15_000,
       });
     }
-    assert.equal(readdirSync(f.output).length, 6);
+    assert.equal(readdirSync(f.output).length, 7);
     assert.deepEqual(f.calls.slice(9), [
+      { program: "adb", args: ["exec-out", "run-as", "expo.modules.callkittelecom.instrumentation",
+        "cat", "files/push-fault-events.json"], timeout: 15_000, capture: true },
+      { program: "node", args: ["tools/android-push-faults.ts", "--file", join(f.output, "push-fault-events.json")], timeout: 15_000 },
       { program: "node", args: ["--test", "tools/check-android-journey-state.test.ts"], timeout: 30_000 },
       { program: "node", args: ["tools/check-android-journey-state.ts"], timeout: 60_000 },
       { program: "node", args: ["--test", "tools/native-media-marker.test.ts", "tools/compare-media-apm.test.ts"], timeout: 30_000 },
@@ -218,7 +238,7 @@ for (const build of ["EmulatorTest", "Release"])
         if (command.args.includes(`:connected${build}AndroidTest`)) throw failure;
         return result;
       }), (error) => error === failure);
-      assert.equal(readdirSync(f.output).length, 6);
+      assert.equal(readdirSync(f.output).length, 7);
       assert.equal(f.calls.filter((command) => command.program === "gradle").length,
         build === "EmulatorTest" ? 2 : 3);
     } finally { f.close(); }
@@ -229,7 +249,7 @@ test("functional-only execution does not start the isolated media qualification"
   try {
     runNativeMediaJourney(f.output, f.run, false);
     assert.equal(f.calls.filter(command => command.program === "gradle").length, 1);
-    assert.equal(readdirSync(f.output).length, 4);
+    assert.equal(readdirSync(f.output).length, 5);
   } finally { f.close(); }
 });
 
@@ -243,7 +263,7 @@ for (const argument of ["tools/check-android-journey-state.test.ts", "tools/chec
         if (command.args.includes(argument)) throw failure;
         return result;
       }), error => error === failure);
-      assert.equal(readdirSync(f.output).length, 4);
+      assert.equal(readdirSync(f.output).length, 5);
       assert.equal(f.calls.filter(command => command.program === "gradle").length, 1);
     } finally { f.close(); }
   });
@@ -270,7 +290,7 @@ test("a failed real-fixture marker control remains fatal and retains ordinary re
       if (command.args.includes("tools/native-media-marker.test.ts")) throw failure;
       return result;
     }), (error) => error === failure);
-    assert.equal(readdirSync(f.output).length, 4);
+    assert.equal(readdirSync(f.output).length, 5);
     assert.equal(f.calls.filter((command) => command.program === "gradle").length, 1);
   } finally { f.close(); }
 });
@@ -296,6 +316,7 @@ test("retains available media diagnostics after a failed suite and propagates it
     assert.deepEqual(readdirSync(f.output).sort(), [
       "answered-elsewhere-results.json",
       "native-media-results.json",
+      "push-fault-events.json",
     ]);
     assert.equal(
       f.calls.filter((command) => command.program === "node").length,
@@ -326,7 +347,7 @@ for (const [index, name] of [
           }),
         (error) => error === failure
       );
-      assert.equal(readdirSync(f.output).length, 4);
+      assert.equal(readdirSync(f.output).length, 5);
       assert.equal(
         f.calls.filter((command) => command.program === "node").length,
         index + 1

@@ -1,12 +1,14 @@
 package expo.modules.callkittelecom.conversations
 
 import android.content.pm.ApplicationInfo
+import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import expo.modules.callkittelecom.instrumentation.BuildConfig
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlinx.coroutines.*
 
 @RunWith(AndroidJUnit4::class)
 class MediaTestIsolationTest {
@@ -33,6 +35,11 @@ class MediaTestIsolationTest {
         }
         if (BuildConfig.BUILD_TYPE == "release") {
             assertEquals(0, context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE)
+            runBlocking { withContext(Dispatchers.Main) {
+                assertThrows(IllegalStateException::class.java) {
+                    PushFaultRuntime.command(context, Intent().putExtra("command", "reset"))
+                }
+            } }
         }
     }
 }

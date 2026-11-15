@@ -3,10 +3,10 @@ name: v2 Android
 on:
   pull_request:
     branches: [v2]
-    paths: ['tools/android-emulator-budget*', 'tsconfig.executor.json', 'tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
+    paths: ['tools/android-push-faults*', 'tools/android-emulator-budget*', 'tsconfig.executor.json', 'tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
   push:
     branches: [v2]
-    paths: ['tools/android-emulator-budget*', 'tsconfig.executor.json', 'tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
+    paths: ['tools/android-push-faults*', 'tools/android-emulator-budget*', 'tsconfig.executor.json', 'tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
 
 permissions:
   contents: read
@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
-      - run: node --test tools/android-emulator-budget.test.ts tools/run-native-media-journey.test.ts tools/prepare-native-media-fixture.test.ts tools/run-android-dnd.test.ts tools/native-media-fixture-log.test.ts tools/check-native-media.test.ts tools/check-android-journey.test.ts tools/check-answered-elsewhere.test.ts tools/check-android-dnd*.test.ts
+      - run: node --test tools/android-push-faults.test.ts tools/android-emulator-budget.test.ts tools/run-native-media-journey.test.ts tools/prepare-native-media-fixture.test.ts tools/run-android-dnd.test.ts tools/native-media-fixture-log.test.ts tools/check-native-media.test.ts tools/check-android-journey.test.ts tools/check-answered-elsewhere.test.ts tools/check-android-dnd*.test.ts
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.0'
@@ -84,6 +84,7 @@ jobs:
           path: |
             android/instrumentation/build/outputs/androidTest-results/**/*.xml
             android/instrumentation/build/journey-results.json
+            android/instrumentation/build/push-fault-events.json
             android/instrumentation/build/answered-elsewhere-results.json
             android/instrumentation/build/native-media-results.json
             android/instrumentation/build/native-webrtc-results.json

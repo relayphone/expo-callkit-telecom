@@ -104,6 +104,7 @@ export function runNativeMediaJourney(
   }
   for (const [name] of checks)
     rmSync(join(output, `${name}.json`), { force: true });
+  rmSync(join(output, "push-fault-events.json"), { force: true });
   try {
     run({
       program: "gradle",
@@ -124,10 +125,15 @@ export function runNativeMediaJourney(
         timeout: 15_000,
       });
     }
+    const pushLog = pull("push-fault-events");
+    run({ program: "node", args: ["tools/android-push-faults.ts", "--file", pushLog], timeout: 15_000 });
     run({ program: "node", args: ["--test", "tools/check-android-journey-state.test.ts"], timeout: 30_000 });
     run({ program: "node", args: ["tools/check-android-journey-state.ts"], timeout: 60_000 });
     if (qualifyHooks) runNativeMediaFeasibility(output, run);
   } finally {
+    if (!saved.has("push-fault-events")) {
+      try { pull("push-fault-events"); } catch { /* Preserve the original suite failure. */ }
+    }
     for (const [name] of checks.slice(1)) {
       if (!saved.has(name)) {
         try {
