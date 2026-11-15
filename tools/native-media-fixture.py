@@ -114,6 +114,8 @@ class MarkerObservation:
             pending.cancel()
         self.output_task = None
         self.output_result = None
+        self.output_stages = []
+        self.output_stages_dropped = 0
         self.epoch += 1
         self.frames = 0
         self.pcm = []
@@ -339,15 +341,36 @@ class MarkerObservation:
         return {**self.evidence, "receiveClock": "host.monotonic_ns", "arrivals": self.arrivals,
                 "rtc": self.stats, "statsError": self.stats_error, "diagnosticsOverflow": self.diagnostics_overflow}
 
+    def output_stage(self, stage, entered_ns, **fields):
+        entry = {"stage": stage, "enteredNs": str(entered_ns), "exitedNs": None, "completed": False, **fields}
+        if len(self.output_stages) == 128:
+            del self.output_stages[0]
+            self.output_stages_dropped += 1
+        self.output_stages.append(entry)
+        return entry
+
+    def output_trace(self):
+        return {"clock": "host.monotonic_ns", "observedAtNs": str(time.monotonic_ns()), "frames": self.frames,
+                "droppedSpans": self.output_stages_dropped, "stages": [dict(entry) for entry in self.output_stages]}
+
+    async def score_output(self, queued_ns):
+        entry = self.output_stage("SCORE", time.monotonic_ns(), queuedNs=str(queued_ns), frame=self.frames)
+        try:
+            result = await self.measure()
+            entry["completed"] = True
+            return result
+        finally:
+            entry["exitedNs"] = str(time.monotonic_ns())
+
     async def measure_output(self):
         """Acknowledge PCM independently of CPU scoring so the next audio drain stays live."""
         if self.output_task is not None and self.output_task.done():
             self.output_result = self.output_task.result()
             self.output_task = None
         if len(self.pcm) < 34560:
-            self.output_result = await self.measure()
+            self.output_result = await self.score_output(time.monotonic_ns())
         elif self.output_task is None and self.frames > self.analyzed:
-            self.output_task = asyncio.create_task(self.measure())
+            self.output_task = asyncio.create_task(self.score_output(time.monotonic_ns()))
             self.output_task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
         if self.output_result is None:
             raise RuntimeError("Output capture baseline missing")
@@ -647,6 +670,10 @@ async def device_output(request):
     server_id = request.match_info["server_id"]
     if not server_id.startswith("hooks-"):
         return web.Response(status=400)
+    if getattr(request, "method", "POST") == "GET":
+        observation = downlinks.get(server_id)
+        return web.json_response(observation.output_trace()) if observation is not None else web.Response(status=404)
+    received_ns = time.monotonic_ns()
     body = await request.json()
     if body.get("reset") is True:
         previous = downlinks.get(server_id)
@@ -659,18 +686,23 @@ async def device_output(request):
     data = base64.b64decode(body.get("pcm16", ""), validate=True)
     if len(data) % 2 or len(data) > 48000:
         return web.Response(status=400)
+    enqueue = observation.output_stage("ENQUEUE", time.monotonic_ns(), firstFrame=observation.frames)
     values = struct.unpack("<" + str(len(data) // 2) + "h", data)
     observation.frames += len(values)
     observation.pcm.extend(values)
     del observation.pcm[:max(0, len(observation.pcm) - 144000)]
+    enqueue.update(exitedNs=str(time.monotonic_ns()), completed=True, frame=observation.frames)
     sample = body["stats"]
     if not 0 <= sample["fromFrame"] <= sample["frame"] <= observation.frames or len(observation.stats) >= 128:
         return web.Response(status=400)
     observation.stats.append({"fromFrame": sample["fromFrame"], "frame": sample["frame"],
                               "inbound": [{name: output_counter(sample["counters"].get(name)) for name in (
                                   "inserted_samples_for_deceleration", "removed_samples_for_acceleration", "concealed_samples", "packets_lost")}]})
+    measured = await observation.measure_output()
+    response = observation.output_stage("HTTP_RESPONSE", received_ns, frame=observation.frames)
+    response.update(exitedNs=str(time.monotonic_ns()), completed=True)
     return web.json_response({"running": True, "error": None, "frames": observation.frames,
-                              "generation": observation.generation, **(await observation.measure_output())})
+                              "generation": observation.generation, **measured, "outputConsumerTrace": observation.output_trace()})
 
 
 async def close_output_measurements(_app):
@@ -785,6 +817,7 @@ if __name__ == "__main__":
     app.router.add_get("/fixture/observations/{server_id}", observations)
     app.router.add_route("*", "/fixture/markers/{server_id}", markers)
     app.router.add_post("/fixture/output/{server_id}", device_output)
+    app.router.add_get("/fixture/output/{server_id}", device_output)
     app.router.add_post("/v1/calls/{server_id}/media-credentials", media_credentials)
     app.router.add_post("/fixture/webrtc/{server_id}", raw_signaling)
     app.router.add_route("*", "/{rest:.*}", proxy)

@@ -15,11 +15,44 @@ import {
   runNativeMediaJourney,
   runNativeMediaFeasibility,
   mediaFailureSummary,
+  outputConsumerSummary,
   runNativeMediaControls,
   buildNativeMediaApks,
   type Command,
   type Execute,
 } from "./run-native-media-journey.ts";
+
+test("output consumer failures name backlog and slow stages within each monotonic clock", () => {
+  const value = { passed: false, step: "answered output", failure: [{ type: "IllegalStateException", message: "Output capture consumer fell behind" }],
+    outputConsumerTrace: { clock: "android.elapsedRealtimeNanos", observedAtNs: "9007199256000000",
+      guard: { capturedFrames: 52321, drainedFrames: 28320, pendingFrames: 24001, limitFrames: 24000, atNs: "9007199255000000" },
+      enqueue: { enteredNs: "9007199254000000", exitedNs: "9007199254001000", largestGapNs: "10000000" },
+      stages: [{ stage: "RTC_STATS", enteredNs: "9007199253000000", exitedNs: "9007199253050000", completed: true },
+        { stage: "HTTP_ACK", enteredNs: "9007199254000000", exitedNs: "9007199254900000", completed: true },
+        { stage: "DRAIN", enteredNs: "9007199255000000", exitedNs: "9007199255001000", completed: false }] },
+    outputServerTrace: { clock: "host.monotonic_ns", observedAtNs: "810000000",
+      stages: [{ stage: "SCORE", queuedNs: "1000000", enteredNs: "10000000", exitedNs: null, completed: false }] } };
+  const summary = mediaFailureSummary(value)!;
+  assert.match(summary, /captured=52321, drained=28320, pending=24001, limit=24000/);
+  assert.match(summary, /Slowest measured device stage: HTTP_ACK, durationMs=0\.900, state=completed/);
+  assert.match(summary, /Last device stage: DRAIN.*state=failed/);
+  assert.match(summary, /Measured device stage: RTC_STATS, durationMs=0\.050/);
+  assert.match(summary, /Active fixture stage: SCORE, durationMs=800\.000.*queueMs=9\.000/);
+  assert.match(summary, /ENQUEUE:.*durationMs=0\.001, largestGapMs=10\.000/);
+  assert.match(summary, /device clock: android.elapsedRealtimeNanos/);
+  assert.match(summary, /fixture clock: host.monotonic_ns/);
+});
+
+test("output consumer summary ignores malformed telemetry and arbitrary data", () => {
+  const secret = "private URL or credential";
+  assert.equal(outputConsumerSummary({ outputConsumerTrace: { clock: secret, stages: [] } }), "");
+  const summary = outputConsumerSummary({ outputConsumerTrace: { clock: "android.elapsedRealtimeNanos", observedAtNs: "100",
+    guard: { capturedFrames: secret, drainedFrames: 0, pendingFrames: 24001, limitFrames: 24000 },
+    stages: [{ stage: secret, enteredNs: "0", exitedNs: "100", completed: true },
+      { stage: "HTTP_ACK", enteredNs: "200", exitedNs: "100", completed: true },
+      { stage: "RTC_STATS", enteredNs: secret, exitedNs: null, completed: false }] } });
+  assert.doesNotMatch(summary, /private|credential|HTTP_ACK|RTC_STATS|pending=/);
+});
 
 test("APK preparation and connected tests have independent commands and unchanged test deadlines", () => {
   const f = fixture();

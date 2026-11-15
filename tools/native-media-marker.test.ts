@@ -66,11 +66,23 @@ async def check():
         during = await post(48000, pcm[96000:120000])
         assert before["cleanCyclesWithPostRoll"] == during["cleanCyclesWithPostRoll"] == 0
         assert during["frames"] == 60000
+        trace = during["outputConsumerTrace"]
+        assert trace["clock"] == "host.monotonic_ns"
+        active = next(entry for entry in trace["stages"] if entry["stage"] == "SCORE" and entry["exitedNs"] is None)
+        assert int(active["queuedNs"]) <= int(active["enteredNs"]) <= int(trace["observedAtNs"])
+        assert not active["completed"]
+        assert any(entry["stage"] == "ENQUEUE" and entry["frame"] == 60000 for entry in trace["stages"])
+        read = Request(0)
+        read.method = "GET"
+        retained = json.loads((await fixture.device_output(read)).text)
+        assert retained["frames"] == 60000 and any(entry["stage"] == "SCORE" for entry in retained["stages"])
         scorer.release.set()
         await asyncio.wait_for(fixture.downlinks["hooks-123"].output_task, 2)
         after = await post(60000, pcm[120000:])
         assert after["cleanCyclesWithPostRoll"] == 1
         assert after["firstCleanCycle"]["receiveStats"]["status"] == "clean"
+        score = next(entry for entry in after["outputConsumerTrace"]["stages"] if entry["stage"] == "SCORE" and entry["completed"])
+        assert int(score["queuedNs"]) <= int(score["enteredNs"]) <= int(score["exitedNs"])
         await fixture.close_output_measurements(None)
         class FailedScorer:
             async def analyze(self, *_): raise RuntimeError("controlled scorer failure")
@@ -83,9 +95,11 @@ async def check():
         try: await post(48000)
         except RuntimeError: failed = True
         assert failed, "Scorer failure must not become a successful acknowledgement"
+        failed_trace = fixture.downlinks["hooks-123"].output_trace()
+        assert any(entry["stage"] == "SCORE" and entry["exitedNs"] is not None and not entry["completed"] for entry in failed_trace["stages"])
         print(json.dumps({"framesAcceptedWhileScoringBlocked": during["frames"],
             "unscoredClean": during["cleanCyclesWithPostRoll"],
-            "qualifiedClean": after["cleanCyclesWithPostRoll"], "scoringFailureFatal": failed}))
+            "qualifiedClean": after["cleanCyclesWithPostRoll"], "scoringFailureFatal": failed, "timingsRetained": True}))
     finally:
         scorer.release.set()
         close = getattr(fixture, "close_output_measurements", None)
@@ -96,7 +110,7 @@ asyncio.run(check())
     "-c", code, process.env.NATIVE_MEDIA_FIXTURE_SOURCE ?? "tools/native-media-fixture.py",
   ], { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" }));
   assert.deepEqual(result, { framesAcceptedWhileScoringBlocked: 60000,
-    unscoredClean: 0, qualifiedClean: 1, scoringFailureFatal: true });
+    unscoredClean: 0, qualifiedClean: 1, scoringFailureFatal: true, timingsRetained: true });
 });
 
 const receiver = `
