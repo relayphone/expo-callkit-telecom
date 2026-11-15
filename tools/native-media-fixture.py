@@ -617,7 +617,11 @@ async def observations(request):
     room_name = "native-ci-" + server_id
     client_count = 0
     if room_name in bots:
-        client_count = sum(p.identity.startswith("device-") for p in bots[room_name][0].remote_participants.values())
+        # Peer participant updates are batched; receive-only clients can be active before that view catches up.
+        async with api.LiveKitAPI("http://127.0.0.1:7880", settings["key"], settings["secret"]) as service:
+            participants = await service.room.list_participants(api.ListParticipantsRequest(room=room_name))
+        client_count = sum(p.identity.startswith("device-") and p.state == model_protocol.ParticipantInfo.ACTIVE
+                           for p in participants.participants)
     if server_id in raw_peers:
         client_count = int(raw_peers[server_id][0].connectionState == "connected")
     gate = terminal_gates.get(server_id)
