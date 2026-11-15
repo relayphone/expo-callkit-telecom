@@ -34,6 +34,16 @@ them offline using the same detector as both live directions:
 node tools/compare-media-apm.ts capture-trace.json comparison.json
 ```
 
+The fixture publishes `media-hook-results.json` and `capture-trace.json` with a
+synced temporary file and an atomic rename. After instrumentation completes, the
+host observes both files for up to 10 seconds total, with 200 ms pauses between
+rounds. A successful read must be non-empty, parse as complete JSON and contain
+the expected top-level fields. Failed test results remain valid evidence.
+`media-evidence-reads.json` retains every attempt's source, elapsed time, byte
+count, exit code, readiness state and allowlisted stderr classification. Tool
+payloads and arbitrary stderr are excluded. If readiness never arrives, the
+named source failure remains fatal; an earlier test failure stays primary.
+
 The comparison retains each stream's complete detector result and per-slot
 energy at identical source-frame offsets. These energy windows include DSP
 delay; they do not apply a corrective shift or measure acoustic latency.

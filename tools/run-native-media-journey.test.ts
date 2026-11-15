@@ -101,10 +101,10 @@ test("failed qualification writes nested causes to the CI summary and preserves 
   process.env.GITHUB_STEP_SUMMARY = path;
   try {
     assert.throws(() => runNativeMediaFeasibility(f.output, command => {
-      f.run(command);
+      const result = f.run(command);
       if (command.program === "gradle") throw failure;
-      return JSON.stringify({ passed: false, step: "answered output",
-        failure: [{ type: "IllegalStateException", message: "Output capture consumer fell behind" }] });
+      return command.args.at(-1) === "files/media-hook-results.json" ? JSON.stringify({ ...hookResult(), passed: false, step: "answered output",
+        failure: [{ type: "IllegalStateException", message: "Output capture consumer fell behind" }] }) : result;
     }), error => error === failure);
     assert.match(readFileSync(path, "utf8"), /IllegalStateException: Output capture consumer fell behind/);
   } finally {
@@ -114,19 +114,27 @@ test("failed qualification writes nested causes to the CI summary and preserves 
   }
 });
 
+function hookResult() {
+  return { passed: true, step: "end", captureRate: 48000, profile: "tones-v2", pipeline: "observed", failure: [], gateTrace: {} };
+}
+function captureResult() {
+  return { clock: "android.elapsedRealtimeNanos", overflow: false, columns: [], callbacks: [], apmStates: [], rtc: [], postApm: {} };
+}
 function fixture() {
   const output = mkdtempSync(join(tmpdir(), "native-media-journey-"));
   const calls: Command[] = [];
   const run: Execute = (command) => {
     calls.push(command);
     return command.program === "adb"
-      ? JSON.stringify({ name: command.args.at(-1) })
+      ? JSON.stringify({ name: command.args.at(-1), ...(command.args.at(-1) === "files/media-hook-results.json" ? hookResult()
+        : command.args.at(-1) === "files/capture-trace.json" ? captureResult() : {}) })
       : "";
   };
   return {
     output,
     calls,
     run,
+    timing: (() => { let now = 0; return { now: () => now, pause: (ms: number) => { now += ms; } }; })(),
     close: () => rmSync(output, { recursive: true, force: true }),
   };
 }
@@ -198,7 +206,7 @@ test("runs the complete functional suite once and checks all four results", () =
         timeout: 15_000,
       });
     }
-    assert.equal(readdirSync(f.output).length, 7);
+    assert.equal(readdirSync(f.output).length, 8);
     assert.deepEqual(f.calls.slice(9), [
       { program: "adb", args: ["exec-out", "run-as", "expo.modules.callkittelecom.instrumentation",
         "cat", "files/push-fault-events.json"], timeout: 15_000, capture: true },
@@ -214,7 +222,7 @@ test("runs the complete functional suite once and checks all four results", () =
       ], timeout: 300_000 },
       ...["media-hook-results", "capture-trace"].map((name) => ({
         program: "adb", args: ["exec-out", "run-as", "expo.modules.callkittelecom.instrumentation", "cat", `files/${name}.json`],
-        timeout: 15_000, capture: true,
+        timeout: 1_000, capture: true, diagnostics: true,
       })),
       { program: "gradle", args: [
         "-p", "android/instrumentation", ":connectedReleaseAndroidTest", "-PmediaTestBuildType=release",
@@ -238,7 +246,7 @@ for (const build of ["EmulatorTest", "Release"])
         if (command.args.includes(`:connected${build}AndroidTest`)) throw failure;
         return result;
       }), (error) => error === failure);
-      assert.equal(readdirSync(f.output).length, 7);
+      assert.equal(readdirSync(f.output).length, 8);
       assert.equal(f.calls.filter((command) => command.program === "gradle").length,
         build === "EmulatorTest" ? 2 : 3);
     } finally { f.close(); }
@@ -277,9 +285,78 @@ test("qualification preserves its original failure when capture diagnostics are 
       if (command.program === "gradle") throw failure;
       if (command.program === "adb") throw new Error("missing diagnostic");
       return "";
-    }), error => error === failure);
+    }, "run", f.timing), error => error === failure);
   } finally { f.close(); }
 });
+
+for (const name of ["media-hook-results", "capture-trace"] as const) {
+  for (const [label, kind, contents] of [["empty", "empty", ""], ["whitespace-only", "empty", " \r\n\t"],
+    ["truncated", "invalid", '{"private":"must-not-appear"']] as const) {
+    test(`${name} rejects ${label} JSON with a named sanitized source failure`, () => {
+      const f = fixture();
+      try {
+        assert.throws(() => runNativeMediaFeasibility(f.output, command => {
+          const result = f.run(command);
+          return command.program === "adb" && command.args.at(-1) === `files/${name}.json` ? contents : result;
+        }, "prechecked", f.timing), error => {
+          assert.ok(error instanceof Error && !(error instanceof SyntaxError));
+          assert.equal(error.message, `Retain EmulatorTest evidence: ${kind} JSON from adb files/${name}.json`);
+          assert.doesNotMatch(error.stack ?? "", /must-not-appear/);
+          return true;
+        });
+        assert.ok(!existsSync(join(f.output, `${name}.json`)));
+        const other = name === "media-hook-results" ? "capture-trace" : "media-hook-results";
+        assert.ok(existsSync(join(f.output, `${other}.json`)), "Keep the other available diagnostic");
+        assert.ok(f.calls.filter(command => command.program === "adb").length > 2);
+        assert.equal(f.calls.filter(command => command.program === "gradle").length, 1);
+      } finally { f.close(); }
+    });
+  }
+}
+
+test("both invalid diagnostic readers report their sources while preserving the original test failure", () => {
+  const f = fixture();
+  const previous = process.env.GITHUB_STEP_SUMMARY;
+  const summary = join(f.output, "summary.md");
+  const failure = new Error("instrumentation failed");
+  process.env.GITHUB_STEP_SUMMARY = summary;
+  try {
+    assert.throws(() => runNativeMediaFeasibility(f.output, command => {
+      f.run(command);
+      if (command.program === "gradle") throw failure;
+      return command.args.at(-1) === "files/media-hook-results.json" ? "" : '{"private":"must-not-appear"';
+    }, "prechecked", f.timing), error => error === failure);
+    const report = readFileSync(summary, "utf8");
+    assert.match(report, /Retain EmulatorTest evidence: empty JSON from adb files\/media-hook-results.json/);
+    assert.match(report, /Retain EmulatorTest evidence: invalid JSON from adb files\/capture-trace.json/);
+    assert.doesNotMatch(report, /SyntaxError|must-not-appear/);
+    assert.ok(f.calls.filter(command => command.program === "adb").length > 2);
+  } finally {
+    if (previous === undefined) delete process.env.GITHUB_STEP_SUMMARY;
+    else process.env.GITHUB_STEP_SUMMARY = previous;
+    f.close();
+  }
+});
+
+for (const name of ["media-hook-results", "capture-trace"] as const)
+  test(`${name} sanitizes failed adb reads without hiding the other diagnostic`, () => {
+    const f = fixture();
+    try {
+      assert.throws(() => runNativeMediaFeasibility(f.output, command => {
+        const result = f.run(command);
+        if (command.program === "adb" && command.args.at(-1) === `files/${name}.json`)
+          throw new Error("private tool output must-not-appear");
+        return result;
+      }, "prechecked", f.timing), error => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message, `Retain EmulatorTest evidence: could not read JSON from adb files/${name}.json`);
+        assert.doesNotMatch(error.stack ?? "", /must-not-appear/);
+        return true;
+      });
+      const other = name === "media-hook-results" ? "capture-trace" : "media-hook-results";
+      assert.ok(existsSync(join(f.output, `${other}.json`)));
+    } finally { f.close(); }
+  });
 
 test("a failed real-fixture marker control remains fatal and retains ordinary results", () => {
   const f = fixture();

@@ -26,7 +26,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
-      - run: node --test tools/android-push-faults.test.ts tools/android-emulator-budget.test.ts tools/run-native-media-journey.test.ts tools/prepare-native-media-fixture.test.ts tools/run-android-dnd.test.ts tools/native-media-fixture-log.test.ts tools/check-native-media.test.ts tools/check-android-journey.test.ts tools/check-answered-elsewhere.test.ts tools/check-android-dnd*.test.ts
+      - run: node --test tools/android-push-faults.test.ts tools/android-emulator-budget.test.ts tools/run-native-media-journey.test.ts tools/native-media-evidence.test.ts tools/prepare-native-media-fixture.test.ts tools/run-android-dnd.test.ts tools/native-media-fixture-log.test.ts tools/check-native-media.test.ts tools/check-android-journey.test.ts tools/check-answered-elsewhere.test.ts tools/check-android-dnd*.test.ts
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.0'
@@ -158,6 +158,7 @@ jobs:
           path: |
             android/instrumentation/build/outputs/androidTest-results/**/*.xml
             android/instrumentation/build/media-hook-results.json
+            android/instrumentation/build/media-evidence-reads.json
             android/instrumentation/build/capture-trace.json
             android/instrumentation/build/native-media-fixture.log
             ${{ runner.temp }}/native-media-fixture/media-evidence/**

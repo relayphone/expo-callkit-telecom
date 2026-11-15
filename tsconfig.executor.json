@@ -19,6 +19,7 @@
     "tools/android-emulator-budget*.ts",
     "tools/gradle-wrapper-timeout*.ts",
     "tools/run-native-media-journey*.ts",
+    "tools/native-media-evidence*.ts",
     "tools/native-media-marker*.ts",
     "tools/compare-media-apm*.ts",
     "tools/prepare-native-media-fixture*.ts",

@@ -452,14 +452,14 @@ class MediaHookFeasibilityTest {
                 }
                 apmMonitor?.cancel()
                 try {
-                    context.filesDir.resolve("media-hook-results.json").writeText(evidence.put("step", step)
+                    writeMediaEvidence(context.filesDir.resolve("media-hook-results.json"), evidence.put("step", step)
                         .put("passed", caught == null).put("pipeline", pipeline)
                         .put("failure", org.json.JSONArray(caught?.let(::mediaFailureDetails).orEmpty().map {
                             JSONObject().put("type", it.type).put("message", it.message)
                         }))
                         .put("gateTrace", hooks.gateTrace.snapshot().put("muteDiagnosticError",
                             muteDiagnosticError?.javaClass?.simpleName ?: JSONObject.NULL)).toString())
-                    context.filesDir.resolve("capture-trace.json").writeText(hooks.trace.snapshot()
+                    writeMediaEvidence(context.filesDir.resolve("capture-trace.json"), hooks.trace.snapshot()
                         .put("postApm", hooks.postApm.finish()).toString())
                     InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                         putString("captureTraceFile", "capture-trace.json")
