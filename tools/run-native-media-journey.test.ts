@@ -15,9 +15,54 @@ import {
   runNativeMediaFeasibility,
   mediaFailureSummary,
   runNativeMediaControls,
+  buildNativeMediaApks,
   type Command,
   type Execute,
 } from "./run-native-media-journey.ts";
+
+test("APK preparation and connected tests have independent commands and unchanged test deadlines", () => {
+  const f = fixture();
+  try {
+    buildNativeMediaApks(f.run);
+    assert.deepEqual(f.calls, ["EmulatorTest", "Release"].map(build => ({
+      program: "gradle", args: ["-p", "android/instrumentation", `:assemble${build}`, `:assemble${build}AndroidTest`,
+        `-PmediaTestBuildType=${build.charAt(0).toLowerCase()}${build.slice(1)}`,
+        "--no-daemon", "--max-workers=2", "--stacktrace"], timeout: 300_000,
+    })));
+    runNativeMediaFeasibility(f.output, f.run, "prechecked");
+    const tests = f.calls.filter(command => command.args.some(arg => arg.startsWith(":connected")));
+    assert.equal(tests.length, 2);
+    assert.ok(tests.every(command => command.timeout === 300_000));
+  } finally { f.close(); }
+});
+
+test("APK build failures are fatal and build/test phases report their own results", () => {
+  const f = fixture();
+  const previous = process.env.GITHUB_STEP_SUMMARY;
+  const path = join(f.output, "summary.md");
+  const failure = new Error("cold APK build failed");
+  process.env.GITHUB_STEP_SUMMARY = path;
+  try {
+    assert.throws(() => buildNativeMediaApks(command => { f.run(command); throw failure; }), error => error === failure);
+    assert.equal(f.calls.length, 1);
+    assert.match(readFileSync(path, "utf8"), /build EmulatorTest APKs[\s\S]*failed/);
+    buildNativeMediaApks(f.run);
+    runNativeMediaFeasibility(f.output, f.run, "prechecked");
+    const summary = readFileSync(path, "utf8");
+    assert.match(summary, /build Release APKs[\s\S]*passed/);
+    assert.match(summary, /test EmulatorTest[\s\S]*passed/);
+    assert.match(summary, /test Release[\s\S]*passed/);
+    assert.throws(() => runNativeMediaFeasibility(f.output, command => {
+      if (command.program === "gradle") throw failure;
+      return f.run(command);
+    }, "prechecked"), error => error === failure);
+    assert.match(readFileSync(path, "utf8"), /test EmulatorTest\n[\s\S]*\| failed \| [\d.]+ s \|/);
+  } finally {
+    if (previous === undefined) delete process.env.GITHUB_STEP_SUMMARY;
+    else process.env.GITHUB_STEP_SUMMARY = previous;
+    f.close();
+  }
+});
 
 test("host preflight keeps the original controls and deadline and prepared feasibility does not duplicate them", () => {
   const f = fixture();

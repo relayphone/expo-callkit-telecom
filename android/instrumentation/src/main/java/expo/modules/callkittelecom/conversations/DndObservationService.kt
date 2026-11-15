@@ -19,12 +19,24 @@ class DndObservationService : NotificationListenerService() {
         val observations = ConcurrentHashMap<String, Observation>()
         @Volatile var connected = false
         val posts = CopyOnWriteArrayList<StatusBarNotification>()
+        internal val notificationChanges = CopyOnWriteArrayList<CallNotificationSample>()
     }
     override fun onListenerConnected() { connected = true }
     override fun onListenerDisconnected() { connected = false }
     override fun onNotificationPosted(notification: StatusBarNotification, rankingMap: RankingMap) {
+        change(notification, "posted")
         if (notification.packageName == packageName && notification.notification.category == Notification.CATEGORY_CALL) posts += notification
         record(notification, rankingMap)
+    }
+    override fun onNotificationRemoved(notification: StatusBarNotification, rankingMap: RankingMap, reason: Int) {
+        change(notification, "removed:$reason")
+    }
+    private fun change(value: StatusBarNotification, phase: String) {
+        if (value.packageName != packageName || value.notification.category != Notification.CATEGORY_CALL) return
+        if (notificationChanges.size == 128) notificationChanges.removeAt(0)
+        notificationChanges += CallNotificationSample(phase, android.os.SystemClock.elapsedRealtimeNanos(), listOf(
+            CallNotificationState(value.key, value.id, value.tag, value.notification.channelId,
+                value.notification.flags, value.isOngoing, value.isClearable)))
     }
     override fun onNotificationRankingUpdate(rankingMap: RankingMap) {
         activeNotifications?.forEach { record(it, rankingMap) }

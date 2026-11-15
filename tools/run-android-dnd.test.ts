@@ -106,6 +106,25 @@ function fixture(t: TestContext) {
   return { directory, output, calls, bytes, run };
 }
 
+for (const available of [true, false])
+  test(`failed warm instrumentation retains available diagnostics (${available}) and its original failure`, async t => {
+    const f = fixture(t);
+    const failure = new Error("instrumentation transport failed");
+    const evidence = Buffer.from(JSON.stringify({ passed: false, stage: "platform-cleanup",
+      notificationCleanup: [{ phase: "failure", notifications: [{ key: "host|6999", flags: 66 }] }] }));
+    await assert.rejects(runAndroidDnd(f.output, async command => {
+      const result = await f.run(command);
+      if (command.args.includes(`${namespace}.DndWarmCleanupTest`)) throw failure;
+      if (command.args.at(-1) === "files/dnd-warm-cleanup.json") {
+        if (!available) throw new Error("diagnostics unavailable");
+        return evidence;
+      }
+      return result;
+    }), error => error === failure);
+    assert.deepEqual(readFileSync(join(f.output, "warm-cleanup.json")), available ? evidence : Buffer.alloc(0));
+    assert.deepEqual(f.calls.at(-1), restore);
+  });
+
 test("keeps helper setup, all twelve policies, warm cleanup and checker order", async (t) => {
   const f = fixture(t);
   await runAndroidDnd(f.output, f.run);
@@ -276,7 +295,8 @@ test("every failed setup, policy, collection or check stops the suite and restor
       }),
       (error) => error === failure
     );
-    assert.equal(f.calls.length, index + 2);
+    // Warm instrumentation failure still pulls its journal before restoring DnD.
+    assert.equal(f.calls.length, index + 2 + (index === 67 ? 1 : 0));
     assert.deepEqual(f.calls.at(-1), restore);
     assert.notDeepEqual(f.calls.at(-2), restore);
   }

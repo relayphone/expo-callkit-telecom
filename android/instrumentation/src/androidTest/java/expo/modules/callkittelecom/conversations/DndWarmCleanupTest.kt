@@ -19,6 +19,18 @@ class DndWarmCleanupTest {
         assumeNotNull(InstrumentationRegistry.getArguments().getString("dndWarm"))
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
+        val manager = context.getSystemService(android.app.NotificationManager::class.java)
+        val cleanup = CallNotificationCleanup(read = {
+            manager.activeNotifications.filter { it.notification.category == android.app.Notification.CATEGORY_CALL }.map {
+                CallNotificationState(it.key, it.id, it.tag, it.notification.channelId,
+                    it.notification.flags, it.isOngoing, it.isClearable)
+            }
+        }, nanoTime = android.os.SystemClock::elapsedRealtimeNanos)
+        fun diagnostics(samples: List<CallNotificationSample> = cleanup.samples): List<Map<String, Any?>> = samples.map { sample -> mapOf(
+            "phase" to sample.phase, "elapsedNanos" to sample.elapsedNanos.toString(),
+            "notifications" to sample.notifications.map { value -> mapOf(
+                "key" to value.key, "id" to value.id, "tag" to value.tag, "channel" to value.channel,
+                "category" to "call", "flags" to value.flags, "ongoing" to value.ongoing, "clearable" to value.clearable) }) }
         val settings = JSONObject(instrumentation.context.assets.open("media-ci.json").bufferedReader().readText())
         val client = OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
         suspend fun fixture(path: String): JSONObject = withContext(Dispatchers.IO) {
@@ -31,6 +43,7 @@ class DndWarmCleanupTest {
             android.os.ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand("cmd notification set_dnd $mode")).use { it.readBytes() }
         }
         withContext(Dispatchers.Main) {
+            DndObservationService.notificationChanges.clear()
             val engine = ConversationEngine.get(context)
             val previousMedia = engine.nativeMedia
             val previous = engine.policy
@@ -65,6 +78,7 @@ class DndWarmCleanupTest {
                 "fallback" to mapOf("name" to "dnd-fixture")))
             val serverId = "dnd-warm-${android.os.SystemClock.elapsedRealtime()}"
             var id: String? = null
+            var stage = "prejoin"
             try {
                 dnd("off")
                 val payload = fixture("/fixture/invitation/$serverId?media=1")
@@ -73,18 +87,25 @@ class DndWarmCleanupTest {
                 id = outcome["id"] as String
                 withTimeout(10_000) { while (signals.none { it.serverCallId == serverId && it.stage == NativeMediaStage.PREJOINED }) delay(20) }
                 assertTrue(TelecomEvidence.calls().any { "state=RINGING" in it })
+                cleanup.sample("prejoined")
+                stage = "policy-filter"
                 dnd("on")
                 withTimeout(7000) { while (native.none { it.serverCallId == serverId && it.result is NativeIncomingResult.Filtered } ||
                     signals.none { it.serverCallId == serverId && it.stage == NativeMediaStage.CLOSED }) delay(20) }
+                cleanup.sample("native-closed")
                 val result = (native.last { it.serverCallId == serverId }.result as NativeIncomingResult.Filtered).filter
                 assertEquals(NativeIncomingFilterReason.DO_NOT_DISTURB, result.reason)
                 assertEquals("failed", terminals[serverId]?.get("reason"))
                 assertEquals(mapOf("kind" to "filtered", "cause" to "doNotDisturb"), terminals[serverId]?.get("failure"))
                 assertFalse(performed.contains(id))
                 assertFalse((engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id })
-                withTimeout(5000) { while (TelecomEvidence.calls().isNotEmpty()) delay(25) }
-                assertFalse(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.any {
-                    it.notification.category == android.app.Notification.CATEGORY_CALL })
+                stage = "platform-cleanup"
+                withTimeout(5000) {
+                    while (TelecomEvidence.calls().isNotEmpty()) delay(25)
+                    cleanup.sample("telecom-empty")
+                    cleanup.awaitEmpty()
+                }
+                assertTrue("No call notifications after Telecom cleanup", cleanup.sample("verified-empty").isEmpty())
                 assertTrue(js.any { ((it["payload"] as? Map<*, *>)?.get("outcome") as? Map<*, *>)?.get("reason") == "doNotDisturb" })
                 val state = withTimeout(7000) {
                     var value = fixture("/fixture/observations/$serverId")
@@ -93,6 +114,7 @@ class DndWarmCleanupTest {
                 }
                 assertFalse(signals.any { it.serverCallId == serverId && it.stage == NativeMediaStage.CAPTURE_STARTED })
                 dnd("off")
+                stage = "app-policy"
                 val appReasons = mutableListOf<String>()
                 for (reason in listOf(NativeIncomingFilterReason.BLOCK_LIST, NativeIncomingFilterReason.OTHER)) {
                     val entered = CompletableDeferred<Unit>()
@@ -124,7 +146,16 @@ class DndWarmCleanupTest {
                 output.writeText(JSONObject(mapOf("passed" to true, "prejoinedBeforeFilter" to true,
                     "filteredReason" to result.reason.value, "serverClients" to state.getInt("clients"),
                     "captureStarted" to false, "nativeClosed" to true, "coreCallsAfterCleanup" to 0,
-                    "delayedRejectPreventsAnswerAndNotification" to true, "appReasons" to appReasons)).toString())
+                    "delayedRejectPreventsAnswerAndNotification" to true, "appReasons" to appReasons,
+                    "notificationCleanup" to diagnostics(),
+                    "notificationChanges" to diagnostics(DndObservationService.notificationChanges.toList()))).toString())
+            } catch (error: Throwable) {
+                runCatching { cleanup.sample("failure") }
+                output.writeText(JSONObject(mapOf("passed" to false, "stage" to stage,
+                    "failureType" to error.javaClass.simpleName, "notificationCleanup" to diagnostics(),
+                    "notificationChanges" to diagnostics(DndObservationService.notificationChanges.toList()),
+                    "coreCallsAtFailure" to runCatching { TelecomEvidence.calls().size }.getOrNull())).toString())
+                throw error
             } finally {
                 dnd("off")
                 NativeIncomingFilters.evaluate = oldFilter

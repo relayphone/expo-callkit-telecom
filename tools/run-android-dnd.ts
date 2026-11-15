@@ -285,7 +285,8 @@ export async function runAndroidDnd(
         args: ["tools/check-android-dnd-case.ts", destination],
       });
     }
-    await adb([
+    let warmFailure: unknown;
+    try { await adb([
       "shell",
       "am",
       "instrument",
@@ -298,8 +299,10 @@ export async function runAndroidDnd(
       "dndWarm",
       "true",
       runner,
-    ]);
-    await collect("warm-cleanup", "dnd-warm-cleanup");
+    ]); } catch (error) { warmFailure = error; }
+    try { await collect("warm-cleanup", "dnd-warm-cleanup"); }
+    catch (error) { if (warmFailure === undefined) throw error; }
+    if (warmFailure !== undefined) throw warmFailure;
     await run({
       program: "node",
       args: ["tools/check-android-dnd.ts", output],
