@@ -16,6 +16,9 @@ internal interface NativeMediaControl {
     val isPrewarmed: Boolean
     val hasSession: Boolean
     fun prewarm()
+    /** Retire the previous transport before preparing credentials for the same participant. */
+    fun prewarmForAnswer(previous: NativeMediaControl? = null) { previous?.close("replaced"); prewarm() }
+    suspend fun awaitClosed() {}
     fun answered(audioReady: suspend () -> Unit)
     suspend fun pause()
     fun resume(audioReady: suspend () -> Unit)
@@ -70,9 +73,11 @@ internal class NativeMediaOwner(
         transition++
         if (selection == AndroidNativeMedia.NONE) audio.coreActivated()
         else {
-            if (media != null && !isPrewarmed) {
-                controller?.close("replaced")
-                controller = createController(media).also { it.prewarm() }
+            if (media != null) {
+                val previous = controller
+                controller = createController(media).also {
+                    it.prewarmForAnswer(previous)
+                }
             }
             prewarm()
             controller!!.answered { audio.nativeActivated() }

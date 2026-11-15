@@ -141,9 +141,14 @@ export function assertNativeMediaJourney(value: unknown): void {
             event.stage === "dtlsConnected" &&
             object(event.measurements, `${label}.dtlsConnected.measurements`)
               .role === role &&
-            number(event.nanos, `${label}.dtlsConnected.nanos`) <= prejoined
+            (provider === "livekit" && role === 1
+              ? number(event.nanos, `${label}.dtlsConnected.nanos`) >= n("answerAcceptedNanos") &&
+                number(event.nanos, `${label}.dtlsConnected.nanos`) <= n("firstAudioNanos") + 10_000_000_000
+              : number(event.nanos, `${label}.dtlsConnected.nanos`) <= prejoined)
         ),
-        rule(`DTLS role ${role} must be ready by prejoinedNanos`)
+        rule(provider === "livekit" && role === 1
+          ? "DTLS publisher must become ready after Answer within the 10000 ms transport observation"
+          : `DTLS role ${role} must be ready by prejoinedNanos`)
       );
     }
     const elapsed = (n("firstAudioNanos") - requested) / 1_000_000;

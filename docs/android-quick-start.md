@@ -233,8 +233,10 @@ returns to `connected`, and hold takes precedence. A platform-removal deadline
 adds `platformCallRemaining: true` to an existing failed end without changing its
 reason or failure kind.
 
-`Proceed.media` is used for an answer only when no prewarmed native media session
-exists; an existing prewarmed session ignores it. The native handler does not
+`Proceed.media` replaces the receive-only prejoin with the fresh Answer grant.
+The old transport closes before the replacement connects; a deliberately retired
+prejoin does not end the call. Without a new grant, activation requires publish
+permission on the existing participant. The native handler does not
 receive outgoing start, which keeps its JavaScript placement handler. JavaScript
 still receives the usual snapshots and `actionPerformed` events. Calling
 `ConversationActions.configure(null)` restores the existing native behavior.
@@ -726,7 +728,9 @@ lifecycle. Phone `value` normalizes to E.164 and becomes the same `tel:` identit
 for Core-Telecom and notification Person matching. `hostContactID` is an opaque
 host key, not an Android Contacts row ID; it does not make a contact starred.
 Media credentials stay outside `metadata`, public snapshots and logs. The
-Android LiveKit token needs the room-scoped join/publish/subscribe grants from
+Android prejoin token needs room-scoped join/subscribe grants; publishing is not
+required until Answer. A native Answer handler can return a fresh publish grant
+through `Proceed(media)`. See
 the [native media contract](./contracts/android-native-media.md); do not assume
 the pending iOS prejoin credential policy is identical.
 
@@ -737,11 +741,14 @@ the pending iOS prejoin credential policy is identical.
 2. For an accepted invitation, native media and the existing JS host receive
    warm requests independently. LiveKit stays joined and subscribed.
    Remote decoding and muted playback warm before Answer.
+   No local microphone track, publication or microphone permission access occurs.
    Physical microphone capture and audible output remain off.
 3. The user answers in system UI, or the host calls `joinConversation(id)`.
-   Native answer does not consult the handler. It waits for preparation and the
-   same live Core-active call plus communication audio mode, then unmutes the
-   existing media path. Answer does not renegotiate or resubscribe.
+   A configured native action handler can claim the call and return new credentials
+   in `Proceed(media)`. Native media deliberately closes the receive-only prejoin
+   before connecting with that grant and subscribing again. It waits for preparation
+   and the same live Core-active call plus communication audio mode, then publishes
+   the microphone once with publish permission. Mute-before-answer remains muted.
 4. Connected state follows native activation. On hold, physical capture stops
    and output is muted while receive decoding stays warm. Resume waits for
    native audio authority again. Decline, incoming timeout, filtering and remote

@@ -30,6 +30,15 @@ class MediaReceiverReadinessTest {
         val subscribed = ready().put("muted", false)
         assertSame(subscribed, awaitMediaReceiver({ true }, { subscribed }, pause = { fail("must not pause") }))
         assertFalse(subscribed.getBoolean("muted"))
+        var reads = 0
+        var pauses = 0
+        val afterPending = awaitMediaReceiver({ true }, {
+            if (reads++ == 0) pending() else subscribed
+        }, pause = { pauses++ })
+        assertSame(subscribed, afterPending)
+        assertFalse(afterPending.getBoolean("muted"))
+        assertEquals(2, reads)
+        assertEquals(1, pauses)
     }
 
     @Test fun aPrejoinMuteFailureStopsBeforeReceiverPolling() = runBlocking {

@@ -71,4 +71,26 @@ class NativeMediaOwnershipTest {
             assertEquals(listOf("prewarmLost"), sessions.first().closes)
         }
     }
+
+    @Test fun answerGrantReplacesEvenAReadyReceiveOnlyPrejoinAndPreservesDesiredMute() {
+        val sessions = mutableListOf<Session>()
+        val grants = mutableListOf<Map<String, Any?>?>()
+        val audioEvents = mutableListOf<NativeAudioEvent>()
+        val owner = NativeMediaOwner(AndroidNativeMedia.LIVEKIT, NativeAudioLifecycle({ true }, { 0 }, audioEvents::add),
+            initiallyMuted = true) { grant ->
+            grants += grant
+            Session().also { sessions += it }
+        }
+        owner.prewarm()
+        assertTrue(owner.isPrewarmed)
+        val answerGrant = mapOf("provider" to "livekit", "token" to "publish-grant")
+        owner.answered(answerGrant)
+        assertEquals(listOf(null, answerGrant), grants)
+        assertEquals(listOf("replaced"), sessions.first().closes)
+        assertEquals(0, sessions.first().answers)
+        assertEquals(1, sessions.last().answers)
+        assertTrue(sessions.last().muted)
+        assertTrue(audioEvents.isEmpty())
+        owner.close("ended")
+    }
 }

@@ -17,7 +17,7 @@ sealed interface ConversationAction {
 }
 
 sealed interface ConversationActionResult {
-    /** Fulfil the action. Answer uses push-shaped [media] only when no prewarmed session exists. */
+    /** Fulfil the action. Explicit Answer [media] replaces the receive-only prejoin credentials. */
     data class Proceed(val media: Map<String, Any?>? = null) : ConversationActionResult
     /**
      * Refuse an answer, or an app-origin hold/mute. Answer also ends the call with [endReason].

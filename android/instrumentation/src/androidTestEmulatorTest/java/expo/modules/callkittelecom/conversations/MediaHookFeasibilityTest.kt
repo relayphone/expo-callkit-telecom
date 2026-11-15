@@ -47,6 +47,198 @@ class MediaHookFeasibilityTest {
         .open("media-ci.json").bufferedReader().readText()) }
     private val client = OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
 
+    @Test fun receiveOnlyPrejoinSwapsToClaimCredentialsAndPublishesOnce() = claimJourney(0)
+    @Test fun aClaimTakingIts2800MillisecondBudgetStillAnswers() = claimJourney(2800)
+    @Test fun aMutedClaimAnswerOffersAudioBeforeItIsUnmuted() = claimJourney(0, muteBeforeAnswer = true)
+    @Test fun receiveOnlyAnswerWithoutAPublishGrantFailsWithTheMediaReason() = claimJourney(0, grant = false)
+
+    private fun claimJourney(claimDelayMillis: Long, grant: Boolean = true, muteBeforeAnswer: Boolean = false) = runBlocking {
+        withContext(Dispatchers.Main) {
+            val engine = ConversationEngine.get(context)
+            val previousMedia = engine.nativeMedia; val previousPolicy = engine.policy
+            val previousHandler = ConversationActions.handler
+            val previousFactory = NativeMediaRegistry.factories["livekit"]
+            val id = "hooks-${System.nanoTime()}"
+            var hooks = EmulatorMediaHooks(context, "$id:fromDevice")
+            // Qualify both identical test sources before timing the production token swap.
+            val answerHooks = EmulatorMediaHooks(context, "$id:fromDevice")
+            val signals = CopyOnWriteArrayList<NativeMediaSignal>()
+            val observer = NativeMediaObserver { if (it.serverCallId == id) signals += it }
+            var creations = 0
+            var failure: Throwable? = null
+            val permissionChecks = MediaPermissionObservation.microphoneChecks.get()
+            NativeMediaRegistry.factories["livekit"] = {
+                if (creations++ > 0) hooks = answerHooks
+                LiveKitNativeSession(it, id, hooks)
+            }
+            fun events(stage: NativeMediaStage) = signals.filter { it.stage == stage }
+            suspend fun stage(kind: NativeMediaStage, count: Int = 1) = withTimeout(10_000) {
+                while (events(kind).size < count) delay(10)
+                events(kind)[count - 1]
+            }
+            fun current() = (engine.snapshot["conversations"] as List<*>).map { it as Map<*, *> }.firstOrNull { it["id"] == id }
+            fun present() = current() != null
+            engine.nativeMedia = AndroidNativeMedia.LIVEKIT
+            engine.policy = JSONObject(mapOf("media" to "livekit", "credentials" to "fromPush", "prewarm" to true))
+            NativeMediaSignals.observers += observer
+            try {
+                withTimeout(7000) { while (TelecomEvidence.calls().isNotEmpty()) delay(20) }
+                val invitation = fixture("/fixture/invitation/$id?media=1&publish=0").getJSONObject("media")
+                val prejoin = invitation.keys().asSequence().associateWith { invitation.get(it) }
+                ConversationActions.configure(ConversationActionHandler { action ->
+                    if (action is ConversationAction.Answer && grant) {
+                        check(action.conversationId == id && action.serverCallId == id)
+                        val claimStarted = android.os.SystemClock.elapsedRealtimeNanos()
+                        val claimed = fixture("/v1/calls/$id/media-credentials", body = JSONObject()
+                            .put("eventId", "event-$id").put("deviceId", "fixture-device"))
+                        val claimElapsedMillis = (android.os.SystemClock.elapsedRealtimeNanos() - claimStarted) / 1_000_000
+                        if (claimDelayMillis > claimElapsedMillis) delay(claimDelayMillis - claimElapsedMillis)
+                        check(claimed.getString("token") != invitation.getString("token"))
+                        check(claimed.getString("identity") == invitation.getString("identity"))
+                        check(claimed.getString("room") == invitation.getString("room"))
+                        ConversationActionResult.Proceed(claimed.keys().asSequence().associateWith { claimed.get(it) })
+                    } else ConversationActionResult.Proceed()
+                })
+                assertEquals("reported", engine.incoming(IncomingCallPush(id, "event-$id",
+                    mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = prejoin).payload())["status"])
+                val joined = stage(NativeMediaStage.PREJOINED)
+                assertEquals(0L, joined.measurements["localMicrophones"])
+                assertEquals(0L, joined.measurements["localPublications"])
+                delay(1500)
+                assertTrue(present())
+                assertEquals("ringing", current()?.get("status"))
+                assertTrue(events(NativeMediaStage.PREWARM_LOST).isEmpty())
+                assertEquals(1, fixture("/fixture/observations/$id").getInt("clients"))
+                assertTrue(events(NativeMediaStage.MICROPHONE_PUBLISH_STARTED).isEmpty())
+                assertTrue(events(NativeMediaStage.CAPTURE_STARTED).isEmpty())
+                assertEquals(0, hooks.captureSampleRate)
+                assertEquals(0L, hooks.injectedFrames.get())
+                assertEquals(permissionChecks, MediaPermissionObservation.microphoneChecks.get())
+                if (muteBeforeAnswer) engine.mute(id, true)
+                val requested = android.os.SystemClock.elapsedRealtimeNanos()
+                if (!grant) {
+                    engine.join(id)
+                    stage(NativeMediaStage.ANSWER_FAILED)
+                    assertTrue(events(NativeMediaStage.ANSWER_FAILED).any { it.reason == "PUBLISH_PERMISSION_NOT_GRANTED" })
+                    assertTrue(events(NativeMediaStage.MICROPHONE_PUBLISH_STARTED).isEmpty())
+                    assertEquals(1, events(NativeMediaStage.MEDIA_CONNECT_STARTED).size)
+                    assertEquals(permissionChecks, MediaPermissionObservation.microphoneChecks.get())
+                    return@withContext
+                }
+                withTimeout(4500) { engine.join(id) }
+                val actionCompleted = android.os.SystemClock.elapsedRealtimeNanos()
+                withTimeout(5000) { stage(NativeMediaStage.CONNECTED) }
+                assertEquals(2, creations)
+                assertEquals(1, events(NativeMediaStage.CORE_ADD_REQUESTED).size)
+                assertEquals(1, events(NativeMediaStage.REPORTED).size)
+                assertTrue(present())
+                val retired = stage(NativeMediaStage.CLOSED)
+                val connect = stage(NativeMediaStage.MEDIA_CONNECT_STARTED, 2)
+                val connected = stage(NativeMediaStage.MEDIA_CONNECT_COMPLETED, 2)
+                assertTrue(retired.elapsedRealtimeNanos <= connect.elapsedRealtimeNanos)
+                if (muteBeforeAnswer) {
+                    val beforeUnmute = withTimeout(5000) {
+                        val peer = awaitMediaReceiver({ true }, { fixture("/fixture/markers/$id") })
+                        assertTrue(peer.getBoolean("muted"))
+                        var snapshot: JSONObject
+                        do {
+                            delay(20)
+                            snapshot = fixture("/fixture/timing/$id")
+                        } while (audioOffers(snapshot.getJSONArray("negotiations").getJSONObject(1)).isEmpty())
+                        snapshot
+                    }
+                    assertEquals(1, beforeUnmute.getJSONArray("negotiations").getJSONObject(1).getInt("audioPublisherOffers"))
+                    assertEquals(1, audioOffers(beforeUnmute.getJSONArray("negotiations").getJSONObject(1)).size)
+                    assertTrue(hooks.captureGateClosed())
+                    assertTrue(events(NativeMediaStage.CAPTURE_STARTED).isEmpty())
+                    InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
+                        putString("claimMutedSignaling", beforeUnmute.toString())
+                    })
+                    engine.mute(id, false)
+                }
+                var first: Long? = null
+                val receiving = async {
+                    val receiver = awaitMediaReceiver({ true }, { fixture("/fixture/markers/$id") })
+                    peerAudio(id, receiver.getLong("generation")) { if (first == null) first = it }
+                }
+                assertTrue(stage(NativeMediaStage.REMOTE_SUBSCRIBED, 2).elapsedRealtimeNanos >= connect.elapsedRealtimeNanos)
+                assertTrue(stage(NativeMediaStage.DECODER_FIRST_PCM, 2).elapsedRealtimeNanos >= connect.elapsedRealtimeNanos)
+                assertEquals(1, events(NativeMediaStage.MICROPHONE_PUBLISH_STARTED).size)
+                assertEquals(1, events(NativeMediaStage.MICROPHONE_PUBLISHED).size)
+                assertTrue(MediaPermissionObservation.microphoneChecks.get() > permissionChecks)
+                assertEquals(1L, events(NativeMediaStage.MICROPHONE_PUBLISHED).single().measurements["localPublications"])
+                val uplink = receiving.await()
+                assertTrue(uplink.getLong("cleanCyclesWithPostRoll") > 0)
+                val observed = checkNotNull(first)
+                val timing = JSONObject().put("clock", "android.elapsedRealtimeNanos").put("claimDelayMillis", claimDelayMillis)
+                    .put("answerRequestedNs", requested.toString()).put("prejoinClosedNs", retired.elapsedRealtimeNanos.toString())
+                    .put("newConnectStartedNs", connect.elapsedRealtimeNanos.toString())
+                    .put("newConnectCompletedNs", connected.elapsedRealtimeNanos.toString()).put("firstMarkerObservedNs", observed.toString())
+                    .put("publisherStartedNs", events(NativeMediaStage.MICROPHONE_PUBLISH_STARTED).single().elapsedRealtimeNanos.toString())
+                    .put("publisherCompletedNs", events(NativeMediaStage.MICROPHONE_PUBLISHED).single().elapsedRealtimeNanos.toString())
+                    .put("answerConnectedNs", events(NativeMediaStage.CONNECTED).single().elapsedRealtimeNanos.toString())
+                    .put("answerActionCompletedNs", actionCompleted.toString())
+                    .put("claimStartedNs", events(NativeMediaStage.HANDLER_STARTED)
+                        .single { it.elapsedRealtimeNanos in requested..actionCompleted }.elapsedRealtimeNanos.toString())
+                    .put("claimCompletedNs", events(NativeMediaStage.HANDLER_RESPONDED)
+                        .single { it.elapsedRealtimeNanos in requested..actionCompleted }.elapsedRealtimeNanos.toString())
+                    .put("answerToFirstMarkerObservedMs", (observed - requested) / 1_000_000.0)
+                    .put("swapToFirstMarkerObservedMs", (observed - retired.elapsedRealtimeNanos) / 1_000_000.0)
+                if (!muteBeforeAnswer) InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply { putString("claimUplinkTiming", timing.toString()) })
+                val snapshot = if (muteBeforeAnswer) fixture("/fixture/timing/$id") else fixture("/fixture/timing/$id", body = timing)
+                val negotiations = snapshot.getJSONArray("negotiations")
+                assertEquals(2, negotiations.length())
+                assertEquals(0, negotiations.getJSONObject(0).getInt("audioPublications"))
+                assertEquals(0, negotiations.getJSONObject(0).getInt("audioPublisherOffers"))
+                assertEquals(1, negotiations.getJSONObject(1).getInt("audioPublications"))
+                assertEquals(1, negotiations.getJSONObject(1).getInt("audioPublisherOffers"))
+                assertEquals(0, negotiations.getJSONObject(1).getInt("publisherIceRestarts"))
+                assertTrue((0 until negotiations.length()).all { negotiations.getJSONObject(it).getInt("decodeErrors") == 0 &&
+                    negotiations.getJSONObject(it).getInt("truncatedEvents") == 0 })
+                InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
+                    putString("claimNegotiationCounts", negotiations.toString())
+                    putString("claimReceiverTiming", snapshot.getJSONObject("receiver").toString())
+                })
+                val offers = audioOffers(negotiations.getJSONObject(1))
+                assertEquals("Answer negotiates its audio sender exactly once", 1, offers.size)
+                assertEquals(1, offers.single().getInt("audioSections"))
+                assertFalse("Adding audio must not restart existing ICE", offers.single().getBoolean("iceChanged"))
+                assertTrue(present())
+                assertTrue(events(NativeMediaStage.ANSWER_FAILED).isEmpty())
+                assertEquals("connected", current()?.get("status"))
+            } catch (error: Throwable) {
+                failure = error
+                val timing = org.json.JSONArray(signals.takeLast(64).map { JSONObject().put("stage", it.stage.value)
+                    .put("atNs", it.elapsedRealtimeNanos.toString()).put("measurements", JSONObject(it.measurements))
+                    .put("permissionUnavailable", it.reason == "PUBLISH_PERMISSION_NOT_GRANTED") })
+                InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply { putString("claimFailureTimeline", timing.toString()) })
+                throw error
+            } finally {
+                try { withContext(NonCancellable) {
+                    if (present()) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
+                    withTimeout(7000) { while (present() || TelecomEvidence.calls().isNotEmpty()) delay(20) }
+                    fixture("/fixture/close/$id", reset = true)
+                } } catch (cleanup: Throwable) {
+                    failure?.addSuppressed(cleanup) ?: throw cleanup
+                } finally {
+                answerHooks.close()
+                NativeMediaSignals.observers -= observer
+                ConversationActions.configure(previousHandler)
+                if (previousFactory == null) NativeMediaRegistry.factories.remove("livekit")
+                else NativeMediaRegistry.factories["livekit"] = previousFactory
+                engine.nativeMedia = previousMedia; engine.policy = previousPolicy
+                }
+            }
+        }
+    }
+
+    private fun audioOffers(connection: JSONObject): List<JSONObject> {
+        val events = connection.getJSONArray("events")
+        return (0 until events.length()).map { events.getJSONObject(it) }.filter {
+            it.getInt("direction") == 0 && it.getInt("kind") == 1 && it.getInt("audioSections") > 0
+        }
+    }
+
     @Test fun captureCallbackGateReadDoesNotWaitForTheRtcExecutor() = runBlocking {
         withContext(Dispatchers.Main) {
             val room = LiveKit.create(context)
@@ -118,11 +310,13 @@ class MediaHookFeasibilityTest {
         assertEquals(generation, peer.getLong("generation"))
     }
 
-    private suspend fun peerAudio(id: String, generation: Long, within: Long = 5000) = withTimeout(within) {
+    private suspend fun peerAudio(id: String, generation: Long, within: Long = 5000,
+        markerObserved: (Long) -> Unit = {}) = withTimeout(within) {
         var peer: JSONObject
         do {
             delay(40); peer = fixture("/fixture/markers/$id")
             healthy(peer, generation)
+            if (peer.getLong("markers") > 0) markerObserved(android.os.SystemClock.elapsedRealtimeNanos())
         } while (peer.getLong("cleanCyclesWithPostRoll") < 1)
         peer
     }
@@ -294,13 +488,21 @@ class MediaHookFeasibilityTest {
                 val grant = media.keys().asSequence().associateWith { media.get(it) }
                 assertEquals("reported", engine.incoming(IncomingCallPush(id, "event-$id",
                     mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant).payload())["status"])
+                step = "receive-only prejoin"
+                stage(NativeMediaStage.PREJOINED)
+                val prejoined = signals.first { it.stage == NativeMediaStage.PREJOINED }
+                assertEquals(0L, prejoined.measurements["localMicrophones"])
+                assertEquals(0L, prejoined.measurements["localPublications"])
+                assertTrue(signals.none { it.stage == NativeMediaStage.MICROPHONE_PUBLISH_STARTED })
+                hooks.beginPhase()
+                withTimeout(3000) { while (hooks.decoded().tones < 5 || hooks.output().blocks < 10) delay(10) }
+                silenceWithLiveDecodedAudio(hooks)
+                assertEquals(0L, hooks.injectedFrames.get())
+                engine.mute(id, true)
+                step = "muted answer"
+                engine.join(id); stage(NativeMediaStage.CONNECTED)
                 step = "receiver subscription"
-                awaitMediaReceiver({ signals.any { it.stage == NativeMediaStage.PREJOINED } },
-                    { fixture("/fixture/markers/$id") }, onPrejoined = {
-                        step = "muted publication"
-                        assertTrue(hooks.publicationIdentity().muted)
-                        step = "receiver subscription"
-                    })
+                awaitMediaReceiver({ true }, { fixture("/fixture/markers/$id") })
                 step = "muted publication"
                 assertTrue(hooks.directArrayVerified)
                 val publication = hooks.publicationIdentity()
@@ -333,7 +535,7 @@ class MediaHookFeasibilityTest {
                     "AEC=${options.echoCancellation},highPass=${options.highPassFilter}"
                 assertTrue(publication.muted)
                 var peer = fixture("/fixture/markers/$id", reset = true)
-                assertTrue("Muted prejoin requires a subscribed receiver: $peer", peer.getBoolean("running"))
+                assertTrue("Muted answer requires a subscribed receiver: $peer", peer.getBoolean("running"))
                 val generation = peer.getLong("generation")
                 healthy(peer, generation)
                 assertTrue(peer.getBoolean("muted"))
@@ -355,9 +557,6 @@ class MediaHookFeasibilityTest {
                 assertEquals(rate, hooks.captureSampleRate)
                 // Three completed boundaries guarantee at least two whole words inside the muted window.
                 assertTrue("Muted source generated only $mutedWords boundaries", mutedWords >= 3)
-                hooks.beginPhase()
-                withTimeout(3000) { while (hooks.decoded().tones < 5 || hooks.output().blocks < 10) delay(10) }
-                silenceWithLiveDecodedAudio(hooks)
                 assertFalse(signals.any { it.stage == NativeMediaStage.CAPTURE_BEFORE_AUTHORITY ||
                     it.stage == NativeMediaStage.CAPTURE_STARTED || it.stage == NativeMediaStage.OUTPUT_BEFORE_AUTHORITY })
                 peer = fixture("/fixture/markers/$id")
@@ -366,8 +565,9 @@ class MediaHookFeasibilityTest {
                 assertEquals("A muted publication must never leak a raw marker", 0L, peer.getLong("markers"))
                 evidence.put("mutedPublication", peer)
 
-                step = "answer"
-                engine.join(id); stage(NativeMediaStage.CONNECTED)
+                step = "unmute"
+                val unmuteRequestedNs = android.os.SystemClock.elapsedRealtimeNanos()
+                engine.mute(id, false); stage(NativeMediaStage.CAPTURE_STARTED)
                 withTimeout(3000) {
                     var codec: Any?
                     do {
@@ -383,9 +583,17 @@ class MediaHookFeasibilityTest {
                 hooks.trace.phase = "answered"
                 hooks.postApm.start()
                 fixture("/fixture/markers/$id", reset = true)
-                val answered = peerAudio(id, generation)
+                var firstUplinkObservedNs: Long? = null
+                val answered = peerAudio(id, generation) { observed ->
+                    if (firstUplinkObservedNs == null) firstUplinkObservedNs = observed
+                }
+                evidence.put("uplinkTiming", JSONObject().put("clock", "android.elapsedRealtimeNanos")
+                    .put("unmuteRequestedNs", unmuteRequestedNs.toString())
+                    .put("firstMarkerObservedNs", firstUplinkObservedNs?.toString())
+                    .put("unmuteToFirstMarkerObservedMs", (checkNotNull(firstUplinkObservedNs) - unmuteRequestedNs) / 1_000_000.0))
                 evidence.put("fromDevice", answered)
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
+                    putString("uplinkTiming", evidence.getJSONObject("uplinkTiming").toString())
                     putString("tonesV2", answered.put("captureRate", hooks.captureSampleRate).toString())
                 })
                 assertSame(publication, hooks.publicationIdentity()); assertFalse(publication.muted)
@@ -500,6 +708,7 @@ class MediaHookFeasibilityTest {
                                 withTimeout(7000) {
                                     if (present()) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                                     while (present() || TelecomEvidence.calls().isNotEmpty()) delay(20)
+                                    fixture("/fixture/close/$id", reset = true)
                                 }
                             } catch (cleanup: Throwable) {
                                 val primary = caught

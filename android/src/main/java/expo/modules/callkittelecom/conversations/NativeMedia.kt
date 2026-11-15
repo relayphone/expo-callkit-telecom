@@ -29,6 +29,13 @@ interface NativeMediaSession {
     suspend fun playTones(digits: String): Unit = error("unsupported")
     suspend fun close(reason: String)
 }
+
+/** Built-in preparation after Answer may overlap optional receive warming with activation. */
+internal interface NativeAnsweredMediaPreparation {
+    suspend fun prepareForAnswer(payload: Map<String, Any?>)
+}
+
+private class NativePrejoinRetirementFailure(cause: Throwable) : Exception("PREJOIN_CLOSE_FAILED", cause)
 object NativeMediaRegistry {
     val fetchers = ConcurrentHashMap<String, suspend (Map<String, Any?>) -> Map<String, Any?>>()
     val factories = ConcurrentHashMap<String, (Context) -> NativeMediaSession>()
@@ -54,6 +61,7 @@ internal class NativeMediaController(private val context: Context, private val p
     private val toneJobs = ConcurrentHashMap.newKeySet<Job>()
     @Volatile private var closed = false
     private val closing = AtomicBoolean()
+    private val releaseCompleted = CompletableDeferred<Unit>()
     @Volatile private var desiredMuted = false
     @Volatile private var activated = false
     @Volatile private var activating = false
@@ -65,7 +73,7 @@ internal class NativeMediaController(private val context: Context, private val p
     }
 
     @Suppress("UNCHECKED_CAST")
-    private suspend fun prepare() = serial.withLock {
+    private suspend fun prepare(afterAnswer: Boolean = false) = serial.withLock {
         currentCoroutineContext().ensureActive(); check(!closed)
         if (session == null) {
             val adapter = policy.optString("media", "webrtc")
@@ -100,7 +108,8 @@ internal class NativeMediaController(private val context: Context, private val p
         }
         (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.CREDENTIALS_RESOLVED) }
         currentCoroutineContext().ensureActive(); check(!closed)
-        session?.prewarm(resolved) ?: error("Native media adapter unavailable")
+        val media = session ?: error("Native media adapter unavailable")
+        if (afterAnswer && media is NativeAnsweredMediaPreparation) media.prepareForAnswer(resolved) else media.prewarm(resolved)
     }
     override fun prewarm() {
         check(!closed)
@@ -109,6 +118,22 @@ internal class NativeMediaController(private val context: Context, private val p
             withTimeout(8000) { prepare() }
         }
     }
+    override fun prewarmForAnswer(previous: NativeMediaControl?) {
+        check(!closed)
+        previous?.close("replaced")
+        preparation = operations.async {
+            (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.PREWARM_STARTED) }
+            withTimeout(8000) {
+                try { previous?.awaitClosed() }
+                catch (error: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    throw NativePrejoinRetirementFailure(error)
+                }
+                prepare(afterAnswer = true)
+            }
+        }
+    }
+    override suspend fun awaitClosed() { releaseCompleted.await() }
     override fun answered(audioReady: suspend () -> Unit) {
         if (answerJob != null || closed) return
         answerJob = operations.launch {
@@ -121,9 +146,10 @@ internal class NativeMediaController(private val context: Context, private val p
                     }
                     catch (error: Exception) {
                         ensureActive(); check(!closed)
+                        if (error is NativePrejoinRetirementFailure) throw error
                         if (retried) throw error
                         retried = true
-                        preparation = operations.async { withTimeout(8000) { prepare() } }
+                        preparation = operations.async { withTimeout(8000) { prepare(afterAnswer = true) } }
                         preparation!!.await()
                     }
                     (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.PREPARATION_READY) }
@@ -146,7 +172,8 @@ internal class NativeMediaController(private val context: Context, private val p
             } catch (error: Exception) {
                 if (isActive && !closed && !held) {
                     (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.ANSWER_FAILED,
-                        mapOf("phase" to phase, "timeout" to if (error is TimeoutCancellationException) 1L else 0L)) }
+                        mapOf("phase" to phase, "timeout" to if (error is TimeoutCancellationException) 1L else 0L),
+                        reason = if (error is NativePrejoinRetirementFailure) "PREJOIN_CLOSE_FAILED" else null) }
                     withContext(Dispatchers.Main) { if (!closed) failed() }
                 }
             }
@@ -222,9 +249,15 @@ internal class NativeMediaController(private val context: Context, private val p
         lifetime.cancel()
         // Independent cleanup ownership is intentional; no cancelled parent can skip it.
         CoroutineScope(dispatcher + SupervisorJob()).launch {
-            withTimeoutOrNull(1500) { lifetime.join() }
-            runCatching { withTimeout(1500) { serial.withLock { session?.close(reason) } } }
-            coroutineContext[Job]?.cancel()
+            try {
+                val joinFailure = runCatching { withTimeout(1500) { lifetime.join() } }.exceptionOrNull()
+                val closeFailure = runCatching { withTimeout(1500) { serial.withLock { session?.close(reason) } } }.exceptionOrNull()
+                val error = joinFailure ?: closeFailure
+                if (joinFailure != null && closeFailure != null) joinFailure.addSuppressed(closeFailure)
+                if (error == null) releaseCompleted.complete(Unit) else releaseCompleted.completeExceptionally(error)
+            } finally {
+                coroutineContext[Job]?.cancel()
+            }
         }
     }
 }

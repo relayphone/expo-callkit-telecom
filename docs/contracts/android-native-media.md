@@ -3,11 +3,28 @@
 `androidNativeMedia: "livekit"` includes the built-in LiveKit session.
 Production native media uses fresh LiveKit credentials from the incoming push. Reporting to Core-Telecom precedes pre-warm.
 The room connects with automatic remote subscription and the camera disabled.
-A prepublished, muted microphone uses paced recordingless buffers. Remote audio
-tracks and decoding run during pre-warm with native speaker output muted.
+Prejoin is receive-only: it creates no local audio track, publishes nothing, and
+does not check or request microphone permission. Remote audio tracks and decoding
+run during pre-warm with native speaker output muted. A remote track is optional.
 The SDK uses `NoAudioHandler`; Core-Telecom owns focus and communication mode.
 Physical capture and audible output begin only after native answer/audio authority.
-Answer unmutes the existing sender and output without another negotiation.
+Answer creates and publishes the microphone once, after the participant has
+permission to publish microphone audio. Publication starts muted, preserving a
+mute requested before Answer. Permission waiting and publication share the existing
+activation deadline; no repeated publish attempts are made. A missing grant emits
+the media diagnostic reason `PUBLISH_PERMISSION_NOT_GRANTED` and fails activation.
+
+When `ConversationActionResult.Proceed(media)` returns fresh Answer credentials,
+the receive-only prejoin is deliberately closed before the new controller connects
+using that grant. The call and audio authority keep their ownership through the
+swap. Closing the retired prejoin does not report a remote or failure end. The
+replacement receives remote tracks again and publishes one microphone; credentials
+must still match the same server call and participant identity.
+The answered replacement connects without waiting for the optional prejoin decoder
+warm-up; remote reception recovers alongside microphone activation. The ringing
+prejoin retains its existing optional subscriber warm-up window.
+If retirement fails or exceeds the existing cleanup bounds, the replacement does
+not connect or retry preparation; activation fails with `PREJOIN_CLOSE_FAILED`.
 Hold stops physical capture and mutes output while receive decoding stays warm. Decline, timeout and termination close
 the native session through the controller's cancellation lifetime.
 

@@ -39,7 +39,7 @@ function fixture(provider: "livekit" | "webrtc" = "livekit") {
         { stage: "mediaConnectStarted", nanos: nanos(3), measurements },
         ...(provider === "livekit" ? [1, 2] : [0]).map((role) => ({
           stage: "dtlsConnected",
-          nanos: nanos(15),
+          nanos: nanos(provider === "livekit" && role === 1 ? 35 : 15),
           measurements: { role },
         })),
       ],
@@ -207,7 +207,7 @@ test("unsafe audio, repeated connects, and missing or late role-specific DTLS fa
       assert.ok(event);
       if (mode === "missing")
         sample.events = sample.events.filter((value) => value !== event);
-      if (mode === "late") event.nanos = sample.prejoinedNanos + 1;
+      if (mode === "late") event.nanos = provider === "livekit" ? sample.firstAudioNanos + 10_000_000_001 : sample.prejoinedNanos + 1;
       if (mode === "wrong-role") event.measurements.role = 99;
       assert.throws(() => assertNativeMediaJourney(result));
     }
@@ -217,6 +217,15 @@ test("unsafe audio, repeated connects, and missing or late role-specific DTLS fa
     (event) => event.stage !== "mediaConnectStarted"
   );
   assert.throws(() => assertNativeMediaJourney(result));
+});
+
+test("receive-only prejoin does not report publisher readiness before Answer", () => {
+  const result = fixture();
+  const sample = result.samples[0];
+  const publisher = sample.events.find(event => event.stage === "dtlsConnected" && event.measurements.role === 1);
+  assert.ok(publisher);
+  publisher.nanos = sample.prejoinedNanos;
+  assert.throws(() => assertNativeMediaJourney(result), /DTLS publisher must become ready after Answer/);
 });
 
 test("rejects incomplete results, changed bounds, and retired experiment profiles", () => {

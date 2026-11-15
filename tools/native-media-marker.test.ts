@@ -18,6 +18,157 @@ function samples(rate: number) {
 }
 const pcm = samples(48_000);
 
+test("receive-only prejoin and publish claim use different tokens for the same participant", () => {
+  const code = `
+import asyncio, importlib.util
+spec = importlib.util.spec_from_file_location("fixture", "tools/native-media-fixture.py")
+fixture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixture)
+fixture.settings.update(key="test-key", secret="local-test-secret-with-at-least-32-bytes")
+fixture.bots["native-ci-hooks-123"] = (object(), None)
+async def check():
+    prejoin = await fixture.credentials("hooks-123", can_publish=False)
+    answer = await fixture.credentials("hooks-123", can_publish=True)
+    verifier = fixture.api.TokenVerifier(fixture.settings["key"], fixture.settings["secret"])
+    before = verifier.verify(prejoin["token"])
+    after = verifier.verify(answer["token"])
+    assert before.video.can_publish is False and before.video.can_subscribe is True
+    assert before.video.can_publish_data is False
+    assert after.video.can_publish is True and after.video.can_subscribe is True
+    assert prejoin["token"] != answer["token"]
+    assert before.identity == after.identity == prejoin["identity"] == answer["identity"]
+    assert before.video.room == after.video.room == prejoin["room"] == answer["room"]
+asyncio.run(check())
+`;
+  execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], { timeout: 15_000, killSignal: "SIGKILL" });
+});
+
+test("claim evidence is numeric and closing a completed test retires only its fixture room", () => {
+  const code = `
+import asyncio, importlib.util, json, pathlib, tempfile
+from types import SimpleNamespace
+spec = importlib.util.spec_from_file_location("fixture", "tools/native-media-fixture.py")
+fixture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixture)
+fixture.settings["deviceAuth"] = "test"
+class Request:
+    headers = {"Authorization": "Bearer test"}
+    match_info = {"server_id": "hooks-123"}
+    def __init__(self, body=None): self.body = body
+    async def json(self): return self.body
+class Room:
+    closed = False
+    async def disconnect(self): self.closed = True
+async def idle(): await asyncio.Event().wait()
+async def check():
+    first, other = Room(), Room()
+    publisher, receiver, untouched = [asyncio.create_task(idle()) for _ in range(3)]
+    fixture.bots.update({"native-ci-hooks-123": (first, publisher), "native-ci-hooks-456": (other, untouched)})
+    fixture.room_receivers["native-ci-hooks-123"] = {receiver}
+    try:
+        response = await fixture.close_fixture_room(Request())
+        assert response.status == 200 and first.closed and not other.closed
+        assert publisher.cancelled() and receiver.cancelled() and not untouched.done()
+        assert "native-ci-hooks-456" in fixture.bots and "native-ci-hooks-123" not in fixture.bots
+    finally:
+        untouched.cancel()
+        await asyncio.gather(untouched, return_exceptions=True)
+    with tempfile.TemporaryDirectory() as directory:
+        fixture.directory = pathlib.Path(directory)
+        body = dict.fromkeys(["answerRequestedNs", "prejoinClosedNs", "newConnectStartedNs", "newConnectCompletedNs",
+            "firstMarkerObservedNs", "publisherStartedNs", "publisherCompletedNs", "answerConnectedNs",
+            "claimStartedNs", "claimCompletedNs", "answerActionCompletedNs"], "9007199254740993")
+        body.update(clock="android.elapsedRealtimeNanos", claimDelayMillis=2800,
+            answerToFirstMarkerObservedMs=4000.5, swapToFirstMarkerObservedMs=1200.25)
+        assert (await fixture.retain_claim_timing(Request(body))).status == 200
+        saved = fixture.directory / "media-evidence" / "claim-hooks-123.json"
+        assert json.loads(saved.read_text()) == {**body, "negotiations": [], "receiver": None}
+        assert (await fixture.retain_claim_timing(Request({**body, "credentials": "private"}))).status == 400
+        assert (await fixture.retain_claim_timing(Request({**body, "publisherStartedNs": "private"}))).status == 400
+        assert (await fixture.retain_claim_timing(Request({**body, "answerToFirstMarkerObservedMs": float("nan")}))).status == 400
+        assert json.loads(saved.read_text()) == {**body, "negotiations": [], "receiver": None}
+        fixture.uplinks["native-ci-hooks-123"] = SimpleNamespace(started_ns=100, arrivals=[[25, 0, 480]], frames=480,
+            detections=[{"endSamples": 480}], first_marker_ns=200)
+        snapshot = json.loads((await fixture.claim_signaling(Request())).text)
+        assert snapshot == {"negotiations": [], "receiver": {"clock": "python.time.monotonic_ns", "startedNs": "100",
+            "firstPcmNs": "125", "frames": 480, "firstMarkerReceivedNs": "125", "firstMarkerDetectedNs": "200"}}
+        unauthorized = Request()
+        unauthorized.headers = {}
+        assert (await fixture.claim_signaling(unauthorized)).status == 401
+        invalid = Request()
+        invalid.match_info = {"server_id": "../private"}
+        assert (await fixture.claim_signaling(invalid)).status == 400
+asyncio.run(check())
+`;
+  execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], { timeout: 15_000, killSignal: "SIGKILL" });
+});
+
+test("claim signaling counters accept SDK bearer authentication and retain only numeric counts", () => {
+  const code = `
+import importlib.util, json
+spec = importlib.util.spec_from_file_location("fixture", "tools/native-media-fixture.py")
+fixture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixture)
+fixture.settings.update(key="test-key", secret="local-test-secret-with-at-least-32-bytes")
+class Request:
+    query = {}
+    def __init__(self, token): self.headers = {"Authorization": "Bearer " + token}
+token = fixture.token("native-ci-hooks-123", "device-hooks-123", False)
+trace = fixture.signaling_connection(Request(token))
+assert trace is not None
+for request in [fixture.rtc_protocol.SignalRequest(offer=fixture.rtc_protocol.SessionDescription(type="offer", sdp="private-sdp")),
+        fixture.rtc_protocol.SignalRequest(answer=fixture.rtc_protocol.SessionDescription(type="answer", sdp="private-sdp")),
+        fixture.rtc_protocol.SignalRequest(add_track=fixture.rtc_protocol.AddTrackRequest(type=fixture.model_protocol.AUDIO)),
+        fixture.rtc_protocol.SignalRequest(add_track=fixture.rtc_protocol.AddTrackRequest(type=fixture.model_protocol.VIDEO))]:
+    fixture.signaling_request(trace, request.SerializeToString())
+assert {key: trace[key] for key in ["connection", "publisherOffers", "subscriberAnswers", "audioPublications", "decodeErrors"]} == dict(
+    connection=1, publisherOffers=1, subscriberAnswers=1, audioPublications=1, decodeErrors=0)
+assert [event["kind"] for event in trace["events"]] == [1, 2, 3]
+assert trace["clock"] == "python.time.monotonic_ns"
+assert all(event["atNs"].isdigit() for event in trace["events"])
+fixture.signaling_request(trace, b"invalid")
+assert trace["decodeErrors"] == 1
+assert fixture.signaling_connection(Request("invalid")) is None
+assert fixture.signaling_connection(Request(fixture.token("wrong-room", "device-hooks-123"))) is None
+assert "private-sdp" not in json.dumps(fixture.negotiations) and token not in json.dumps(fixture.negotiations)
+`;
+  execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], { timeout: 15_000, killSignal: "SIGKILL" });
+});
+
+test("signaling snapshots distinguish audio addition from ICE restart and stay bounded", () => {
+  const code = `
+import importlib.util, json
+spec = importlib.util.spec_from_file_location("fixture", "tools/native-media-fixture.py")
+fixture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixture)
+fixture.settings.update(key="test-key", secret="local-test-secret-with-at-least-32-bytes")
+class Request:
+    query = {}
+    headers = {"Authorization": "Bearer " + fixture.token("native-ci-hooks-123", "device-hooks-123")}
+trace = fixture.signaling_connection(Request())
+def offer(sdp):
+    message = fixture.rtc_protocol.SignalRequest(offer=fixture.rtc_protocol.SessionDescription(type="offer", sdp=sdp, id=3))
+    fixture.signaling_request(trace, message.SerializeToString())
+data = "v=0\\r\\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\\r\\na=mid:0\\r\\na=ice-ufrag:private-ice\\r\\n"
+audio = "m=audio 9 UDP/TLS/RTP/SAVPF 111\\r\\na=mid:1\\r\\na=sendonly\\r\\na=ice-ufrag:private-audio-ice\\r\\na=ssrc:123 cname:private-name\\r\\n"
+offer(data)
+offer(data + audio)
+offer((data + audio).replace("private-ice", "new-private-ice"))
+first, second, third = trace["events"]
+assert (first["audioSections"], first["dataSections"], first["audioSending"]) == (0, 1, 0)
+assert (second["audioSections"], second["audioSending"], second["audioSsrcs"], second["iceChanged"]) == (1, 1, 1, False)
+assert third["iceChanged"] is True and third["negotiationId"] == 3
+fixture.signaling_response(trace, fixture.rtc_protocol.SignalResponse(answer=fixture.rtc_protocol.SessionDescription(type="answer", sdp=data)).SerializeToString())
+assert trace["events"][-1]["direction"] == 1 and trace["events"][-1]["kind"] == 2
+for _ in range(20): offer(data)
+assert len(trace["events"]) == 16 and trace["truncatedEvents"] == 8
+assert trace["publisherOffers"] == 23 and trace["audioPublisherOffers"] == 2 and trace["publisherIceRestarts"] == 2
+snapshot = json.dumps(trace)
+assert "private" not in snapshot and len(snapshot) < 8192
+`;
+  execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], { timeout: 15_000, killSignal: "SIGKILL" });
+});
+
 test("output PCM acknowledgements do not wait for a suspended detector and scoring failures stay fatal", () => {
   const code = `
 import asyncio, base64, importlib.util, json, sys
