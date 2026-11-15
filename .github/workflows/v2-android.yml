@@ -122,7 +122,9 @@ jobs:
           timeout 180s pip install --disable-pip-version-check -r tools/native-media-requirements.txt
           timeout 180s node tools/prepare-native-media-fixture.ts
       - name: Check media controls before emulator boot
-        run: node tools/run-native-media-journey.ts --host-controls-only
+        run: |
+          node --test tools/native-media-crash-evidence.test.ts
+          node tools/run-native-media-journey.ts --host-controls-only
       - name: Build media qualification APKs before emulator boot
         run: node tools/run-native-media-journey.ts --build-feasibility-only
       - name: Enable KVM
@@ -141,8 +143,15 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048 -qemu -m 2048
           script: |
-            node tools/android-emulator-budget.ts
-            node tools/run-native-media-journey.ts --feasibility-only --controls-prechecked
+            node tools/run-native-media-journey.ts --feasibility-only --controls-prechecked --crash-evidence
+      - name: Upload media crash evidence
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: media-crash-evidence
+          path: android/instrumentation/build/media-crash-evidence
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Stop native media fixture
         if: always()
         run: |
@@ -155,6 +164,7 @@ jobs:
         if: always()
         with:
           name: media-feasibility-results
+          retention-days: 7
           path: |
             android/instrumentation/build/outputs/androidTest-results/**/*.xml
             android/instrumentation/build/media-hook-results.json
