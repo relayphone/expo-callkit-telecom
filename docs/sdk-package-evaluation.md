@@ -32,11 +32,10 @@ To install in an app, first pack the chosen fork checkout with `npm pack`. Insta
 together with the SDK asset, using the actual fork tarball filename:
 
 ```sh
-npm install /path/to/expo-callkit-telecom-2.0.0-alpha.7.tgz https://github.com/relayphone/ios-voip-sdk/releases/download/v0.5.0/relayphone-ios-voip-sdk-0.5.0.tgz
+npm install /path/to/expo-callkit-telecom-2.0.0-alpha.8.tgz https://github.com/relayphone/ios-voip-sdk/releases/download/v0.5.0/relayphone-ios-voip-sdk-0.5.0.tgz
 npx expo install expo-notifications expo-build-properties
 ```
 
-The fork's inherited version still does not identify a published v2 release.
 Build the checkout before packing it (`npm run build`); `npm pack` does not build
 the fork. Use Expo 57 or later. Configure one fork plugin entry, commit native
 customizations, and run `npx expo prebuild --clean` when replacing the old native
@@ -52,7 +51,7 @@ provides Apple's native sources. Inspect a real archive with:
 ```sh
 mkdir -p /tmp/fork-package
 npm pack --pack-destination /tmp/fork-package
-tar -tzf /tmp/fork-package/expo-callkit-telecom-0.5.0.tgz
+tar -tzf /tmp/fork-package/expo-callkit-telecom-2.0.0-alpha.8.tgz
 ```
 
 The consumer resolves both installed package entries, invokes both supported config plugin entries,
