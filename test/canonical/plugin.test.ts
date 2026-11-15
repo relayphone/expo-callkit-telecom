@@ -69,3 +69,28 @@ test("the active plugin rejects the retired answer policy", () => {
     /joinPolicy/
   );
 });
+
+test("Android camera permission is opt-in, idempotent and preserves existing permissions", async () => {
+  for (const supportsVideo of [undefined, false, true]) {
+    const config: ExportedConfig = plugin({ name: "Permissions", slug: "permissions" }, {
+      ios: false, ...(supportsVideo === undefined ? {} : { supportsVideo }),
+    });
+    const manifest: AndroidManifest = { manifest: {
+      $: { "xmlns:android": "http://schemas.android.com/apk/res/android" }, queries: [],
+      "uses-permission": [{ $: { "android:name": "android.permission.RECORD_AUDIO" } }],
+      application: [{ $: { "android:name": ".MainApplication" } }],
+    } };
+    const apply = async (data: AndroidManifest) => {
+      assert.ok(config.mods?.android?.manifest);
+      return (await config.mods.android.manifest({ ...config, modResults: data, modRawConfig: config,
+        modRequest: { projectRoot: "/tmp/permissions", platformProjectRoot: "/tmp/permissions/android",
+          platform: "android", modName: "manifest", introspect: true } })).modResults;
+    };
+    const result = await apply(await apply(manifest));
+    const permissions = result.manifest["uses-permission"]?.map(p => p.$["android:name"]);
+    assert.equal(permissions?.filter(p => p === "android.permission.CAMERA").length, supportsVideo ? 1 : 0);
+    assert.ok(permissions?.includes("android.permission.RECORD_AUDIO"));
+  }
+  assert.throws(() => Reflect.apply(plugin, undefined, [{ name: "Bad", slug: "bad" },
+    { ios: false, supportsVideo: "yes" }]), /supportsVideo must be a boolean/);
+});

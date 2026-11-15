@@ -10,6 +10,7 @@ value class ConversationCommandCode private constructor(val value: String) {
         val DEADLINE_EXCEEDED = ConversationCommandCode("deadline_exceeded")
         val HANDLER_FAILED = ConversationCommandCode("handler_failed")
         val UNKNOWN_CONVERSATION = ConversationCommandCode("unknown_conversation")
+        val NOT_FOREGROUND = ConversationCommandCode("not_foreground")
         val INVALID_ARGUMENTS = ConversationCommandCode("invalid_arguments")
         val UNSUPPORTED = ConversationCommandCode("unsupported")
         val CONVERSATION = ConversationCommandCode("conversation")

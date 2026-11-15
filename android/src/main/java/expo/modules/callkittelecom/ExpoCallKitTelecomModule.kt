@@ -3,6 +3,7 @@ package expo.modules.callkittelecom
 import android.content.pm.PackageManager
 import expo.modules.callkittelecom.conversations.CommandRejection
 import expo.modules.callkittelecom.conversations.ConversationEngine
+import expo.modules.callkittelecom.conversations.MediaPermissions
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
@@ -13,6 +14,7 @@ class ExpoCallKitTelecomModule : Module() {
     private lateinit var engine: ConversationEngine
     private val owner = Any()
     private var epoch = 0L
+    private val mediaPermissions by lazy { MediaPermissions(ExpoMediaPermissionAccess(appContext)) }
     private suspend fun <T> command(body: suspend () -> T): T = engine.jobs.async {
         try { check(engine.bridgeOwner === owner); body() }
         catch (error: Exception) {
@@ -43,6 +45,11 @@ class ExpoCallKitTelecomModule : Module() {
         AsyncFunction("getConversations") Coroutine { -> command { engine.snapshot } }
         AsyncFunction("getAudioRoutes") Coroutine { -> command { engine.audioRoutes() } }
         AsyncFunction("getPushToken") Coroutine { -> command { engine.pushTokenSnapshot() } }
+        AsyncFunction("getMediaPermissions") Coroutine { -> command { mediaPermissions.get() } }
+        AsyncFunction("requestMediaPermissions") Coroutine { kinds: List<String> -> command { mediaPermissions.request(kinds) } }
+        AsyncFunction("conversationMediaReadiness") Coroutine { id: String -> command {
+            mediaPermissions.readiness(id, engine::mediaPermissionVideo)
+        } }
         AsyncFunction("reportIncomingConversation") Coroutine { payload: Map<String, Any?> -> command { engine.incoming(payload) } }
         AsyncFunction("receiveCallEnded") Coroutine { payload: Map<String, Any?> -> command { engine.receiveCallEnded(payload) } }
         AsyncFunction("startConversation") Coroutine { options: Map<String, Any?> -> command { engine.start(options) } }
