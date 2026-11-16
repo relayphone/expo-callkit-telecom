@@ -2,6 +2,7 @@
 
 package expo.modules.callkittelecom.conversations
 
+import android.Manifest
 import android.media.AudioDeviceInfo
 import android.net.Uri
 import android.os.Build
@@ -14,22 +15,47 @@ import androidx.core.telecom.internal.*
 import androidx.core.telecom.internal.utils.EndpointUtils
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
 import java.util.UUID
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Rule
 import org.junit.runner.RunWith
 
 /** Execute the dependency's actual implementations; no copied implementation or source inspection. */
 @RunWith(AndroidJUnit4::class)
 class CoreTelecomCompatibilityTest {
+    @get:Rule val permissions = GrantPermissionRule.grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private fun attributes(video: Boolean = false) = CallAttributesCompat("Compatibility", Uri.parse("sip:compatibility"),
         CallAttributesCompat.DIRECTION_INCOMING, if (video) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL,
         CallAttributesCompat.SUPPORTS_SET_INACTIVE)
     private fun endpoint(name: String, type: Int) = CallEndpointCompat(name, type, ParcelUuid(UUID.randomUUID()))
+
+    @Test fun overlappingCoreSetupRejectsAndTheFirstCallStillRemoves() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val manager = CallsManager(context)
+            manager.registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE or CallsManager.CAPABILITY_SUPPORTS_VIDEO_CALLING,
+                backwardsCompatSdkLevel = CORE_LEGACY_THROUGH_SDK)
+            val attributes = CallAttributesCompat("Setup", Uri.parse("sip:setup"), CallAttributesCompat.DIRECTION_OUTGOING)
+            val ready = CompletableDeferred<CallControlScope>()
+            val first = launch(start = CoroutineStart.UNDISPATCHED) {
+                manager.addCall(attributes, {}, {}, {}, {}) { ready.complete(this) }
+            }
+            try {
+                assertFalse("First setup must still be pending", ready.isCompleted)
+                val failure = runCatching { withTimeout(3000) { manager.addCall(attributes, {}, {}, {}, {}) {} } }.exceptionOrNull()
+                assertTrue("Overlapping Core setup must be rejected", failure is CallException)
+                assertEquals(CallException.ERROR_CALL_NOT_PERMITTED_AT_PRESENT_TIME, (failure as CallException).code)
+                assertTrue(withTimeout(5000) { ready.await() }.disconnect(DisconnectCause(DisconnectCause.LOCAL)) is CallControlResult.Success)
+                withTimeout(5000) { first.join() }
+                withTimeout(5000) { while (TelecomEvidence.calls().isNotEmpty()) delay(20) }
+            } finally { first.cancelAndJoin() }
+        }
+    }
 
     @Test fun legacyVoiceVideoAndAnswerAsAudioUseCorrectPlatformTypesAndMuteDeduplicates() = runBlocking {
         withContext(Dispatchers.Main) {

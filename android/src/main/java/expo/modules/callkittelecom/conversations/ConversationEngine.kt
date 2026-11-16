@@ -83,7 +83,8 @@ class ConversationEngine(val context: Context) {
     }
     internal fun canWarmIncoming(id: String): Boolean = calls[id]?.let { !it.terminal && !it.ending && !it.ringExpired && it.incoming?.intent == null } == true
     private val telecom = CallsManager(context).apply {
-        registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE or CallsManager.CAPABILITY_SUPPORTS_VIDEO_CALLING)
+        registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE or CallsManager.CAPABILITY_SUPPORTS_VIDEO_CALLING,
+            backwardsCompatSdkLevel = CORE_LEGACY_THROUGH_SDK)
     }
     internal var coreAdmission = CoreCallAdmission { attributes, callbacks, admitted ->
         telecom.addCall(attributes, callbacks.answer, callbacks.disconnect, callbacks.activate, callbacks.deactivate, admitted)

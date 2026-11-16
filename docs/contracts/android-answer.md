@@ -1,7 +1,8 @@
 # Android answer and notification navigation
 
-Audio answers preserve the call's audio-only platform state. On transactional
-Android 14–16, the SDK activates an incoming audio call through Core-Telecom
+Audio calls preserve their audio-only platform state. Android 14 uses Core-Telecom's
+public legacy compatibility path: its transactional incoming-call code also
+misinterprets the call type before Answer. On transactional Android 15–16, the SDK activates an incoming audio call through Core-Telecom
 `setActive()`, avoiding the platform's answer call-type remapping bug. Video
 answers still use `answer(CALL_TYPE_VIDEO_CALL)`. Legacy answers use Core-Telecom
 1.1.0's call-type conversion; Android 17+ uses the normal answer API.
@@ -17,6 +18,12 @@ Sources: [Core-Telecom 1.0.1 sources](https://dl.google.com/dl/android/maven2/an
 (`CallSessionLegacy.kt` lines 443–446 and `CallSession.kt` lines 474–479, 614–616),
 [Core-Telecom 1.1.0 legacy conversion](https://android.googlesource.com/platform/frameworks/support/+/b44a77505e345a9f0af437b0405e3f6cd3b534b2/core/core-telecom/src/main/java/androidx/core/telecom/internal/CallSessionLegacy.kt#549),
 and [platform CallControl](https://developer.android.com/reference/android/telecom/CallControl).
+The [Android 16 sequencing adapter](https://android.googlesource.com/platform/packages/services/Telecomm/+/refs/heads/android16-release/src/com/android/server/telecom/callsequencing/TransactionalCallSequencingAdapter.java#55)
+uses the same activation transactions for these two operations; its answer
+completion additionally writes the raw video-state argument (lines 302–309).
+Android 14's [incoming transaction](https://android.googlesource.com/platform/packages/services/Telecomm/+/refs/heads/android14-release/src/com/android/server/telecom/voip/IncomingCallTransaction.java#80)
+copies the call type directly to the incoming video-state extra, requiring the
+legacy compatibility path there.
 
 The standard incoming CallStyle Answer action opens the package's launch Activity
 directly. An Expo Activity lifecycle listener handles its conversation ID and

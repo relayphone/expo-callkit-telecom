@@ -29,8 +29,8 @@ class CoreCallAnswerTest {
         for (sdk in listOf(26, 33, 34, 35, 36, 37)) {
             val control = Control()
             assertTrue(answerCoreCall(control, video = false, sdkInt = sdk) is CallControlResult.Success)
-            assertEquals(if (sdk in 34..36) 1 else 0, control.activations)
-            assertEquals(if (sdk in 34..36) emptyList<Int>() else listOf(CallAttributesCompat.CALL_TYPE_AUDIO_CALL), control.answers)
+            assertEquals(if (sdk in 35..36) 1 else 0, control.activations)
+            assertEquals(if (sdk in 35..36) emptyList<Int>() else listOf(CallAttributesCompat.CALL_TYPE_AUDIO_CALL), control.answers)
         }
     }
     @Test fun videoStillUsesTheCoreVideoCallTypeOnEveryPath() = runBlocking {

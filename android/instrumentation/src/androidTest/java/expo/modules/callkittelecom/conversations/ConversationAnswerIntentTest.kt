@@ -99,6 +99,9 @@ class ConversationAnswerIntentTest {
             NotificationLaunchActivity.lastIntent?.getStringExtra(ConversationNotificationIntents.EXTRA_CONVERSATION_ID) != id) delay(10)
     }
     private suspend fun audioAnswer(notification: Boolean) = fixture { id, answers ->
+        assertEquals(false, state(id)?.get("isVideo"))
+        assertEquals("Incoming platform call must start audio-only", "A",
+            Regex("vidst=([^,\\]]+)").find(TelecomEvidence.calls().single())?.groupValues?.get(1))
         withTimeout(5000) { while (engine.audioRoutes()["current"] == null) delay(10) }
         val available = (engine.audioRoutes()["routes"] as List<*>).filterIsInstance<Map<*, *>>()
         if (available.any { it["type"] == "builtInReceiver" }) {
