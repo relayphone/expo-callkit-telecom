@@ -14,6 +14,16 @@
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
   <application android:name="expo.modules.callkittelecom.conversations.MediaPermissionObservationApplication"
     android:label="Conversations tests" android:networkSecurityConfig="@xml/media_network_security">
+    <activity android:name="expo.modules.callkittelecom.conversations.NotificationLaunchActivity"
+      android:exported="true" android:launchMode="singleTop">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+    <activity android:name="expo.modules.callkittelecom.conversations.NotificationAlternateActivity" android:exported="false" />
+    <activity-alias android:name=".CallActivity"
+      android:targetActivity="expo.modules.callkittelecom.conversations.NotificationAlternateActivity" android:exported="false" />
     <activity android:name="expo.modules.callkittelecom.conversations.PushFaultActivity" android:exported="true"
       android:permission="android.permission.DUMP" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     <activity android:name="expo.modules.callkittelecom.conversations.DndBootstrapActivity" android:exported="true"

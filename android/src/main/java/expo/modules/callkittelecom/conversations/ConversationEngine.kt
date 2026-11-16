@@ -805,7 +805,7 @@ class ConversationEngine(val context: Context) {
         requireLive(current)
         current.timeout?.cancel()
         native(id, NativePerformedAction.Answer, origin) {
-            checked(control(id).answer(if (current.state["isVideo"] == true) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL))
+            checked(answerCoreCall(control(id), current.state["isVideo"] == true))
         }
     }
     /** Same entry point used by Core's onAnswer callback, including app-request echoes. */

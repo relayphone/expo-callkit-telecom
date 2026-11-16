@@ -5,7 +5,7 @@ plugins {
 
 android {
   namespace 'expo.modules.callkittelecom.instrumentation'
-  compileSdk 35
+  compileSdk 36
   compileOptions {
     sourceCompatibility JavaVersion.VERSION_17
     targetCompatibility JavaVersion.VERSION_17
@@ -46,7 +46,7 @@ kotlin { jvmToolchain(17) }
 dependencies {
   implementation "io.livekit:livekit-android:2.29.2"
   implementation "com.squareup.okhttp3:okhttp:4.12.0"
-  implementation "androidx.core:core-telecom:1.0.1"
+  implementation "androidx.core:core-telecom:1.1.0"
   implementation "androidx.core:core-ktx:1.15.0"
   implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2"
   implementation "com.google.firebase:firebase-messaging:24.1.0"

@@ -69,6 +69,7 @@ class ConversationService : Service() {
             val id = nextId++
             manager.notify(id, notification(context, card(context, state, null)))
             manager.cancel(id)
+            ConversationNotificationIntents.retire(state["id"] as String)
         }
         internal fun refresh(context: Context, states: List<Map<String, Any?>>) {
             if (roster.refresh(states)) render(context)
@@ -154,11 +155,13 @@ class ConversationService : Service() {
             }
         }
         fun remove(context: Context, id: String) {
+            ConversationNotificationIntents.retire(id)
             endingIds.remove(id)
             endingCards.remove(id)
             if (roster.remove(id)) render(context)
         }
         internal fun ending(context: Context, id: String) {
+            ConversationNotificationIntents.retire(id)
             endingIds.getOrPut(id) { if (foregroundCard?.id == id) checkNotNull(foregroundId)
                 else waitingCards[id]?.notificationId ?: nextId++ }
             if (roster.ending(id)) render(context)
@@ -302,14 +305,14 @@ class ConversationService : Service() {
                 .setSmallIcon(android.R.drawable.sym_call_incoming).setOngoing(true).setOnlyAlertOnce(!ringing)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
                 .setFullScreenIntent(content.fullScreenIntent, ringing)
-                .setContentIntent(content.contentIntent)
+                .setContentIntent(content.contentIntent ?: ConversationNotificationIntents.activity(context, id))
             if (content.heldSummary != null) {
                 builder.setContentText(content.heldSummary)
                 // Compat CallStyle reads extras directly when rendering on API 26–30.
                 builder.addExtras(Bundle().apply { putCharSequence(NotificationCompat.EXTRA_TEXT, content.heldSummary) })
             }
             content.extraActions.forEach { builder.addAction(it) }
-            builder.setStyle(if (ringing) NotificationCompat.CallStyle.forIncomingCall(person, action("decline"), action("join"))
+            builder.setStyle(if (ringing) NotificationCompat.CallStyle.forIncomingCall(person, action("decline"), ConversationNotificationIntents.activity(context, id, answer = true))
                 else NotificationCompat.CallStyle.forOngoingCall(person, action("end")))
             return builder.build().apply {
                 if (ringing) flags = flags or Notification.FLAG_INSISTENT
@@ -373,6 +376,7 @@ class ConversationReceiver : BroadcastReceiver() {
 class ConversationActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ConversationNotificationIntents.receive(this, intent)
         packageManager.getLaunchIntentForPackage(packageName)?.let { startActivity(it) }
         finish()
     }
