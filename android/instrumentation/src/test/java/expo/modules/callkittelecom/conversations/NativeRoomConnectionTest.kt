@@ -140,4 +140,20 @@ class NativeRoomConnectionTest {
             assertEquals(if (reason == null) 0 else 1, room.releases)
         }
     }
+
+    @Test fun releaseMeasuresObservationDrainAndDisconnectEmissionWithoutChangingItsReason() = runBlocking {
+        val signals = mutableListOf<NativeMediaSignal>()
+        var now = 0L
+        val trace = NativeCloseTrace("call", { ++now }, signals::add)
+        val room = FakeRoom()
+        val reasons = mutableListOf<String?>()
+        val connection = NativeRoomConnection(this, { _, reason -> reasons += reason }, room::release)
+        connection.observe(room.events)
+        withContext(trace) { connection.closeForRelease() }
+        assertEquals(listOf("CLIENT_INITIATED"), reasons)
+        assertEquals(0, room.releases)
+        assertEquals(listOf(NativeMediaStage.CLOSE_OBSERVATION_DRAINED, NativeMediaStage.CLOSE_DISCONNECT_EMITTED),
+            signals.map { it.stage })
+        assertTrue(signals.all { it.measurements["completed"] == 1L && it.measurements.getValue("durationNs") > 0 })
+    }
 }

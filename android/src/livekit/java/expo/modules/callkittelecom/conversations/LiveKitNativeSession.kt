@@ -267,21 +267,24 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         if (closed) return@withContext
         closed = true; active = false; pcm.close(); decoded.close(); warmth.close()
         // Instrumentation cleanup cannot interrupt room disposal.
-        runCatching { audioHooks?.close() }
+        runCatching { traceNativeClose(NativeCloseStep.AUDIO_HOOKS) { audioHooks?.close() } }
         // release() initiates a local disconnect after we retire room observation.
         if (room != null) connection?.closeForRelease() else connection?.close()
         connection = null
         publisherWatch?.cancel(); publisherWatch = null
-        scope.cancel(); tracks.forEach { track -> runCatching {
-            track.removeSink(pcm.decoderSink); track.removeSink(pcm.answerSink); track.removeSink(decoded)
-            audioHooks?.let { track.removeSink(it.decodedSink) }
-        } }; tracks.clear()
-        microphone?.let { track ->
-            runCatching { room?.localParticipant?.unpublishTrack(track) }
-            runCatching { track.stopPrewarm(); track.dispose() }
+        scope.cancel()
+        traceNativeClose(NativeCloseStep.TRACKS_AND_SINKS) {
+            tracks.forEach { track -> runCatching {
+                track.removeSink(pcm.decoderSink); track.removeSink(pcm.answerSink); track.removeSink(decoded)
+                audioHooks?.let { track.removeSink(it.decodedSink) }
+            } }; tracks.clear()
+            microphone?.let { track ->
+                runCatching { room?.localParticipant?.unpublishTrack(track) }
+                runCatching { track.stopPrewarm(); track.dispose() }
+            }
         }
         microphone = null; publication = null; captureEnabled = false; recording = null
-        runCatching { room?.release() }; room = null
+        runCatching { traceNativeClose(NativeCloseStep.ROOM_RELEASE) { room?.release() } }; room = null
         NativeMediaSignals.emit(serverId, NativeMediaStage.CLOSED)
     }
 }

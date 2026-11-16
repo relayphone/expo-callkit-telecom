@@ -2,6 +2,8 @@ package expo.modules.callkittelecom.conversations
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import android.os.SystemClock
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -233,4 +235,94 @@ class NativeLifetimeTest {
         }
     }
 
+    @Test fun a2500MillisecondRetirementStillAnswersWithinFiveSeconds() = retirement(2500, true)
+
+    @Test fun a3500MillisecondRetirementFailsWithItsReasonAndMeasurements() = retirement(3500, false)
+
+    private fun retirement(closeMillis: Long, shouldConnect: Boolean) = runBlocking {
+        withContext(Dispatchers.Main) {
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val owner = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            val previousFactory = NativeMediaRegistry.factories["livekit"]
+            val id = "retirement-$closeMillis-${System.nanoTime()}"
+            val signals = CopyOnWriteArrayList<NativeMediaSignal>()
+            val observer = NativeMediaObserver { if (it.serverCallId == id) signals += it }
+            val prepared = CompletableDeferred<Unit>()
+            val result = CompletableDeferred<Boolean>()
+            var creations = 0
+            var activations = 0
+            NativeMediaRegistry.factories["livekit"] = {
+                val old = creations++ == 0
+                object : NativeMediaSession {
+                    override suspend fun prewarm(payload: Map<String, Any?>) { if (old) prepared.complete(Unit) }
+                    override suspend fun activate() { assertFalse(old); activations++ }
+                    override suspend fun setHeld(held: Boolean) {}
+                    override suspend fun setMuted(muted: Boolean) {}
+                    override suspend fun close(reason: String) {
+                        if (old) traceNativeClose(NativeCloseStep.ROOM_RELEASE) { delay(closeMillis) }
+                    }
+                }
+            }
+            val payload = mapOf("serverCallId" to id, "media" to mapOf("provider" to "livekit",
+                "expiresAt" to System.currentTimeMillis() / 1000 + 120))
+            val policy = JSONObject(mapOf("media" to "livekit"))
+            val old = NativeMediaController(context, payload, policy, owner, { fail("Unexpected prejoin failure") }, {})
+            val fresh = NativeMediaController(context, payload, policy, owner,
+                { result.complete(false) }, { result.complete(true) })
+            NativeMediaSignals.observers += observer
+            try {
+                old.prewarm()
+                withTimeout(3000) { prepared.await(); while (!old.isPrewarmed) delay(5) }
+                val requested = SystemClock.elapsedRealtimeNanos()
+                fresh.prewarmForAnswer(old)
+                fresh.answered {}
+                assertEquals(shouldConnect, withTimeout(5000) { result.await() })
+                val elapsed = SystemClock.elapsedRealtimeNanos() - requested
+                assertTrue(elapsed < 5_000_000_000L)
+                withTimeout(1000) { while (signals.none { it.stage == NativeMediaStage.RELEASE_COMPLETED } ||
+                    !shouldConnect && signals.none { it.stage == NativeMediaStage.ANSWER_FAILED }) delay(5) }
+                assertEquals(if (shouldConnect) 2 else 1, creations)
+                assertEquals(if (shouldConnect) 1 else 0, activations)
+                val released = signals.single { it.stage == NativeMediaStage.RELEASE_COMPLETED }
+                assertEquals(if (shouldConnect) 1L else 0L, released.measurements["completed"])
+                assertEquals(if (shouldConnect) 0L else 1L, released.measurements["timeout"])
+                val operation = released.measurements.getValue("operationId")
+                for (stage in listOf(NativeMediaStage.CLOSE_REQUESTED, NativeMediaStage.CLOSE_LIFETIME_JOINED,
+                    NativeMediaStage.CLOSE_SESSION_COMPLETED, NativeMediaStage.CLOSE_ROOM_RELEASED)) {
+                    val signal = signals.single { it.stage == stage && it.measurements["operationId"] == operation }
+                    assertTrue(signal.elapsedRealtimeNanos <= released.elapsedRealtimeNanos)
+                    assertTrue(signal.measurements.getValue("durationNs") >= 0L)
+                    assertTrue(signal.measurements.getValue("startedNs") > 0L)
+                }
+                val room = signals.single { it.stage == NativeMediaStage.CLOSE_ROOM_RELEASED }
+                assertTrue(room.measurements.getValue("durationNs") >= 2_500_000_000L)
+                assertEquals(if (shouldConnect) 1L else 0L, room.measurements["completed"])
+                if (shouldConnect) assertTrue(signals.none { it.stage == NativeMediaStage.ANSWER_FAILED })
+                else {
+                    val failure = signals.single { it.stage == NativeMediaStage.ANSWER_FAILED }
+                    assertEquals("PREJOIN_CLOSE_FAILED", failure.reason)
+                    assertEquals(1L, failure.measurements["phase"])
+                    assertEquals(0L, failure.measurements["timeout"])
+                    assertTrue(failure.elapsedRealtimeNanos >= released.elapsedRealtimeNanos)
+                }
+                InstrumentationRegistry.getInstrumentation().sendStatus(0, android.os.Bundle().apply {
+                    putString("retirementGuardTiming", JSONObject().put("closeMillis", closeMillis)
+                        .put("connected", shouldConnect).put("answerElapsedNs", elapsed.toString())
+                        .put("signals", org.json.JSONArray(signals.map {
+                            JSONObject().put("stage", it.stage.value).put("atNs", it.elapsedRealtimeNanos.toString())
+                                .put("measurements", JSONObject(it.measurements)).put("reason", it.reason ?: JSONObject.NULL)
+                        })).toString())
+                })
+            } finally {
+                fresh.close("ended"); old.close("ended")
+                withContext(NonCancellable) { withTimeout(5000) {
+                    fresh.awaitClosed(); runCatching { old.awaitClosed() }
+                } }
+                NativeMediaSignals.observers -= observer
+                if (previousFactory == null) NativeMediaRegistry.factories.remove("livekit")
+                else NativeMediaRegistry.factories["livekit"] = previousFactory
+                owner.cancel()
+            }
+        }
+    }
 }

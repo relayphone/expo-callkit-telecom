@@ -141,6 +141,7 @@ class MediaHookFeasibilityTest {
                 assertEquals(1, events(NativeMediaStage.REPORTED).size)
                 assertTrue(present())
                 val retired = stage(NativeMediaStage.CLOSED)
+                val released = stage(NativeMediaStage.RELEASE_COMPLETED)
                 val connect = stage(NativeMediaStage.MEDIA_CONNECT_STARTED, 2)
                 val connected = stage(NativeMediaStage.MEDIA_CONNECT_COMPLETED, 2)
                 assertTrue(retired.elapsedRealtimeNanos <= connect.elapsedRealtimeNanos)
@@ -180,6 +181,11 @@ class MediaHookFeasibilityTest {
                 val observed = checkNotNull(first)
                 val timing = JSONObject().put("clock", "android.elapsedRealtimeNanos").put("claimDelayMillis", claimDelayMillis)
                     .put("answerRequestedNs", requested.toString()).put("prejoinClosedNs", retired.elapsedRealtimeNanos.toString())
+                    .put("prejoinReleaseCompletedNs", released.elapsedRealtimeNanos.toString())
+                    .put("retirement", org.json.JSONArray(signals.filter { it.stage in NativeCloseStep.entries.map { step -> step.stage } ||
+                        it.stage == NativeMediaStage.CLOSE_REQUESTED || it.stage == NativeMediaStage.RELEASE_COMPLETED }.map {
+                        JSONObject().put("stage", it.stage.value).put("atNs", it.elapsedRealtimeNanos.toString())
+                            .put("measurements", JSONObject(it.measurements)) }))
                     .put("newConnectStartedNs", connect.elapsedRealtimeNanos.toString())
                     .put("newConnectCompletedNs", connected.elapsedRealtimeNanos.toString()).put("firstMarkerObservedNs", observed.toString())
                     .put("publisherStartedNs", events(NativeMediaStage.MICROPHONE_PUBLISH_STARTED).single().elapsedRealtimeNanos.toString())
@@ -219,6 +225,7 @@ class MediaHookFeasibilityTest {
                 failure = error
                 val timing = org.json.JSONArray(signals.takeLast(64).map { JSONObject().put("stage", it.stage.value)
                     .put("atNs", it.elapsedRealtimeNanos.toString()).put("measurements", JSONObject(it.measurements))
+                    .put("reason", it.reason ?: JSONObject.NULL)
                     .put("permissionUnavailable", it.reason == "PUBLISH_PERMISSION_NOT_GRANTED") })
                 claimTrace.put("creations", creations).put("signals", timing).put("truncatedEvents", maxOf(0, signals.size - 64))
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply { putString("claimFailureTimeline", timing.toString()) })

@@ -245,13 +245,20 @@ internal class NativeMediaController(private val context: Context, private val p
     }
     override fun close(reason: String) {
         if (!closing.compareAndSet(false, true)) return
+        val trace = NativeCloseTrace(payload["serverCallId"] as? String ?: "")
+        trace.requested()
+        releaseCompleted.invokeOnCompletion(trace::settled)
         closed = true
         lifetime.cancel()
         // Independent cleanup ownership is intentional; no cancelled parent can skip it.
-        CoroutineScope(dispatcher + SupervisorJob()).launch {
+        CoroutineScope(dispatcher + SupervisorJob() + trace).launch {
             try {
-                val joinFailure = runCatching { withTimeout(1500) { lifetime.join() } }.exceptionOrNull()
-                val closeFailure = runCatching { withTimeout(1500) { serial.withLock { session?.close(reason) } } }.exceptionOrNull()
+                val joinFailure = runCatching { traceNativeClose(NativeCloseStep.LIFETIME_JOIN) {
+                    withTimeout(1500) { lifetime.join() }
+                } }.exceptionOrNull()
+                val closeFailure = runCatching { traceNativeClose(NativeCloseStep.SESSION) {
+                    withTimeout(3000) { serial.withLock { session?.close(reason) } }
+                } }.exceptionOrNull()
                 val error = joinFailure ?: closeFailure
                 if (joinFailure != null && closeFailure != null) joinFailure.addSuppressed(closeFailure)
                 if (error == null) releaseCompleted.complete(Unit) else releaseCompleted.completeExceptionally(error)
