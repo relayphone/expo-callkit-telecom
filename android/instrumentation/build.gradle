@@ -35,8 +35,10 @@ android {
     // The module's sources with the engine selected by androidNativeMedia: "livekit".
     main.java.srcDirs = ['../src/main/java/expo/modules/callkittelecom/conversations',
       '../src/livekit/java/expo/modules/callkittelecom/conversations', 'src/main/java']
+    main.res.srcDirs += ['../src/main/res']
     androidTest.assets.srcDirs = ['src/androidTest/assets']
     emulatorTest.java.srcDirs = ['src/emulatorTest/java']
+    emulatorTest.res.srcDirs += ['src/debug/res']
     androidTestEmulatorTest.java.srcDirs = ['src/androidTestEmulatorTest/java']
   }
 }

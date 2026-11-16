@@ -15,6 +15,7 @@ import androidx.core.app.Person
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.IconCompat
+import expo.modules.callkittelecom.R
 import kotlinx.coroutines.*
 
 /** CallStyle notification plus phoneCall foreground service for all supported Android versions. */
@@ -68,12 +69,14 @@ class ConversationService : Service() {
             if (roster.put(id, state)) render(context)
         }
         /** DND-suppressed calls must still enter Android's repeat-caller history. */
-        internal fun recordFiltered(context: Context, state: Map<String, Any?>) {
+        internal fun recordFiltered(context: Context, state: Map<String, Any?>): Boolean {
             val manager = context.getSystemService(NotificationManager::class.java)
             val id = nextId++
-            notify(manager, id, notification(context, card(context, state, null)))
+            val accepted = notify(manager, id, notification(context, card(context, state, null),
+                callStyle = state["status"] == "ringing"))
             manager.cancel(id)
             ConversationNotificationIntents.retire(state["id"] as String)
+            return accepted
         }
         internal fun refresh(context: Context, states: List<Map<String, Any?>>) {
             if (roster.refresh(states)) render(context)
@@ -99,7 +102,8 @@ class ConversationService : Service() {
                     foreground = notification(context, refreshed)
                 } else waitingCards[id] = checkNotNull(waiting).copy(card = refreshed)
                 if (refreshed.phase == CallPhase.RINGING) requestRingingPost(context, id, allowCreate = false)
-                else notify(manager, checkNotNull(notificationId), notification(context, refreshed, callStyle = primary).apply {
+                else notify(manager, checkNotNull(notificationId), notification(context, refreshed,
+                    callStyle = primary && previous.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0).apply {
                     flags = flags or (previous.notification.flags and Notification.FLAG_FOREGROUND_SERVICE)
                 })
             }
@@ -318,7 +322,7 @@ class ConversationService : Service() {
             if (callStyle) builder.setStyle((if (ringing) NotificationCompat.CallStyle.forIncomingCall(person, action("decline"), ConversationNotificationIntents.activity(context, id, answer = true))
                 else NotificationCompat.CallStyle.forOngoingCall(person, action("end"))).setIsVideo(card.isVideo))
             else builder.setContentTitle(content.title)
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Hang Up", action("end"))
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, context.getString(R.string.expo_callkit_telecom_hang_up), action("end"))
             content.extraActions.forEach { builder.addAction(it) }
             return builder.build().apply {
                 if (ringing) flags = flags or Notification.FLAG_INSISTENT
