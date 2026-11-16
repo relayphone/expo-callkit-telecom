@@ -79,6 +79,78 @@ class NativeWarmAudioTest {
         }
     }
 
+    @Test fun aHeldGenerationCannotBorrowTheFirstAnswersCaptureAuthorization() = runBlocking {
+        withAudio("warm-audio-held-generation") {
+            audio.pumpStarted()
+            val first = audio.armCapture()
+            audio.enableRecording()
+            positiveRead(audio)
+            withTimeout(2000) { first.await() }
+            audio.revokeCapture()
+            audio.pumpStopped()
+            audio.pumpStarted()
+            repeat(2) { positiveRead(audio) }
+            audio.pumpStopped()
+            drainSignals()
+            val violations = signals.filter { it.stage == NativeMediaStage.CAPTURE_BEFORE_AUTHORITY }
+            assertEquals(1, violations.size)
+            assertEquals(0L, violations.single().measurements["epoch"])
+            val starts = signals.filter { it.stage == NativeMediaStage.CAPTURE_STARTED }
+            assertEquals(2, starts.size)
+            assertTrue(violations.single().elapsedRealtimeNanos >= starts.first().elapsedRealtimeNanos)
+        }
+    }
+
+    @Test fun aRestartAfterCloseReassertsRecordinglessWithoutPublishingSignals() = runBlocking {
+        withAudio("warm-audio-closed-restart") {
+            var recording = true
+            audio.bindRecordingDevice { recording = it }
+            audio.armCapture()
+            audio.enableRecording()
+            assertTrue(recording)
+            audio.close()
+            recording = true
+            audio.pumpStarted()
+            assertFalse(recording)
+            drainSignals()
+            assertTrue(signals.isEmpty())
+        }
+    }
+
+    @Test fun everyCandidateRestartDuringHoldUsesTheCurrentGenerationsRecordingGate() = runBlocking {
+        for (path in RestartPath.entries) {
+            withAudio("warm-audio-held-restart-$path") {
+                val adm = RestartingAdm(audio)
+                adm.startPump()
+                val first = audio.armCapture()
+                assertTrue(audio.enableRecording())
+                assertEquals(960, adm.read())
+                withTimeout(2000) { first.await() }
+                repeat(2) {
+                    audio.revokeCapture()
+                    assertFalse("Recording must be disabled before $path", adm.recordingEnabled)
+                    val readsBeforeHold = adm.physicalReads
+                    adm.restartFrom(path)
+                    repeat(3) {
+                        assertEquals("$path restarted a held pump with a positive read", 0, adm.read())
+                    }
+                    assertEquals(readsBeforeHold, adm.physicalReads)
+                    assertFalse("A held generation cannot enable recording", audio.enableRecording())
+                    val resumed = audio.armCapture()
+                    assertTrue(audio.enableRecording())
+                    assertEquals(960, adm.read())
+                    withTimeout(2000) { resumed.await() }
+                }
+                audio.pumpStopped()
+                drainSignals()
+                assertFalse("$path read before current-generation authorization", signals.any {
+                    it.stage == NativeMediaStage.CAPTURE_BEFORE_AUTHORITY
+                })
+                assertEquals(3, signals.count { it.stage == NativeMediaStage.CAPTURE_STARTED })
+            }
+        }
+    }
+
     @Test fun recordingReleaseWakesTheSilentPumpAndOnlyAPositiveReadCompletesCaptureReadiness() = runBlocking {
         withAudio("warm-audio-recording-release") {
             audio.pumpStarted()
@@ -87,7 +159,7 @@ class NativeWarmAudioTest {
                 val ready = audio.armCapture()
                 assertFalse(ready.isCompleted)
                 // Represents the caller enabling the ADM between arm and publication.
-                audio.publishRecordingEnabled()
+                audio.enableRecording()
                 pump.awaitFinished()
                 withTimeout(2000) { ready.await() }
                 assertEquals(listOf(CAPTURE_TIMESTAMP, CAPTURE_TIMESTAMP), pump.timestamps.toList())
@@ -107,7 +179,7 @@ class NativeWarmAudioTest {
             val first = audio.armCapture()
             assertTrue(replaced.isCancelled)
             assertFalse(first.isCompleted)
-            audio.publishRecordingEnabled()
+            audio.enableRecording()
             positiveRead(audio)
             withTimeout(2000) { first.await() }
             audio.pumpStopped()
@@ -117,7 +189,7 @@ class NativeWarmAudioTest {
             assertFalse("The previous positive read must not satisfy a new epoch", second.isCompleted)
             silentRead(audio)
             assertFalse("A recordingless callback must not satisfy capture readiness", second.isCompleted)
-            audio.publishRecordingEnabled()
+            audio.enableRecording()
             positiveRead(audio)
             withTimeout(2000) { second.await() }
             audio.pumpStopped()
@@ -286,6 +358,44 @@ class NativeWarmAudioTest {
         init { NativeMediaSignals.observers += observer }
         suspend fun drainSignals() { withContext(Dispatchers.Main) {} }
         override fun close() { audio.close(); NativeMediaSignals.observers -= observer }
+    }
+
+    private enum class RestartPath { UNPUBLISH, TRACK_STOP, DISPOSE, SET_MICROPHONE, ADM_INITIATED }
+
+    /** Each possible caller can restart the same ADM pump; none grants recording permission. */
+    private class RestartingAdm(private val audio: NativeWarmAudio) {
+        var recordingEnabled = false
+            private set
+        var physicalReads = 0
+            private set
+        init { audio.bindRecordingDevice { recordingEnabled = it } }
+        fun startPump() { audio.pumpStarted() }
+        fun restartFrom(path: RestartPath) {
+            when (path) {
+                RestartPath.UNPUBLISH -> unpublishTrack()
+                RestartPath.TRACK_STOP -> stopTrack()
+                RestartPath.DISPOSE -> disposeTrack()
+                RestartPath.SET_MICROPHONE -> setMicrophone()
+                RestartPath.ADM_INITIATED -> restartPump()
+            }
+        }
+        private fun unpublishTrack() = restartPump()
+        private fun stopTrack() = restartPump()
+        private fun disposeTrack() = restartPump()
+        private fun setMicrophone() = restartPump()
+        private fun restartPump() {
+            audio.pumpStopped()
+            // A new native recording thread can observe a stale enabled flag.
+            recordingEnabled = true
+            audio.pumpStarted()
+        }
+        fun read(): Int {
+            val bytesRead = if (recordingEnabled) 960 else 0
+            if (bytesRead > 0) physicalReads++
+            audio.onBuffer(ByteBuffer.allocateDirect(960), AudioFormat.ENCODING_PCM_16BIT,
+                1, SAMPLE_RATE, bytesRead, CAPTURE_TIMESTAMP)
+            return bytesRead
+        }
     }
 
     /** A device callback blocked by a five-second silent buffer, rather than by a test latch. */

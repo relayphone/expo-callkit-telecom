@@ -35,9 +35,9 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
     private val outputMute = NativeOutputMute { emit(NativeMediaStage.OUTPUT_MUTE_BOUNDARY_MISSED) }
     private val sequence = AtomicLong()
     private val capture = AtomicReference<CaptureEpoch?>(null)
-    private val firstCaptureArmNanos = AtomicLong()
     private val physicalCapture = AtomicBoolean(false)
-    private val captureBeforeAuthority = AtomicBoolean(false)
+    private val recordingDevice = AtomicReference<(Boolean) -> Unit>({})
+    private val captureAuthorization = NativeCaptureAuthorization({ recordingDevice.get()(it) }, ::publishRecordingState)
     private val pumpActive = AtomicBoolean(false)
     private val stoppedReady = AtomicReference(CompletableDeferred<Unit>().apply { complete(Unit) })
     private val pumpGeneration = AtomicLong()
@@ -53,14 +53,39 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
     fun armCapture(): Deferred<Unit> {
         val epoch = CaptureEpoch(sequence.incrementAndGet(), SystemClock.elapsedRealtimeNanos())
         if (closed.get()) return epoch.ready.apply { cancel() }
-        firstCaptureArmNanos.compareAndSet(0, epoch.startedNanos)
         capture.getAndSet(epoch)?.ready?.cancel()
-        if (closed.get() && capture.compareAndSet(epoch, null)) epoch.ready.cancel()
+        if (closed.get() || !captureAuthorization.authorize(epoch.id, epoch.startedNanos)) {
+            capture.compareAndSet(epoch, null)
+            epoch.ready.cancel()
+        }
         return epoch.ready
     }
 
-    /** Call after ADM.setAudioRecordEnabled(true), following Core audio authorization. */
-    fun publishRecordingEnabled() {
+    fun bindRecordingDevice(setEnabled: (Boolean) -> Unit) {
+        recordingDevice.set(setEnabled)
+        captureAuthorization.enforceRecordingState()
+        publishRecordingState()
+    }
+
+    fun revokeCapture() {
+        captureAuthorization.revoke(sequence.incrementAndGet())
+        capture.get()?.ready?.cancel()
+    }
+
+    fun enableRecording(): Boolean = capture.get()?.let { captureAuthorization.enableRecording(it.id) } == true
+
+    fun hasCaptureAuthority(): Boolean = capture.get()?.let {
+        captureAuthorization.allows(it.id, SystemClock.elapsedRealtimeNanos())
+    } == true
+
+    suspend fun retire(step: NativeCaptureRetirementStep, operation: suspend () -> Unit) {
+        emit(NativeMediaStage.CAPTURE_RETIREMENT, mapOf("step" to step.code, "entered" to 1L))
+        try { operation() }
+        finally { emit(NativeMediaStage.CAPTURE_RETIREMENT, mapOf("step" to step.code, "entered" to 0L)) }
+    }
+
+    /** Publish either recording flag transition before the pump's next iteration. */
+    fun publishRecordingState() {
         // The pinned ADM recording flag is plain Java state. pace() acquires this write
         // before the pump's next iteration reads that flag, and wakes without a 10 ms wait.
         pumpGeneration.incrementAndGet()
@@ -68,6 +93,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
     }
 
     fun pumpStarted() {
+        captureAuthorization.enforceRecordingState()
         if (closed.get()) return
         pumpGeneration.incrementAndGet()
         if (pumpActive.compareAndSet(false, true)) {
@@ -150,16 +176,19 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
     override fun onBuffer(buffer: ByteBuffer, audioFormat: Int, channelCount: Int, sampleRate: Int,
         bytesRead: Int, captureTimeNs: Long): Long {
         val observedNanos = SystemClock.elapsedRealtimeNanos()
+        // Acquire ADM flag changes even when this callback finishes an in-flight positive read.
+        pumpGeneration.get()
         val epoch = capture.get()
         if (closed.get()) return captureTimeNs
         if (bytesRead > 0) {
             pacing.get().deadlineNanos = 0
-            val armedNanos = firstCaptureArmNanos.get()
-            if ((armedNanos == 0L || observedNanos < armedNanos) && captureBeforeAuthority.compareAndSet(false, true))
-                emit(NativeMediaStage.CAPTURE_BEFORE_AUTHORITY, observedAtNanos = observedNanos)
+            captureAuthorization.unauthorizedRead(epoch?.id, observedNanos)?.let { generation ->
+                emit(NativeMediaStage.CAPTURE_BEFORE_AUTHORITY,
+                    mapOf("generation" to generation, "epoch" to (epoch?.id ?: 0L)), observedNanos)
+            }
             if (physicalCapture.compareAndSet(false, true))
                 emit(NativeMediaStage.CAPTURE_STARTED, mapOf("epoch" to (epoch?.id ?: 0L)), observedNanos)
-            if (epoch != null && observedNanos >= epoch.startedNanos && capture.get() === epoch)
+            if (epoch != null && captureAuthorization.allows(epoch.id, observedNanos) && capture.get() === epoch)
                 epoch.ready.complete(Unit)
         } else if (bytesRead == 0) {
             if (physicalCapture.get()) stopCapture(observedNanos)
@@ -238,6 +267,7 @@ internal class NativeWarmAudio(private val serverId: String) : AudioBufferCallba
 
     fun close() {
         if (!closed.compareAndSet(false, true)) return
+        captureAuthorization.close(sequence.incrementAndGet())
         outputMute.close()
         capture.getAndSet(null)?.ready?.cancel()
         stoppedReady.get().cancel()

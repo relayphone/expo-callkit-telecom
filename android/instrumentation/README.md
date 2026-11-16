@@ -1,5 +1,25 @@
 # Android instrumentation
 
+Hold revokes the current capture generation and disables ADM recording before
+publication mute, unpublish, prewarm stop or disposal. A restarted pump reapplies
+that generation's recording state before its read loop. Capture diagnostics
+check the current epoch, including after hold and close.
+
+`NativeCaptureRestartPathTest` injects a pump restart from unpublish, track stop,
+dispose, `setMicrophone` and the ADM itself, each with a stale enabled flag.
+`NativeCaptureAuthorizationTest` checks per-generation diagnostics and stale grants.
+`NativeWarmAudioTest` repeats every restart source through the production pump
+callback and bound recording device, plus per-epoch diagnostics and closed restarts;
+`NativeCaptureRestartTest` checks real ADM hold and cancelled playback-boundary
+retirement. The full `realNativeLiveKitAudioAndCleanup` journey keeps its original
+hold/resume timestamp assertions.
+
+Journey evidence retains `holdRequestedNanos` and `resumeRequestedNanos`, plus
+the latest 128 relevant hold/resume signals on the device monotonic clock.
+`captureRetirement` signals bracket each call with `entered: 1` and `entered: 0`:
+step 1 is publication mute, 2 unpublish, 3 prewarm stop and 4 disposal. These
+timings allow an ADM restart to be correlated with its retirement operation.
+
 This small application compiles the production conversations sources directly,
 without requiring a local Expo prebuild or an Android Studio installation. It is
 not an alternate implementation. `NativeIdentityReservationsTest` exercises the

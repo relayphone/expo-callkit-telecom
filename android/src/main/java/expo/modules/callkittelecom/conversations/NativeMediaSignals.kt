@@ -40,7 +40,7 @@ enum class NativeMediaStage(val value: String) {
     MICROPHONE_PUBLISH_STARTED("microphonePublishStarted"), MICROPHONE_PUBLISHED("microphonePublished"),
     ROUTE_PREFERENCE_REQUESTED("routePreferenceRequested"), PREPARATION_READY("preparationReady"),
     AUDIO_MODE_READY("audioModeReady"), ENDPOINT_READY("endpointReady"),
-    CAPTURE_BEFORE_AUTHORITY("captureBeforeAuthority"),
+    CAPTURE_BEFORE_AUTHORITY("captureBeforeAuthority"), CAPTURE_RETIREMENT("captureRetirement"),
     CAPTURE_PUMP_STARTED("capturePumpStarted"), CAPTURE_PUMP_STOPPED("capturePumpStopped"),
     OUTPUT_BEFORE_AUTHORITY("outputBeforeAuthority"), OUTPUT_FIRST_NONZERO("outputFirstNonzero"),
     OUTPUT_MUTED("outputMuted"), OUTPUT_OBSERVATION_UNAVAILABLE("outputObservationUnavailable"),
