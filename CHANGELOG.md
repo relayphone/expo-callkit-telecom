@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.12 (2026-11-16)
+
+### Changed
+
+* Pin the verified iOS SDK 0.7.0 release asset in the package and example, and
+  expose its typed media failure diagnostics through the existing entry points
+  ([#157](https://github.com/relayphone/expo-callkit-telecom/pull/157)).
+
+### Features
+
+* **android:** report `prewarmFailed` while the incoming call keeps ringing and
+  retain known stage, timeout and reason diagnostics in media `ended.failure`
+  snapshots, without exception messages or credentials
+  ([#157](https://github.com/relayphone/expo-callkit-telecom/pull/157)).
+
+### Fixes
+
+* **android:** allow up to three seconds for session close when retiring the
+  receive-only prejoin before a fresh Answer connection, and trace retirement
+  steps. Keep the lifetime join at 1.5 seconds and Answer at five seconds
+  ([#156](https://github.com/relayphone/expo-callkit-telecom/pull/156)).
+
+### Testing
+
+* **android:** wait for the muted recordingless source's first buffer and keep
+  draining playback while a fixture acknowledgement is pending, retaining
+  continuity checks and bounded output buffers
+  ([#158](https://github.com/relayphone/expo-callkit-telecom/pull/158)).
+
 ## 2.0.0-alpha.11 (2026-11-16)
 
 ### Changed
