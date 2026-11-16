@@ -17,6 +17,36 @@ type Source = "crash" | "main" | "app" | "tests" | "anr-list" | "tombstone-list"
 interface Attempt { source: Source; state: "read" | "partial" | "permission-denied" | "unavailable" | "budget";
   bytes: number; truncated: boolean }
 
+const moduleProductionFiles = new Set(("NativeRoomConnection NativeTransportReadiness NativeDecodedAudioReadiness NativeAudioHooks " +
+  "LiveKitNativeSession LiveKitNativeConfiguration NativeOutputMute NativeMicrophonePublication BuiltInMedia NativeWarmAudio " +
+  "NativeTransportProbe NativePcmProbe ConversationMedia NativeActionReceipt ConversationActions NativeCaller ConversationPlatformCalls " +
+  "NativeDtmf NativeCallEnded IncomingPolicy NativeCallPush NativeMediaSignals NativeConnectionStatus CallPushIntake NativeMediaOwner " +
+  "NativeAudioAuthority EndedFailure CallerAddress NativeAudioLifecycle NativeMediaUrl ConversationEnds ConversationPresentation " +
+  "ConversationService ConversationCapabilities IncomingRingDeadline ConversationProximity MediaPermissions ConversationMediaRouter " +
+  "NativeIdentityReservations ConversationEngine ConversationCommandOutcome StartPlacementCoordinator CommandRejection " +
+  "SystemCommandOutcome ConversationPlatform NativeMedia ConversationFailure CoreCallLifecycle NativeControlObservation NativeMuteTrace")
+  .split(" ").map(name => `${name}.kt`));
+const className = String.raw`(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*(?:\[\]){0,4}`;
+const exceptionName = String.raw`(${className}(?:Exception|Error))`;
+const abortPattern = new RegExp(`^Throwing new exception '(.*)' with unexpected pending exception: ${exceptionName}(?::|$)`);
+const castPattern = new RegExp(`^(?:java\\.lang\\.ClassCastException: )?(${className}) cannot be cast to (${className})$`);
+const exceptionPattern = new RegExp(`^${exceptionName}(?::|$)`);
+function crashLine(line: string): { body: string; metadata: string } {
+  const prefix = /^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\s+(\d+)\s+(\d+)\s+[VDIWEF]\s+[^:]*:\s?/.exec(line);
+  return { body: (prefix ? line.slice(prefix[0].length) : line).trim()
+    .replace(/^(?:runtime|check_jni|thread)\.cc:\d+\]\s*/, "").replace(/^Abort message: '/, ""),
+    metadata: prefix ? `${prefix[1]} pid=${prefix[2]} tid=${prefix[3]} ` : "" };
+}
+function pendingFrame(body: string): { text: string; production: boolean } | undefined {
+  const normalized = body.replace(/^at [A-Za-z0-9_.$\[\]]+ /, "at ").replace(/\([A-Za-z0-9_.$,\[\] ]*\) \(/, "(");
+  const match = /^at ([A-Za-z0-9_.$<>]{1,240})\(([A-Za-z0-9_$]{1,100}\.(?:java|kt)):(\d{1,10})\)$/.exec(normalized);
+  if (!match) return;
+  const test = /(?:^|\.)(?:test|tests)(?:\.|$)|Tests?(?:\$|\.)/.test(match[1]!) || /Tests?\.(?:java|kt)$/.test(match[2]!);
+  return { text: `${match[1]}(${match[2]}:${match[3]})`, production: !test && (
+    /^(?:io\.livekit\.|(?:livekit\.)?org\.webrtc\.)/.test(match[1]!) ||
+    match[1]!.startsWith("expo.modules.callkittelecom.conversations.") && moduleProductionFiles.has(match[2]!)) };
+}
+
 const read: ReadCrashCommand = (args, timeout) => {
   const result = spawnSync("adb", ["-s", "emulator-5554", ...args], { encoding: "utf8", timeout, killSignal: "SIGKILL",
     stdio: ["ignore", "pipe", "pipe"], maxBuffer: crashLimits.rawBytes });
@@ -39,13 +69,35 @@ export function parseMediaExits(text: string): Exit[] {
 /** Arbitrary messages, exception details, thread names, notification text and memory dumps are removed. */
 export function sanitizeMediaCrash(text: string, secrets: readonly string[] = [], edge: "head" | "tail" = "tail"): string {
   const lines = sanitizeFixtureLog(text, secrets).split(/\r?\n/);
-  return (edge === "head" ? lines.slice(0, crashLimits.lines) : lines.slice(-crashLimits.lines)).map(line => {
+  const selected = edge === "head" ? lines.slice(0, crashLimits.lines) : lines.slice(-crashLimits.lines);
+  let pendingFrames: number | undefined;
+  return selected.map((line, index) => {
     // logcat threadtime metadata is numeric; its free-form tag and message are not trusted.
-    const prefix = /^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\s+(\d+)\s+(\d+)\s+[VDIWEF]\s+[^:]*:\s?/.exec(line);
-    const body = (prefix ? line.slice(prefix[0].length) : line).trim()
-      .replace(/^(?:runtime|check_jni|thread)\.cc:\d+\]\s*/, "")
-      .replace(/^Abort message: '/, "");
-    const metadata = prefix ? `${prefix[1]} pid=${prefix[2]} tid=${prefix[3]} ` : "";
+    const { body, metadata } = crashLine(line);
+    const abort = abortPattern.exec(body);
+    if (abort) {
+      pendingFrames = 0;
+      const cast = castPattern.exec(abort[1]!);
+      const next = cast ? "java.lang.ClassCastException" : exceptionPattern.exec(abort[1]!)?.[1];
+      const frames: { text: string; production: boolean }[] = [];
+      let observed = 0;
+      for (const following of selected.slice(index + 1)) {
+        const nextBody = crashLine(following).body;
+        if (!nextBody) continue;
+        if (!nextBody.startsWith("at ") || observed++ === 32) break;
+        const frame = pendingFrame(nextBody);
+        if (frame) frames.push(frame);
+      }
+      return metadata + `ART_ABORT new=${next?.slice(0, 240) ?? "unclassified"}` +
+        (cast ? ` source=${cast[1]!.slice(0, 240)} target=${cast[2]!.slice(0, 240)}` : "") +
+        ` pending=${abort[2]!.slice(0, 240)} production-crash-candidate=${frames.some(frame => frame.production)}`;
+    }
+    if (pendingFrames !== undefined) {
+      const frame = pendingFrame(body);
+      if (body.startsWith("at ")) return metadata + (pendingFrames++ < 32 && frame ? `at ${frame.text}` : "[REDACTED]");
+      if (/^(?:#\d+\s+pc|(?:Fatal )?signal |pid: |-----|\*\*\*)/.test(body)) pendingFrames = undefined;
+      else return metadata + "[REDACTED]";
+    }
     let safe = "[REDACTED]";
     const signal = /^(?:Fatal )?signal (\d{1,3})\b.*?\bcode (-?\d{1,4})\b/i.exec(body);
     const process = /^pid: (\d+), tid: (\d+),/.exec(body);
@@ -53,7 +105,7 @@ export function sanitizeMediaCrash(text: string, secrets: readonly string[] = []
     // ART adds a return type and argument types; retain only the method and source location.
     const frameBody = body.replace(/^at [A-Za-z0-9_.$\[\]]+ /, "at ")
       .replace(/\([A-Za-z0-9_.$,\[\] ]*\) \(/, "(");
-    const frame = /^at ((?:java|javax|android|androidx|kotlin|kotlinx|org\.webrtc|io\.livekit|expo\.modules\.callkittelecom)\.[A-Za-z0-9_.$<>]+)\(([A-Za-z0-9_$]+\.(?:java|kt):\d+|Native Method|Unknown Source)\)$/.exec(frameBody);
+    const frame = /^at ((?:java|javax|android|androidx|kotlin|kotlinx|(?:livekit\.)?org\.webrtc|io\.livekit|expo\.modules\.callkittelecom)\.[A-Za-z0-9_.$<>]+)\(([A-Za-z0-9_$]+\.(?:java|kt):\d+|Native Method|Unknown Source)\)$/.exec(frameBody);
     const native = /^#(\d+)\s+pc\s+([a-f0-9]+)\s+(\S+)/i.exec(body);
     const library = native && /^(lib[A-Za-z0-9_.+-]+\.so|[A-Za-z0-9_.+-]+\.(?:oat|odex))$/.exec(basename(native[3]!).split("!").at(-1)!);
     const symbol = native && /\s+\(((?:art|webrtc|rtc)::[A-Za-z0-9_:~<>]{1,160})(?=[(+])/.exec(body);
@@ -117,10 +169,18 @@ export function collectMediaCrashEvidence(output: string, command: ReadCrashComm
   }
   const logSignals = new Set<string>();
   const logExceptions = new Set<string>();
+  const artAborts = new Set<string>();
+  const observeAborts = (value: string) => {
+    for (const line of value.split("\n")) {
+      const start = line.indexOf("ART_ABORT ");
+      if (start >= 0) artAborts.add(line.slice(start));
+    }
+  };
   for (const buffer of ["crash", "main"] as const) {
     const sanitized = sanitizeMediaCrash(capture(buffer, ["logcat", "-d", "-b", buffer, "-v", "threadtime", "-t", String(crashLimits.lines)]), secrets);
     for (const signal of sanitized.matchAll(/\bsignal=(\d{1,3})\b/g)) logSignals.add(signal[1]!);
     for (const exception of sanitized.matchAll(/\b(java\.lang\.(?:OutOfMemoryError|[A-Za-z]{1,96}Exception))\b/g)) logExceptions.add(exception[1]!);
+    observeAborts(sanitized);
     save(buffer, sanitized);
   }
   const exits = { app: [] as Exit[], tests: [] as Exit[] };
@@ -137,7 +197,9 @@ export function collectMediaCrashEvidence(output: string, command: ReadCrashComm
       const source = `${kind}-${index + 1}` as const;
       const raw = capture(source, ["shell", "head", "-c", String(crashLimits.rawBytes), `${directory}/${name}`]);
       if (raw.split(/\r?\n/).length > crashLimits.lines) attempts.findLast(a => a.source === source)!.truncated = true;
-      save(source, sanitizeMediaCrash(raw, secrets, "head"));
+      const sanitized = sanitizeMediaCrash(raw, secrets, "head");
+      observeAborts(sanitized);
+      save(source, sanitized);
     }
   }
   const exit = (name: "app" | "tests") => {
@@ -146,7 +208,8 @@ export function collectMediaCrashEvidence(output: string, command: ReadCrashComm
   };
   const missing = attempts.filter(a => a.state !== "read").map(a => `${a.source}:${a.state}`).join(",") || "none";
   // Every interpolated field is ASCII; reserve one byte for the artifact's final newline.
-  const summary = `Android media crash evidence: ${exit("app")}; ${exit("tests")}; log signals(unscoped)=${[...logSignals].slice(-3).join(",") || "unobserved"}; log exceptions(unscoped)=${[...logExceptions].slice(-3).join(",") || "unobserved"}; unavailable=${missing}; truncated=${attempts.filter(a => a.truncated).length}. Latest exit history is not proof of this test's cause; signaled status=9 alone does not establish low memory.`.slice(0, crashLimits.summaryBytes - 1);
+  const classification = [...artAborts].find(line => line.includes("production-crash-candidate=true")) ?? [...artAborts][0];
+  const summary = `Android media crash evidence: ${classification ?? "ART_ABORT unobserved"}; ${exit("app")}; ${exit("tests")}; log signals(unscoped)=${[...logSignals].slice(-3).join(",") || "unobserved"}; log exceptions(unscoped)=${[...logExceptions].slice(-3).join(",") || "unobserved"}; unavailable=${missing}; truncated=${attempts.filter(a => a.truncated).length}. Latest exit history is not proof of this test's cause; signaled status=9 alone does not establish low memory.`.slice(0, crashLimits.summaryBytes - 1);
   remaining += metadataReserve;
   function metadata(name: "collection.json" | "summary.txt", contents: string): void {
     const bytes = Buffer.byteLength(contents);

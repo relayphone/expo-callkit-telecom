@@ -12,6 +12,56 @@ CI runs `gradle -p android/instrumentation connectedDebugAndroidTest` on an API 
 Google APIs x86_64 emulator with KVM, and retains machine-checked JUnit results.
 The Expo bridge/example integration is a separate gate from this native seam.
 
+Media qualification failures append an ASCII numeric trace to the original
+assertion type and message in JUnit XML. The copy is at most 8,192 bytes, ending
+with `[TRUNCATED media qualification trace]` when clipped. It preserves the drain
+guard's actual counts and limit, receiver publication/subscription boundaries,
+and consumer/fixture stage timings in their separately labelled monotonic clocks.
+Slowest and latest stages precede history so large histories retain those clues.
+Only fixed stage labels, numeric values, booleans and publication states are copied;
+PCM, credentials, notification content and arbitrary diagnostic messages are excluded.
+
+Device JSON collection still runs with its existing shared 10-second bound.
+The XML records device-file publication success or a classified publication error;
+host collection has not started when the assertion is raised. The later host
+attempts and classified collection errors remain in `media-evidence-reads.json`
+and the CI summary. Known `adb` tool errors on stdout are classified there too,
+including a missing file reported with exit status zero.
+
+`MediaQualificationTraceTest` exercises actual guard snapshots and truncation.
+To verify transport through Gradle's JUnit XML writer, set
+`MEDIA_XML_FORCE_FAILURE=1` and select `*forcedFailure*`, `*oversizedFailure*` and
+`*forcedClaim*` with
+`testEmulatorTestUnitTest -PmediaTestBuildType=emulatorTest`. These intentional
+controls fail; the XML must retain the original failure first and the bounded
+trace. Run the normal suite without that variable afterward.
+
+Claim failures also retain the last prejoin client count and its device-clock
+observation time, the failure's native signal timeline, and any signaling snapshot
+already fetched by the test. Publication counts and audio-bearing offer counts
+remain separate in the fixture's `python.time.monotonic_ns` clock. A zero-client
+prejoin failure does not imply that Answer or publication occurred. The fallback
+adds no network request or wait, and preserves the existing count assertions.
+
+The recordingless journey flushes its original assertion, test/phase, process ID,
+receiver clock/counts and the last eight source samples before optional failure
+enrichment. Samples retain monotonic elapsed nanoseconds and injected-frame
+counts on both sides of the unchanged 100 ms check. Cleanup adds room-release
+and capture-stop evidence; the original exception is rethrown unchanged.
+
+The media job then selects that same journey with
+`mediaForceRecordinglessFailure=true` on its existing API 35 emulator. Its single
+intentional assertion must fail within the 180-second command timeout and
+240-second control budget. The checker requires the persisted original, bounded
+JUnit trace, matching process exit/liveness evidence and completed cleanup.
+Normal suite XML is retained separately before the control replaces its report.
+The normal suite remains fatal even when the control passes.
+
+ART pending-exception aborts retain only exception/cast class names and the first
+32 pending frames with source locations. Free-form abort messages are discarded.
+The classification marks production frames in LiveKit, WebRTC or this module;
+test frames alone do not make a production-crash candidate.
+
 Query the API 35 emulator from the host with
 `node tools/check-android-journey-state.ts emulator-5554`.
 An optional second argument selects the application package; the default is

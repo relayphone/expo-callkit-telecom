@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { captureMediaCommand, collectNativeMediaEvidence, mediaEvidenceNames, type CapturedOutput, type EvidenceClock } from "./native-media-evidence.ts";
 import { withMediaCrashEvidence } from "./native-media-crash-evidence.ts";
 import { collectEmulatorBudget } from "./android-emulator-budget.ts";
+import { mediaSuiteThenFailureControl, runNativeMediaFailureControl } from "./run-native-media-failure-control.ts";
 
 export interface Command {
   program: "gradle" | "adb" | "node";
@@ -297,9 +298,12 @@ if (import.meta.main) {
       runNativeMediaFeasibility(undefined, undefined,
         process.argv.includes("--controls-prechecked") ? "prechecked" : "run");
     };
-    if (process.argv.includes("--crash-evidence"))
-      withMediaCrashEvidence(operation, "android/instrumentation/build/media-crash-evidence");
-    else operation();
+    const suite = () => process.argv.includes("--crash-evidence")
+      ? withMediaCrashEvidence(operation, "android/instrumentation/build/media-crash-evidence") : operation();
+    if (process.argv.includes("--with-failure-control")) mediaSuiteThenFailureControl(suite, () =>
+      mediaPhase("forced assertion unwind", () => withMediaCrashEvidence(() => runNativeMediaFailureControl(),
+        "android/instrumentation/build/media-failure-control/crash-evidence")));
+    else suite();
   }
   else runNativeMediaJourney(undefined, undefined, !process.argv.includes("--functional-only"));
 }

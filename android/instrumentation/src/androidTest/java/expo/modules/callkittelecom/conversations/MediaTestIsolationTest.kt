@@ -7,11 +7,14 @@ import androidx.test.platform.app.InstrumentationRegistry
 import expo.modules.callkittelecom.instrumentation.BuildConfig
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Rule
+import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 import kotlinx.coroutines.*
 
 @RunWith(AndroidJUnit4::class)
 class MediaTestIsolationTest {
+    @get:Rule val failureTrace: TestRule = MediaQualificationFailureRule()
     @Test fun activationRequiresTheDedicatedEmulatorTestBuild() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val implementation = runCatching { Class.forName(

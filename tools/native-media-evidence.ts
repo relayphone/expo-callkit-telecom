@@ -19,6 +19,7 @@ type State = "unobserved" | "read-error" | "empty" | "invalid" | "fields" | "lat
 interface Attempt {
   source: MediaEvidenceName; attempt: number; elapsedMs: number; bytes: number;
   exitCode: number | null; stderr: string; state: State;
+  stdoutDiagnostic: string;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -85,7 +86,9 @@ export function collectNativeMediaEvidence(output: string, read: Read, timing: E
       last[name] = state;
       attempts.push({ source: name, attempt: ++counts[name], elapsedMs: timing.now() - started,
         bytes: Buffer.byteLength(captured.stdout, "utf8"), exitCode: captured.exitCode,
-        stderr: safeStderr(captured.stderr), state });
+        stderr: safeStderr(captured.stderr), state,
+        stdoutDiagnostic: /^(cat:|run-as:)/.test(captured.stdout)
+          ? safeStderr(captured.stdout) : "" });
       atomicWrite(join(output, "media-evidence-reads.json"), JSON.stringify({ schemaVersion: 1,
         clock: "host.performance.now", budgetMs: 10_000, attempts }));
       if (state === "ready") {

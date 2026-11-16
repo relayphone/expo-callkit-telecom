@@ -106,6 +106,40 @@ Abort message: 'notification-text private-secret'
   assert.doesNotMatch(sanitized, /notification-text|private|char const|BuildId|Abort message|apex/);
 });
 
+test("retains only ART pending-abort types, cast classes and 32 frames, identifying production candidates", t => {
+  const f = fixture(t);
+  for (const [frame, production] of [
+    ["expo.modules.callkittelecom.conversations.MediaHookFeasibilityTest.run(MediaHookFeasibilityTest.kt:582)", false],
+    ["expo.modules.callkittelecom.conversations.LiveKitNativeSession.close(LiveKitNativeSession.kt:285)", true],
+    ["io.livekit.android.room.Room.connect(Room.kt:12)", true],
+    ["livekit.org.webrtc.AudioTrack.run(AudioTrack.java:55)", true],
+    ["io.livekit.android.room.RoomTest.run(RoomTest.kt:12)", false],
+    ["org.webrtc.AudioTrackTest.run(AudioTrackTest.java:55)", false],
+  ] as const) {
+    const raw = "runtime.cc:718] Throwing new exception 'java.lang.ClassCastException: org.json.JSONObject cannot be cast to kotlin.jvm.functions.Function2' with unexpected pending exception: java.lang.AssertionError: notification-text private-secret\n" +
+      `  at ${frame}\n` + Array.from({ length: 34 }, (_, i) => ` at java.lang.Thread.frame${i}(Thread.java:${i + 1})`).join("\n");
+    const sanitized = sanitizeMediaCrash(raw, ["private-secret"]);
+    assert.match(sanitized, /ART_ABORT new=java.lang.ClassCastException source=org.json.JSONObject target=kotlin.jvm.functions.Function2 pending=java.lang.AssertionError/);
+    assert(sanitized.includes(`production-crash-candidate=${production}`));
+    assert(sanitized.includes(`at ${frame}`));
+    assert.equal(sanitized.split("\n").filter(line => line.startsWith("at ")).length, 32);
+    assert.doesNotMatch(sanitized, /notification-text|private-secret|frame31\(/);
+    const summary = collectMediaCrashEvidence(f.output, args => args[0] === "logcat" ? success(raw) : success(""), () => 0, []);
+    assert(summary.includes(`production-crash-candidate=${production}`));
+  }
+  const payload = sanitizeMediaCrash("Abort message: 'Throwing new exception 'java.lang.IllegalStateException: password=private-message' with unexpected pending exception: java.lang.AssertionError: private-pending'\n" +
+    " at java.lang.Thread.run(Thread.java:1)\nThrowing new exception 'private-message' with unexpected pending exception: java.lang.AssertionError: private-pending");
+  assert.match(payload, /ART_ABORT new=java.lang.IllegalStateException pending=java.lang.AssertionError/);
+  assert.match(payload, /ART_ABORT new=unclassified pending=java.lang.AssertionError/);
+  assert.doesNotMatch(payload, /private|password|Abort message/);
+  const interrupted = sanitizeMediaCrash("Throwing new exception 'org.json.JSONObject cannot be cast to kotlin.jvm.functions.Function2' with unexpected pending exception: java.lang.AssertionError: private\n" +
+    " at java.lang.Thread.nativeFoo(Native Method)\n at io.livekit.android.room.Room.connect(Room.kt:12)\n" +
+    Array.from({ length: 40 }, (_, i) => ` at java.lang.Thread.frame${i}(Thread.java:${i + 1})`).join("\n"));
+  assert.match(interrupted, /new=java.lang.ClassCastException.*production-crash-candidate=true/);
+  assert.equal(interrupted.split("\n").filter(line => line.startsWith("at ")).length, 31);
+  assert.doesNotMatch(interrupted, /Native Method|frame30\(/);
+});
+
 test("keeps the beginning of long tombstones and ANRs while keeping logcat tails", t => {
   const f = fixture(t);
   const trace = `pid: 3631, tid: 3631, name: notification-text >>> private-package <<<

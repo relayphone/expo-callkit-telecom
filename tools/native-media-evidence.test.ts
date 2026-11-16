@@ -119,3 +119,18 @@ test("missing or wrongly typed top-level fields never count as publication readi
     }
   }
 });
+
+test("adb tool errors on stdout retain only their known reason and remain fatal", () => {
+  for (const mode of ["zero", "nonzero", "late"] as const) {
+  const f = fixture();
+  try {
+    const result = collectNativeMediaEvidence(f.output, () => {
+      if (mode === "late") f.advance(10001);
+      return { stdout: "cat: private path: No such file or directory\n", stderr: "", exitCode: mode === "nonzero" ? 1 : 0 };
+    }, f.timing);
+    assert.equal(result.failures.length, 2);
+    assert.ok(f.journal().attempts.every((attempt: { stdoutDiagnostic: string }) => attempt.stdoutDiagnostic === "file missing"));
+    assert.doesNotMatch(JSON.stringify(f.journal()), /private/);
+  } finally { f.close(); }
+  }
+});
