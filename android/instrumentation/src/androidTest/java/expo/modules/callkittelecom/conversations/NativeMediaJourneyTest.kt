@@ -141,6 +141,15 @@ class NativeMediaJourneyTest {
             NativeMediaSignals.observers += observer
             val results = mutableListOf<Map<String, Any?>>()
             val cleanupResults = mutableListOf<String>()
+            val holdResumeRequests = mutableListOf<MutableMap<String, Long>>()
+            fun holdResumeTimeline() = signals.filter { it.stage in setOf(
+                NativeMediaStage.CAPTURE_RETIREMENT, NativeMediaStage.CAPTURE_PUMP_STARTED,
+                NativeMediaStage.CAPTURE_PUMP_STOPPED, NativeMediaStage.CAPTURE_STARTED,
+                NativeMediaStage.CAPTURE_STOPPED, NativeMediaStage.CAPTURE_BEFORE_AUTHORITY,
+                NativeMediaStage.AUDIO_AUTHORIZED, NativeMediaStage.MICROPHONE_PUBLISH_STARTED,
+                NativeMediaStage.MICROPHONE_PUBLISHED, NativeMediaStage.OUTPUT_RELEASED
+            ) }.takeLast(128).map { mapOf("serverCallId" to it.serverCallId, "stage" to it.stage.value,
+                "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) }
             var declineObservation: JSONObject? = null
             var declineFirstZeroObservation: JSONObject? = null
             var declinePendingObserved = false
@@ -304,6 +313,8 @@ class NativeMediaJourneyTest {
                             } }
                             engine.actions.attach(true, 1, engine.actions.epoch)
                             val holdRequested = android.os.SystemClock.elapsedRealtimeNanos()
+                            val transition = mutableMapOf("holdRequestedNanos" to holdRequested)
+                            holdResumeRequests += transition
                             engine.hold(id, true)
                             assertTrue(stage(serverId, NativeMediaStage.CAPTURE_STOPPED).elapsedRealtimeNanos >= holdRequested)
                             val muted = stage(serverId, NativeMediaStage.OUTPUT_MUTED, 2)
@@ -315,6 +326,7 @@ class NativeMediaJourneyTest {
                             assertEquals(starts, events(serverId).count { it.stage == NativeMediaStage.CAPTURE_STARTED })
                             assertEquals(playbackStarts, events(serverId).count { it.stage == NativeMediaStage.PLAYBACK_STARTED })
                             assertEquals(outputStarts, events(serverId).count { it.stage == NativeMediaStage.OUTPUT_FIRST_NONZERO })
+                            transition["resumeRequestedNanos"] = android.os.SystemClock.elapsedRealtimeNanos()
                             engine.hold(id, false)
                             val resumed = stage(serverId, NativeMediaStage.AUDIO_AUTHORIZED, 2)
                             for (kind in listOf(NativeMediaStage.CAPTURE_STARTED, NativeMediaStage.OUTPUT_FIRST_NONZERO, NativeMediaStage.FIRST_AUDIO))
@@ -376,13 +388,15 @@ class NativeMediaJourneyTest {
                     "pcmThreshold" to 128, "budgetMs" to 3000, "targetMs" to 300, "samples" to results,
                     "profile" to "optimized", "samplesPerPath" to 1, "sources" to sources,
                     "benchmarkOnly" to false, "processIsolation" to "full-journey",
-                    "cleanup" to cleanupResults, "recordingObservation" to recordingObservation, "declineObservation" to declineObservation,
+                    "cleanup" to cleanupResults, "holdResumeRequests" to holdResumeRequests, "holdResumeTimeline" to holdResumeTimeline(),
+                    "recordingObservation" to recordingObservation, "declineObservation" to declineObservation,
                     "declineFirstZeroObservation" to declineFirstZeroObservation, "declinePendingObserved" to declinePendingObserved,
                     "declineClosedNanos" to declineClosedNanos, "declineTerminalSignal" to declineTerminalSignal,
                     "jsJoinHandlerCalls" to joinHandlerCalls, "jsWarmRequests" to warmRequests)).toString())
             } } catch (error: Throwable) {
                 output.writeText(JSONObject(mapOf("passed" to false, "stage" to "native-$provider-journey", "samples" to results,
-                    "cleanup" to cleanupResults, "recordingObservation" to recordingObservation, "declineObservation" to declineObservation,
+                    "cleanup" to cleanupResults, "holdResumeRequests" to holdResumeRequests, "holdResumeTimeline" to holdResumeTimeline(),
+                    "recordingObservation" to recordingObservation, "declineObservation" to declineObservation,
                     "declineFirstZeroObservation" to declineFirstZeroObservation, "declinePendingObserved" to declinePendingObserved,
                     "declineClosedNanos" to declineClosedNanos, "declineTerminalSignal" to declineTerminalSignal, "observedStages" to signals.map { mapOf("stage" to it.stage.value,
                         "nanos" to it.elapsedRealtimeNanos, "measurements" to it.measurements) })).toString())

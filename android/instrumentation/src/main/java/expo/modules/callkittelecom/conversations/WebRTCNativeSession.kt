@@ -236,7 +236,7 @@ internal class WebRTCNativeSession(private val context: Context, invitationId: S
         val candidate = peer ?: error("Media not prepared")
         val ready = warmth.armCapture()
         device.setAudioRecordEnabled(true)
-        warmth.publishRecordingEnabled()
+        warmth.enableRecording()
         captureEnabled = true
         if (!pumpEnabled) { candidate.setAudioRecording(true); pumpEnabled = true }
         microphone?.setEnabled(true)

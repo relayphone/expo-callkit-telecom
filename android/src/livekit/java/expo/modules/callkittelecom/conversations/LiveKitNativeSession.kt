@@ -90,7 +90,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         val device = candidate.lkObjects.audioDeviceModule as? JavaAudioDeviceModule ?: error("Unsupported native audio module")
         audioHooks?.audioDeviceCreated(device)
         // Set before any capture thread starts: recordingless RTP negotiation cannot open the microphone.
-        device.setAudioRecordEnabled(false)
+        heat.bindRecordingDevice(device::setAudioRecordEnabled)
         recording = device
         candidate.setSpeakerMute(true); heat.muteOutput()
         val subscriberReady = CompletableDeferred<Unit>()
@@ -237,6 +237,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     }
     override suspend fun setHeld(held: Boolean): Unit = withContext(Dispatchers.Main.immediate) {
         check(!closed); this@LiveKitNativeSession.held = held
+        if (held) warmth.revokeCapture()
         if (!active) return@withContext
         if (held) {
             val device = checkNotNull(recording)
@@ -259,23 +260,29 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         }
     }
     private suspend fun setMicrophone(enabled: Boolean) {
+        if (!enabled) warmth.revokeCapture()
         if (enabled) {
-            if (captureEnabled) return
+            if (captureEnabled && warmth.hasCaptureAuthority()) return
             if (publication == null) publishMutedMicrophone()
             val ready = warmth.armCapture()
             captureEnabled = true
-            recording?.setAudioRecordEnabled(true)
-            warmth.publishRecordingEnabled()
+            check(warmth.enableRecording())
             publication!!.muted = false
             withNativeMediaDeadline(1500) { ready.await() }
         } else if (captureEnabled) {
             // Runtime recordingless toggles are asynchronous; detach the sender to stop physical capture.
-            traceNativeMute(NativeMuteStep.PUBLICATION) { publication?.muted = true }
+            warmth.retire(NativeCaptureRetirementStep.PUBLICATION_MUTE) {
+                traceNativeMute(NativeMuteStep.PUBLICATION) { publication?.muted = true }
+            }
             val retired = microphone
-            retired?.let { room?.localParticipant?.unpublishTrack(it); it.stopPrewarm() }
+            retired?.let {
+                warmth.retire(NativeCaptureRetirementStep.UNPUBLISH) { room?.localParticipant?.unpublishTrack(it) }
+                warmth.retire(NativeCaptureRetirementStep.STOP_PREWARM) { it.stopPrewarm() }
+            }
             publication = null; microphone = null; captureEnabled = false
-            try { warmth.awaitPumpStopped() } finally { runCatching { retired?.dispose() } }
-            recording?.setAudioRecordEnabled(false)
+            try { warmth.awaitPumpStopped() } finally { runCatching {
+                warmth.retire(NativeCaptureRetirementStep.DISPOSE) { retired?.dispose() }
+            } }
         } else {
             // An initially muted answer keeps its newly negotiated silent publication.
             traceNativeMute(NativeMuteStep.PUBLICATION) { publication?.muted = true }
