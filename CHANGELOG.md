@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.13 (2026-11-16)
+
+### Fixes
+
+* **android:** revoke microphone capture authorization before hold teardown and
+  keep restarted recording pumps recordingless until resume receives fresh audio
+  authority. Check capture diagnostics for each generation
+  ([#161](https://github.com/relayphone/expo-callkit-telecom/pull/161)).
+* **android:** report a deferred join failure even when the native connect call
+  returns normally
+  ([#160](https://github.com/relayphone/expo-callkit-telecom/pull/160)).
+
+### Testing
+
+* **android:** cover held pump restarts from unpublish, track stop, disposal,
+  microphone changes and the ADM itself, and persist hold/resume request times
+  without changing the existing ordering assertions
+  ([#161](https://github.com/relayphone/expo-callkit-telecom/pull/161)).
+* **android:** trace receiver poll phases and retain capture evidence from failed
+  media claims
+  ([#160](https://github.com/relayphone/expo-callkit-telecom/pull/160)).
+
 ## 2.0.0-alpha.12 (2026-11-16)
 
 ### Changed
