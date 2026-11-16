@@ -1,4 +1,9 @@
 import type { ConfigPlugin, ExportedConfig } from "expo/config-plugins";
+import type {
+  ConversationMediaReadiness,
+  MediaKind,
+  MediaPermissions,
+} from "expo-callkit-telecom";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, registerHooks } from "node:module";
@@ -8,9 +13,44 @@ import { test } from "node:test";
 
 const listeners = new Map<string, (event: unknown) => void>();
 const selected: string[] = [];
+const permissionCalls: (
+  | ["getMediaPermissions"]
+  | ["requestMediaPermissions", readonly MediaKind[]]
+  | ["conversationMediaReadiness", string]
+)[] = [];
+const permissions: MediaPermissions = {
+  microphone: {
+    status: "granted",
+    granted: true,
+    canAskAgain: true,
+    expires: "never",
+  },
+  camera: {
+    status: "undetermined",
+    granted: false,
+    canAskAgain: true,
+    expires: "never",
+  },
+};
+const readiness: ConversationMediaReadiness = {
+  required: ["microphone", "camera"],
+  missing: ["camera"],
+};
 const native = {
   snapshot: { revision: 0, conversations: [] },
   mediaAdapter: "none",
+  async getMediaPermissions() {
+    permissionCalls.push(["getMediaPermissions"]);
+    return permissions;
+  },
+  async requestMediaPermissions(kinds: readonly MediaKind[]) {
+    permissionCalls.push(["requestMediaPermissions", kinds]);
+    return permissions;
+  },
+  async conversationMediaReadiness(id: string) {
+    permissionCalls.push(["conversationMediaReadiness", id]);
+    return readiness;
+  },
   async getConversations() {
     return this.snapshot;
   },
@@ -98,12 +138,34 @@ const hooks = registerHooks({
   },
 });
 
-test("installed packages share the SDK runtime, canonical errors and actual route updates", async () => {
+test("installed packages share the SDK runtime, media permissions, canonical errors and route updates", async () => {
   try {
     const fork = await import("expo-callkit-telecom");
     const sdk = await import("@relayphone/ios-voip-sdk");
     assert.equal(fork.startConversation, sdk.startConversation);
     assert.equal(fork.setConversationHandler, sdk.setConversationHandler);
+    for (const name of [
+      "getMediaPermissions",
+      "requestMediaPermissions",
+      "conversationMediaReadiness",
+    ] as const) {
+      assert.equal(typeof fork[name], "function");
+      assert.equal(fork[name], sdk[name]);
+    }
+    assert.deepEqual(await fork.getMediaPermissions(), permissions);
+    assert.deepEqual(
+      await fork.requestMediaPermissions(["microphone", "camera"]),
+      permissions
+    );
+    assert.deepEqual(
+      await fork.conversationMediaReadiness("video/電話 42"),
+      readiness
+    );
+    assert.deepEqual(permissionCalls, [
+      ["getMediaPermissions"],
+      ["requestMediaPermissions", ["microphone", "camera"]],
+      ["conversationMediaReadiness", "video/電話 42"],
+    ]);
     const id = await fork.startConversation({
       id: "server/電話 42",
       to: { id: "peer" },
