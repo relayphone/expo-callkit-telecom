@@ -84,14 +84,14 @@ function coldJournal() {
     (["processStarted", "intake", "ringing", "presented", "answered", "cleaned"] as const).map((stage, index) =>
       ({ kind: "coldStart" as const, ...coldRequest, stage, elapsedRealtimeNanos: String(9_007_199_254_740_993n + BigInt(index) * 100n) })) };
 }
-function coldDevice(journal = coldJournal()) {
+function coldDevice(journal = coldJournal(), api = "35") {
   const commands: (readonly string[])[] = [];
   let pid = "123";
   let now = 0;
   const run = (args: readonly string[]) => {
     commands.push(args);
     if (args.at(-1) === "ro.kernel.qemu") return "1";
-    if (args.at(-1) === "ro.build.version.sdk") return "35";
+    if (args.at(-1) === "ro.build.version.sdk") return api;
     if (args.some(value => value.startsWith("pidof "))) return pid;
     if (args.includes("force-stop")) { pid = ""; return ""; }
     if (args[3]?.includes("'am' 'start'")) { assert.equal(pid, ""); pid = "456"; return "Status: ok\n"; }
@@ -104,8 +104,8 @@ function coldDevice(journal = coldJournal()) {
   return { run, commands, timing: { now: () => now, pause: async (ms: number) => { now += ms; } } };
 }
 
-test("cold push force-stops before launch, retains the new process and measures only device times", async () => {
-  const f = coldDevice();
+for (const api of ["34", "35", "36"]) test(`API ${api} cold push force-stops before launch, retains the new process and measures only device times`, async () => {
+  const f = coldDevice(coldJournal(), api);
   const retained: ColdPushReceipt[] = [];
   const receipt = await runColdPushJourney("emulator-5554", coldRequest, f.run, f.timing, value => retained.push(value));
   assert.equal(receipt.previousProcessId, 123);
@@ -119,6 +119,14 @@ test("cold push force-stops before launch, retains the new process and measures 
   assert.deepEqual(coldPushTimings(receipt, coldRequest), { clock: "android.elapsedRealtimeNanos",
     processToIntakeNanos: "100", intakeToPresentationNanos: "200", processToPresentationNanos: "300", processToAnswerNanos: "400" });
   assert.deepEqual(parsePushFaultLog({ ...log, coldStart: receipt }).coldStart, receipt);
+});
+
+test("unsupported runtimes fail before force-stop or delivery", async () => {
+  for (const api of ["33", "37", "", "unknown"]) {
+    const f = coldDevice(coldJournal(), api);
+    await assert.rejects(runColdPushJourney("emulator-5554", coldRequest, f.run, f.timing));
+    assert.ok(!f.commands.some(args => args.includes("force-stop") || args[3]?.includes("'am' 'start'")));
+  }
 });
 
 test("missing presentation, wrong delivery, failed controls and nonmonotonic times cannot pass", async () => {

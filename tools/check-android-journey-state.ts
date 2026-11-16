@@ -102,7 +102,8 @@ export function collectAndroidEmulatorState(
   assert.match(serial, /^emulator-\d+$/, "An emulator serial is required");
   const command = (args: readonly string[]) => run(["-s", serial, "shell", ...args]);
   assert.equal(command(["getprop", "ro.kernel.qemu"]).trim(), "1", "Selected target is not an emulator");
-  assert.equal(command(["getprop", "ro.build.version.sdk"]).trim(), "35", "API 35 is required");
+  assert.ok(["34", "35", "36"].includes(command(["getprop", "ro.build.version.sdk"]).trim()),
+    "API 34, 35 or 36 is required");
   const startedNanos = now().toString();
   const calls = parseTelecomCalls(command(["dumpsys", "-t", "5", "telecom"]));
   const notifications = parseNotificationPresence(command(["dumpsys", "-t", "5", "notification"]), packageName);

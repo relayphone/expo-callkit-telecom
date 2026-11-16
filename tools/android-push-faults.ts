@@ -127,7 +127,8 @@ export function coldPushTimings(receipt: ColdPushReceipt, request: Delivery) {
 function emulator(serial: string, run: Execute): void {
   assert.match(serial, /^emulator-\d+$/, "An emulator serial is required");
   assert.equal(run(["-s", serial, "shell", "getprop", "ro.kernel.qemu"]).trim(), "1");
-  assert.equal(run(["-s", serial, "shell", "getprop", "ro.build.version.sdk"]).trim(), "35");
+  assert.ok(["34", "35", "36"].includes(run(["-s", serial, "shell", "getprop", "ro.build.version.sdk"]).trim()),
+    "API 34, 35 or 36 is required");
 }
 // adb shell joins arguments before its remote shell; quote every value at that boundary.
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }

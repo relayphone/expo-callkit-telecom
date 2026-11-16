@@ -112,6 +112,8 @@ internal object PushFaultRuntime {
                         checkNotNull(answer).send()
                         withTimeout(5000) {
                             check(outcome.await().outcome is ConversationCommandOutcome.Performed)
+                            check(state()?.get("status") == "connecting")
+                            engine.report(request.callId, mapOf("type" to "connected"))
                             while (state()?.get("status") != "connected") delay(10)
                         }
                     },

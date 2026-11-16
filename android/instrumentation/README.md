@@ -24,7 +24,7 @@ monotonic observation interval. Raw dumps, handles and notification content stay
 out of the output. The functional runner checks the parser controls and executes
 the query on its existing emulator; malformed or unsupported dumps fail the run.
 
-## Push faults on API 35
+## Push faults on API 34, 35 and 36
 
 Install the Debug instrumentation host, grant microphone/notification permissions,
 and use an explicit emulator serial. These controls inject at the app-owned
@@ -77,7 +77,12 @@ after the standard journeys and retains the new journal under `coldStart` in
 `push-fault-events.json`, preserving the earlier process's fault events.
 
 This is a cold-start intake/bootstrap qualification with media disabled and a
-native handler that proceeds. It does not deliver FCM: Android does not deliver
+native handler that proceeds. After the posted Answer settles as `Performed`,
+the host requires `connecting`, supplies the application's `connected` report,
+and requires the connected snapshot before cleanup. With native media disabled,
+Answer alone does not report a media connection.
+
+It does not deliver FCM: Android does not deliver
 ordinary FCM messages to force-stopped apps until an explicit launch clears the
 stopped state. The activity remains debug/emulator-only and shell protected.
 
