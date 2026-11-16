@@ -5,6 +5,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LiveKitNativeConfigurationTest {
+    @get:org.junit.Rule val mainDispatcher = MainDispatcherRule()
     @Test fun defaultsKeepLiveKitNetworkMonitoringUnchanged() {
         assertFalse(NativeMediaOptions().disableNetworkMonitor)
         assertNull(LiveKitNativeConfiguration(NativeMediaOptions()).overrides().peerConnectionFactoryOptions)

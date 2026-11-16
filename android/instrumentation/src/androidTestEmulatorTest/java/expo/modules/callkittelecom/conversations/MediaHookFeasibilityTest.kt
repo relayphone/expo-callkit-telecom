@@ -179,6 +179,10 @@ class MediaHookFeasibilityTest {
                 val uplink = receiving.await()
                 assertTrue(uplink.getLong("cleanCyclesWithPostRoll") > 0)
                 val observed = checkNotNull(first)
+                android.util.Log.i("PrewarmPreparation", JSONObject().put("claimDelayMillis", claimDelayMillis)
+                    .put("signals", org.json.JSONArray(signals.filter { it.elapsedRealtimeNanos < requested }.map {
+                        JSONObject().put("stage", it.stage.value).put("atNs", it.elapsedRealtimeNanos.toString())
+                            .put("measurements", JSONObject(it.measurements)) })).toString())
                 val timing = JSONObject().put("clock", "android.elapsedRealtimeNanos").put("claimDelayMillis", claimDelayMillis)
                     .put("answerRequestedNs", requested.toString()).put("prejoinClosedNs", retired.elapsedRealtimeNanos.toString())
                     .put("prejoinReleaseCompletedNs", released.elapsedRealtimeNanos.toString())

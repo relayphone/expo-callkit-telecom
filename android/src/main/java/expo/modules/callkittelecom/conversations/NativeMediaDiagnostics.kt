@@ -2,10 +2,12 @@ package expo.modules.callkittelecom.conversations
 
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.TimeSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 
 /** The receive-only preparation boundary that failed. */
 enum class NativePrewarmStage(val value: String) {
@@ -58,10 +60,22 @@ internal class NativeMediaDeadlines : AbstractCoroutineContextElement(Key) {
 
 private data class NativeDeadlineResult<T>(val value: T)
 
-internal suspend fun <T> withNativeMediaDeadline(timeoutMs: Long, block: suspend CoroutineScope.() -> T): T {
+/** Optional work can reserve time for completion within the nearest enclosing deadline. */
+internal class NativeMediaBudget(private val remaining: () -> Long) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<NativeMediaBudget>
+    fun remainingMs(): Long = remaining().coerceAtLeast(0)
+}
+
+internal suspend fun <T> withNativeMediaDeadline(timeoutMs: Long, timeSource: TimeSource = TimeSource.Monotonic,
+    block: suspend CoroutineScope.() -> T): T {
+    val started = timeSource.markNow()
+    val parent = currentCoroutineContext()[NativeMediaBudget]
+    val budget = NativeMediaBudget {
+        minOf(timeoutMs - started.elapsedNow().inWholeMilliseconds, parent?.remainingMs() ?: Long.MAX_VALUE)
+    }
     var cancellation: TimeoutCancellationException? = null
     val result = withTimeoutOrNull(timeoutMs) {
-        try { NativeDeadlineResult(block(this)) }
+        try { withContext(budget) { NativeDeadlineResult(block(this)) } }
         catch (error: TimeoutCancellationException) { cancellation = error; throw error }
     }
     if (result != null) return result.value

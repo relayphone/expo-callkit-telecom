@@ -156,16 +156,10 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             // Receive-only prejoin never creates or publishes a local audio track.
             // A silent/muted caller, or one not yet publishing, remains answerable.
             prewarmStage = NativePrewarmStage.SUBSCRIBE
-            try {
-                if (warmReceiver) {
-                    withTimeoutOrNull(2000) {
-                        remoteTrackReady.await(); subscriberReady.await()
-                        heat.awaitPlaybackStarted(); heat.awaitMutedOutput(); decode.awaitDecoded()
-                    }
-                }
-            } catch (_: CancellationException) {
-                // Silent, unpublished or retired remote tracks must remain answerable.
-                currentCoroutineContext().ensureActive()
+            if (warmReceiver) {
+                warmNativeReceiver(remoteTrackReady::await, subscriberReady::await,
+                    heat::awaitPlaybackStarted, heat::awaitMutedOutput, decode::awaitDecoded
+                ) { stage, measurements -> NativeMediaSignals.emit(serverId, stage, measurements) }
             }
             check(!closed && room === candidate)
             NativeMediaSignals.emit(serverId, NativeMediaStage.PREJOINED, mapOf(
