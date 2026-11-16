@@ -54,6 +54,7 @@ class ConversationCorrectnessTest {
                     override val currentCallEndpoint = endpoint.filterNotNull()
                     override val availableEndpoints = flowOf(emptyList<CallEndpointCompat>())
                     override val isMuted: Flow<Boolean> = muted
+                    override fun callTypeFlow(): Flow<Int> = flowOf(attributes.callType)
                     override suspend fun setActive() = CallControlResult.Success()
                     override suspend fun setInactive() = CallControlResult.Success()
                     override suspend fun answer(callType: Int) = CallControlResult.Success()

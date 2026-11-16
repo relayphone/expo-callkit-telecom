@@ -57,6 +57,7 @@ class ExpoCallKitTelecomModule : Module() {
         AsyncFunction("endConversation") Coroutine { id: String -> command { engine.end(id) } }
         AsyncFunction("setHeld") Coroutine { id: String, value: Boolean -> command { engine.hold(id, value) } }
         AsyncFunction("setMuted") Coroutine { id: String, value: Boolean -> command { engine.mute(id, value) } }
+        AsyncFunction("setConversationVideo") Coroutine { id: String, value: Boolean -> command { engine.setVideo(id, value) } }
         AsyncFunction("playTones") Coroutine { id: String, digits: String -> command { engine.tones(id, digits) } }
         AsyncFunction("mergeConversations") Coroutine { _: String, _: String -> command<Unit> { error("unsupported") } }
         AsyncFunction("reportConversation") Coroutine { id: String, report: Map<String, Any?> -> command { engine.report(id, report) } }

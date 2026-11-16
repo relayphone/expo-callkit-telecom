@@ -20,6 +20,7 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.ParcelUuid
 import android.os.PowerManager
 import android.os.Process
 import android.os.SystemClock
@@ -28,11 +29,15 @@ import android.provider.Settings
 import android.service.notification.StatusBarNotification
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.app.NotificationCompat
+import androidx.core.telecom.CallControlScope
+import androidx.core.telecom.CallEndpointCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.UUID
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.flowOf
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
@@ -102,6 +107,12 @@ class ConversationPresentationJourneyTest {
         }
 
         fun state(callId: String = id) = (engine.snapshot["conversations"] as List<*>).filterIsInstance<Map<*, *>>().firstOrNull { it["id"] == callId }
+        suspend fun updateMembers(includePeer: Boolean, callId: String = id) {
+            // Change the public snapshot without changing any rendered CallStyle fields.
+            val caller = (checkNotNull(state(callId))["members"] as List<*>).first()
+            val members = if (includePeer) listOf(caller, mapOf("id" to "$callId-peer")) else listOf(caller)
+            engine.report(callId, mapOf("type" to "updated", "members" to members))
+        }
         suspend fun outgoing(callId: String) {
             if (callId !in ids) ids += callId
             engine.actions.acceptUnhandled = true
@@ -112,6 +123,21 @@ class ConversationPresentationJourneyTest {
             assertEquals("reported", engine.incoming(IncomingCallPush(callId, "incoming-$callId",
                 mapOf("handleType" to "generic", "value" to callId, "displayName" to callId),
                 metadata = mapOf("card" to "app-card"), media = mapOf("token" to "private-grant")).payload())["status"])
+        }
+        suspend fun withStableAudioRoutes(body: suspend () -> Unit) {
+            val previous = engine.coreAdmission
+            val speaker = CallEndpointCompat("Speaker", CallEndpointCompat.TYPE_SPEAKER, ParcelUuid(UUID.randomUUID()))
+            // Keep real Telecom admission and controls, with deterministic route observations
+            // for the presentation-only complete-emission comparison.
+            engine.coreAdmission = CoreCallAdmission { attributes, callbacks, admitted ->
+                previous.add(attributes, callbacks) {
+                    admitted(object : CallControlScope by this {
+                        override val currentCallEndpoint = flowOf(speaker)
+                        override val availableEndpoints = flowOf(listOf(speaker))
+                    })
+                }
+            }
+            try { body() } finally { engine.coreAdmission = previous }
         }
         fun activityIntent(name: String) = PendingIntent.getActivity(context, 0,
             Intent(context, ConversationActivity::class.java).setAction("$id-$name"), PendingIntent.FLAG_IMMUTABLE)
@@ -295,6 +321,9 @@ class ConversationPresentationJourneyTest {
 
     private fun fixture(body: suspend Fixture.() -> Unit) = runBlocking {
         withContext(Dispatchers.Main) {
+            // NotificationService's package enqueue quota survives individual test cases.
+            // Start each scenario after a quiet interval; measured body deadlines are unchanged.
+            delay(2 * RINGING_ALERT_INTERVAL_MILLIS)
             awaitPresentationObservation("initial CallsManager empty", { TelecomEvidence.calls().size },
                 { it == 0 }, { "telecomCount=$it" })
             val fixture = Fixture()
@@ -436,35 +465,37 @@ class ConversationPresentationJourneyTest {
     }
 
     @Test fun refreshUpdatesRingingContentOnTheSameIdAndRemainsInsistent() = fixture {
-        stage = "ringing refresh setup"
-        var title = id
-        var extraAction = "Assistant"
-        ConversationPresentation.configure { _, _ ->
-            assertEquals(Looper.getMainLooper(), Looper.myLooper())
-            CallNotificationContent(title = title,
-                extraActions = listOf(NotificationCompat.Action(0, extraAction, activityIntent(extraAction))))
+        withStableAudioRoutes {
+            stage = "ringing refresh setup"
+            var title = id
+            var extraAction = "Assistant"
+            ConversationPresentation.configure { _, _ ->
+                assertEquals(Looper.getMainLooper(), Looper.myLooper())
+                CallNotificationContent(title = title,
+                    extraActions = listOf(NotificationCompat.Action(0, extraAction, activityIntent(extraAction))))
+            }
+            incoming()
+            awaitPresentationObservation("ringing audio routes discovered", { engine.audioRoutes() },
+                { it["current"] != null && (it["routes"] as List<*>).contains(it["current"]) },
+                { "available=${(it["routes"] as List<*>).size}, currentType=${(it["current"] as? Map<*, *>)?.get("type")}" })
+            stage = "original ringing card"
+            val original = card()
+            assertNotNull(original.notification.fullScreenIntent)
+            title = "Resolved caller"; extraAction = "Listen"
+            val snapshot = engine.snapshot
+            val beforeEmissions = emissions.toList()
+            refreshPresentation()
+            stage = "waiting for refreshed ringing content"
+            val updated = posted(original.id) { it.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name == title &&
+                it.actions.any { action -> action.title == "Listen" } }
+            assertEquals(original.id, updated.id)
+            assertEquals(0, updated.notification.flags and Notification.FLAG_ONLY_ALERT_ONCE)
+            assertTrue(updated.notification.flags and Notification.FLAG_INSISTENT != 0)
+            assertEquals(original.notification.fullScreenIntent, updated.notification.fullScreenIntent)
+            assertFalse(updated.notification.actions.any { it.title == "Assistant" })
+            assertSame(snapshot, engine.snapshot)
+            assertEquals(beforeEmissions, emissions)
         }
-        incoming()
-        awaitPresentationObservation("ringing audio routes discovered", { engine.audioRoutes() },
-            { it["current"] != null && (it["routes"] as List<*>).contains(it["current"]) },
-            { "available=${(it["routes"] as List<*>).size}, currentType=${(it["current"] as? Map<*, *>)?.get("type")}" })
-        stage = "original ringing card"
-        val original = card()
-        assertNotNull(original.notification.fullScreenIntent)
-        title = "Resolved caller"; extraAction = "Listen"
-        val snapshot = engine.snapshot
-        val beforeEmissions = emissions.toList()
-        refreshPresentation()
-        stage = "waiting for refreshed ringing content"
-        val updated = posted(original.id) { it.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name == title &&
-            it.actions.any { action -> action.title == "Listen" } }
-        assertEquals(original.id, updated.id)
-        assertEquals(0, updated.notification.flags and Notification.FLAG_ONLY_ALERT_ONCE)
-        assertTrue(updated.notification.flags and Notification.FLAG_INSISTENT != 0)
-        assertEquals(original.notification.fullScreenIntent, updated.notification.fullScreenIntent)
-        assertFalse(updated.notification.actions.any { it.title == "Assistant" })
-        assertSame(snapshot, engine.snapshot)
-        assertEquals(beforeEmissions, emissions)
     }
 
     @Test fun refreshUpdatesOngoingContentWithoutMovingForegroundOwnership() = fixture {
@@ -703,7 +734,7 @@ class ConversationPresentationJourneyTest {
             val original = alertingRefresh(initial.id, title)
             val before = alerts(original.id).size
             avatar = bitmapIcon()
-            engine.report(id, mapOf("type" to "updated", "video" to true))
+            updateMembers(true)
             delay(1400)
             assertEquals(before, alerts(original.id).size)
             refreshPresentation()
@@ -745,10 +776,10 @@ class ConversationPresentationJourneyTest {
             val original = alertingRefresh(initial.id, title)
             val before = alerts(original.id).size
             title = "Temporary snapshot title"
-            engine.report(id, mapOf("type" to "updated", "video" to true))
+            updateMembers(true)
             delay(200)
             title = "Ready caller"
-            engine.report(id, mapOf("type" to "updated", "video" to false))
+            updateMembers(false)
             delay(1400)
             assertEquals(before, alerts(original.id).size)
             assertEquals(original.postTime, posted(original.id).postTime)
@@ -1001,16 +1032,16 @@ class ConversationPresentationJourneyTest {
         outgoing(id)
         engine.report(id, mapOf("type" to "connected"))
         val original = card()
-        val videoUpdates = mutableSetOf<Boolean>()
+        val memberCounts = mutableSetOf<Int>()
         ConversationPresentation.configure { conversation, _ ->
-            videoUpdates += conversation["isVideo"] as Boolean
+            memberCounts += (conversation["members"] as List<*>).size
             CallNotificationContent()
         }
         repeat(20) { index ->
-            engine.report(id, mapOf("type" to "updated", "video" to (index % 2 == 0)))
+            updateMembers(index % 2 == 0)
             delay(25)
         }
-        assertEquals(setOf(false, true), videoUpdates)
+        assertEquals(setOf(1, 2), memberCounts)
         assertEquals("Unchanged content must not consume Android's notification update quota", original.postTime, card().postTime)
         ConversationControls.end(context, id)
         removed()
@@ -1022,11 +1053,11 @@ class ConversationPresentationJourneyTest {
         outgoing(id)
         card { it.actions.any { action -> action.title == "Assistant" } }
         extraActions[0] = NotificationCompat.Action(0, "Record", activityIntent("record"))
-        engine.report(id, mapOf("type" to "updated", "video" to true))
+        updateMembers(true)
         stage = "reused app action list"
         card { it.actions.any { action -> action.title == "Record" } && it.actions.none { action -> action.title == "Assistant" } }
         extraActions.clear()
-        engine.report(id, mapOf("type" to "updated", "video" to false))
+        updateMembers(false)
         stage = "remove reused app actions"
         card { it.actions.none { action -> action.title == "Record" } }
         ConversationControls.end(context, id)
@@ -1053,7 +1084,7 @@ class ConversationPresentationJourneyTest {
             assertEquals(secondId, conversation["id"])
             CallNotificationContent(heldSummary = "A paused call")
         }
-        engine.report(secondId, mapOf("type" to "updated", "video" to true))
+        updateMembers(true, secondId)
         stage = "custom held summary"
         card(secondId) { it.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "A paused call" }
         ConversationPresentation.configure(null)

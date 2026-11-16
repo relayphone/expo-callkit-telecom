@@ -26,11 +26,11 @@ class ConversationService : Service() {
     }
     private data class Card(val id: String, val phase: CallPhase, val content: CallNotificationContent,
                             val callerUri: String?, val callerKey: String?, val ending: Boolean = false,
-                            val avatarKey: AvatarKey? = null) {
+                            val avatarKey: AvatarKey? = null, val isVideo: Boolean = false) {
         // Snapshot text now, since an app can reuse actions containing mutable CharSequences.
         private val actions = content.extraActions.map { it.title?.toString() to it.actionIntent }
         fun sameDisplay(other: Card): Boolean =
-            id == other.id && phase == other.phase && callerUri == other.callerUri && callerKey == other.callerKey &&
+            id == other.id && phase == other.phase && isVideo == other.isVideo && callerUri == other.callerUri && callerKey == other.callerKey &&
                 content.title == other.content.title && content.heldSummary == other.content.heldSummary &&
                 actions == other.actions && content.channelId == other.content.channelId &&
                 content.fullScreenIntent == other.content.fullScreenIntent && content.contentIntent == other.content.contentIntent &&
@@ -270,7 +270,7 @@ class ConversationService : Service() {
                         IconCompat.TYPE_URI, IconCompat.TYPE_URI_ADAPTIVE_BITMAP -> AvatarKey.ContentUri(icon.uri)
                         else -> AvatarKey.Instance(it)
                     }
-                })
+                }, isVideo = state["isVideo"] == true)
         }
         private fun notification(context: Context, card: Card): Notification {
             val id = card.id
@@ -312,8 +312,8 @@ class ConversationService : Service() {
                 builder.addExtras(Bundle().apply { putCharSequence(NotificationCompat.EXTRA_TEXT, content.heldSummary) })
             }
             content.extraActions.forEach { builder.addAction(it) }
-            builder.setStyle(if (ringing) NotificationCompat.CallStyle.forIncomingCall(person, action("decline"), ConversationNotificationIntents.activity(context, id, answer = true))
-                else NotificationCompat.CallStyle.forOngoingCall(person, action("end")))
+            builder.setStyle((if (ringing) NotificationCompat.CallStyle.forIncomingCall(person, action("decline"), ConversationNotificationIntents.activity(context, id, answer = true))
+                else NotificationCompat.CallStyle.forOngoingCall(person, action("end"))).setIsVideo(card.isVideo))
             return builder.build().apply {
                 if (ringing) flags = flags or Notification.FLAG_INSISTENT
             }

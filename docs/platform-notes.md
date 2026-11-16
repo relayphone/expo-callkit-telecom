@@ -33,6 +33,10 @@ authority. `audioActivated` follows successful native audio authority, or Core
 activation with app-managed media. Hold and disconnect deactivate audio; native
 authority's 1500 ms timeout emits `audioActivationMissing`.
 
+Mid-call app/server video changes use Core-Telecom 1.1.0. Support and best-effort
+system events vary by API level; see [Android video changes](./contracts/android-video.md)
+for capability, attribution and route limitations. Building requires compile SDK 36+.
+
 ### Platform call removal
 
 Logical end releases media and audio immediately. Platform removal retries for

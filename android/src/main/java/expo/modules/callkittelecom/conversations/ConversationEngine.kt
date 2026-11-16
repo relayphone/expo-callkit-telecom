@@ -82,9 +82,10 @@ class ConversationEngine(val context: Context) {
         work.start()
     }
     internal fun canWarmIncoming(id: String): Boolean = calls[id]?.let { !it.terminal && !it.ending && !it.ringExpired && it.incoming?.intent == null } == true
+    private val telecomRegistration = ConversationTelecomRegistration()
     private val telecom = CallsManager(context).apply {
         registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE or CallsManager.CAPABILITY_SUPPORTS_VIDEO_CALLING,
-            backwardsCompatSdkLevel = CORE_LEGACY_THROUGH_SDK)
+            backwardsCompatSdkLevel = telecomRegistration.backwardsCompatSdkLevel)
     }
     internal var coreAdmission = CoreCallAdmission { attributes, callbacks, admitted ->
         telecom.addCall(attributes, callbacks.answer, callbacks.disconnect, callbacks.activate, callbacks.deactivate, admitted)
@@ -127,6 +128,7 @@ class ConversationEngine(val context: Context) {
         var providedMedia: Map<String, Any?>? = null
         var providedMediaJob: Job? = null
         lateinit var audio: NativeAudioLifecycle
+        lateinit var video: ConversationVideo
         val receipts = mutableMapOf<NativePerformedAction, NativeActionReceipt>()
         var holdingTerminal = false
         var nonActionEnd = false
@@ -154,6 +156,7 @@ class ConversationEngine(val context: Context) {
     private val identities = NativeIdentityReservations()
     internal var nativeMedia = AndroidNativeMedia.from(metadata?.getString("ExpoCallKitTelecomAndroidNativeMedia"))
     private val calls = linkedMapOf<String, Call>()
+    private val endedVideoIds = linkedSetOf<String>()
     // Retired controls never reserve an app ID or participate in live-call admission.
     private val removals = linkedSetOf<Call>()
     private val admissions = linkedSetOf<Call>()
@@ -481,9 +484,11 @@ class ConversationEngine(val context: Context) {
     private fun create(reservation: NativeIdentityReservations.Reservation, member: Map<String, Any?>, video: Boolean,
                        payload: Map<String, Any?>?): Call {
         val id = reservation.id
+        endedVideoIds.remove(id)
         (removals + admissions).filter { it.reservation.id == id }.forEach { it.removalIdReused = true }
         val incoming = payload != null
-        val supported = capabilities.copy(supportsTones = nativeMedia == AndroidNativeMedia.LIVEKIT)
+        val supported = capabilities.copy(supportsTones = nativeMedia == AndroidNativeMedia.LIVEKIT,
+            supportsVideo = telecomRegistration.supportsVideo(android.os.Build.VERSION.SDK_INT))
         val call = Call(linkedMapOf("id" to id, "direction" to if (incoming) "incoming" else "outgoing",
             "status" to if (incoming) "ringing" else "dialing", "members" to listOf(member),
             "isMuted" to false, "isVideo" to video, "payload" to payload?.filterKeys { it != "media" },
@@ -491,6 +496,15 @@ class ConversationEngine(val context: Context) {
         call.disconnect = CoreCallDisconnect(jobs, platformRemovalDeadlineMillis, nowMillis = platformRemovalNowMillis)
         call.visible = !incoming
         calls[id] = call
+        call.video = ConversationVideo(video, {
+            check(!call.terminal && !call.ending && !call.localEndPending) { "invalid_arguments" }
+            requireLive(call)
+        }, supported::requireVideo) { enabled, source ->
+            call.state["isVideo"] = enabled
+            publish()
+            emit("conversationEvent", mapOf("type" to "videoChanged", "payload" to mapOf(
+                "conversationId" to id, "isVideo" to enabled, "source" to source.wire)))
+        }
         call.audio = NativeAudioLifecycle({ live(call) && call.active }, { audio.mode }) { event ->
             val type = when (event) { NativeAudioEvent.ACTIVATED -> "audioActivated"
                 NativeAudioEvent.DEACTIVATED -> "audioDeactivated"; NativeAudioEvent.ACTIVATION_MISSING -> "audioActivationMissing" }
@@ -572,6 +586,11 @@ class ConversationEngine(val context: Context) {
                         try { coroutineScope {
                     launch { controls.availableEndpoints.collect { call.endpoints = it; updateRoutes(id, null) } }
                     launch { controls.currentCallEndpoint.collect { updateRoutes(id, it) } }
+                    launch { controls.callTypeFlow().collect { type ->
+                        if (live(call) && call.video.observed(type == CallAttributesCompat.CALL_TYPE_VIDEO_CALL)) {
+                            restoreVideoReceiverLater(call)
+                        }
+                    } }
                     launch { controls.isMuted.onEach { muted ->
                         signal(call, NativeMediaStage.CORE_MUTE_OBSERVED, mapOf("muted" to if (muted) 1L else 0L))
                     }.coreMuteChanges().collect { muted ->
@@ -892,6 +911,33 @@ class ConversationEngine(val context: Context) {
         if (current.state["isMuted"] == muted && current.receipts.keys.none { it is NativePerformedAction.Mute }) return
         native(id, NativePerformedAction.Mute(muted), origin)
     }
+    internal suspend fun setVideo(id: String, enabled: Boolean, source: VideoChangeSource = VideoChangeSource.APP) {
+        val current = calls[id] ?: run {
+            check(id !in endedVideoIds) { "invalid_arguments" }
+            error("unknown_conversation")
+        }
+        current.video.set(enabled, source, {
+            checked(control(id).requestCallType(if (enabled) CallAttributesCompat.CALL_TYPE_VIDEO_CALL
+                else CallAttributesCompat.CALL_TYPE_AUDIO_CALL))
+        }, { restoreVideoReceiver(current, control(id)) })
+    }
+    private suspend fun restoreVideoReceiver(current: Call, controls: CallControlScope) {
+        if (!live(current) || current.video.isVideo || current.endpoint?.type != CallEndpointCompat.TYPE_SPEAKER) return
+        // A newly available private endpoint always wins over restoring the receiver.
+        if (current.endpoints.any { it.type in listOf(CallEndpointCompat.TYPE_BLUETOOTH, CallEndpointCompat.TYPE_WIRED_HEADSET) }) return
+        val receiver = current.endpoints.firstOrNull { it.type == CallEndpointCompat.TYPE_EARPIECE } ?: return
+        checked(controls.requestEndpointChange(receiver))
+    }
+    private fun restoreVideoReceiverLater(current: Call) {
+        jobs.launch {
+            try { if (live(current)) current.video.restoreFromSystem { restoreVideoReceiver(current, current.ready.await()) } }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) {
+                // System restoration is best-effort: an ended call or unavailable route must not
+                // crash the process or undo the already observed video downgrade.
+            }
+        }
+    }
     suspend fun tones(id: String, digits: String) {
         NativeDtmfDigit.parse(digits)
         val current = call(id)
@@ -921,7 +967,15 @@ class ConversationEngine(val context: Context) {
                 current.timeout?.cancel()
                 current.state["connectedAt"] = current.state["connectedAt"] ?: Instant.now().toString()
             }
-            "updated" -> { report["members"]?.let { current.state["members"] = it }; report["video"]?.let { current.state["isVideo"] = it } }
+            "updated" -> {
+                applyConversationUpdate(updateMembers = {
+                    report["members"]?.let { current.state["members"] = it; publish() }
+                }, requestedVideo = {
+                    report["video"]?.let { require(it is Boolean) { "invalid_arguments" }; it }
+                }, currentVideo = { current.state["isVideo"] == true }) {
+                    setVideo(id, it, VideoChangeSource.SERVER)
+                }
+            }
             "ended" -> { finish(id, report["reason"] as? String ?: error("invalid_arguments"), EndedFailure.SERVER); return }
             else -> error("invalid_arguments")
         }
@@ -1074,6 +1128,9 @@ class ConversationEngine(val context: Context) {
         val current = calls[id] ?: return
         if (current.terminal) return
         current.terminal = true
+        endedVideoIds += id
+        if (endedVideoIds.size > 128) endedVideoIds.remove(endedVideoIds.first())
+        current.video.close()
         current.active = false
         current.providedMediaJob?.cancel()
         current.providedMedia = null
@@ -1120,7 +1177,14 @@ class ConversationEngine(val context: Context) {
     private fun updateRoutes(id: String, endpoint: CallEndpointCompat?) {
         val current = calls[id] ?: return
         if (endpoint != null) {
+            val movedByUpgrade = current.video.route.observed(VideoUpgradeRoute.Endpoint(endpoint.identifier.toString(), when (endpoint.type) {
+                CallEndpointCompat.TYPE_EARPIECE -> VideoUpgradeRoute.Kind.RECEIVER
+                CallEndpointCompat.TYPE_SPEAKER -> VideoUpgradeRoute.Kind.SPEAKER
+                CallEndpointCompat.TYPE_BLUETOOTH, CallEndpointCompat.TYPE_WIRED_HEADSET -> VideoUpgradeRoute.Kind.PRIVATE
+                else -> VideoUpgradeRoute.Kind.OTHER
+            }))
             current.endpoint = endpoint
+            if (movedByUpgrade && !current.video.isVideo) restoreVideoReceiverLater(current)
             @Suppress("UNCHECKED_CAST") val serverId = (current.state["payload"] as? Map<String, Any?>)?.get("serverCallId") as? String
             serverId?.let { NativeMediaSignals.emit(it, NativeMediaStage.ENDPOINT_READY, mapOf("type" to endpoint.type.toLong())) }
         }
@@ -1144,6 +1208,7 @@ class ConversationEngine(val context: Context) {
         val endpoint = current.endpoints.firstOrNull { it.identifier.toString() == id } ?: error("invalid_arguments")
         val controls = current.ready.await()
         requireLive(current)
+        current.video.route.selected()
         checked(controls.requestEndpointChange(endpoint))
         requireLive(current)
     }
