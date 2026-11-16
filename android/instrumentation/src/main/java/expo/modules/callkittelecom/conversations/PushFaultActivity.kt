@@ -101,9 +101,14 @@ internal object PushFaultRuntime {
                                         ?.name?.toString() == request.callId
                             }?.notification
                             val actions = card?.actions.orEmpty()
-                            val accept = actions.singleOrNull { it.actionIntent == action("join") }
+                            val postedAnswer = card?.extras?.getParcelable(Notification.EXTRA_ANSWER_INTENT, PendingIntent::class.java)
+                            val accept = postedAnswer?.let { posted -> actions.singleOrNull { it.actionIntent == posted } }
                             val decline = actions.singleOrNull { it.actionIntent == action("decline") }
-                            if (accept != null && decline != null) answer = accept.actionIntent
+                            if (accept != null && decline != null) {
+                                check(accept.actionIntent.isActivity)
+                                check(decline.actionIntent.isBroadcast)
+                                answer = accept.actionIntent
+                            }
                             else delay(10)
                         }
                         check(state()?.get("status") == "ringing")
