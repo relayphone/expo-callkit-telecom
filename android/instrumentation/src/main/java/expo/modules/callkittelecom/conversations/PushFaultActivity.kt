@@ -24,10 +24,21 @@ import org.json.JSONObject
 
 /** Shell-only entry point in the standalone instrumentation host. No FCM transport is simulated. */
 class PushFaultActivity : Activity() {
+    private var coldStarted = false
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        try { PushFaultRuntime.command(applicationContext, intent) }
-        finally { finish() }
+        if (intent.getStringExtra("command") != "cold-start") {
+            try { PushFaultRuntime.command(applicationContext, intent) }
+            finally { finish() }
+        }
+    }
+    override fun onPostResume() {
+        super.onPostResume()
+        if (intent.getStringExtra("command") == "cold-start" && !coldStarted) {
+            coldStarted = true
+            try { PushFaultRuntime.command(applicationContext, intent, ::finish) }
+            catch (error: Throwable) { finish(); throw error }
+        }
     }
 }
 
@@ -37,7 +48,7 @@ internal object PushFaultRuntime {
     private var log: PushFaultLog? = null
     suspend fun cancelPending() { controller?.cancelPending() }
 
-    fun command(context: Context, intent: Intent) {
+    fun command(context: Context, intent: Intent, coldFinished: () -> Unit = {}) {
         check(Looper.myLooper() == Looper.getMainLooper())
         check(BuildConfig.DEBUG && context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
         check(Build.HARDWARE in setOf("ranchu", "goldfish") && Build.PRODUCT.startsWith("sdk"))
@@ -53,7 +64,7 @@ internal object PushFaultRuntime {
             require(it.isNotBlank() && it.length <= 512)
         }
         when (intent.getStringExtra("command")) {
-            "cold-start" -> coldStart(context, PushFaultDelivery(text("deliveryId"), text("callId"), text("eventId")), journal)
+            "cold-start" -> coldStart(context, PushFaultDelivery(text("deliveryId"), text("callId"), text("eventId")), journal, coldFinished)
             "deliver", "drop" -> deliveries.enqueue(PushFaultDelivery(text("deliveryId"), text("callId"),
                 text("eventId"), intent.getLongExtra("delayMillis", 0), intent.getStringExtra("command") == "drop"))
             "rebind-empty-token" -> rebind(context, text("deliveryId"), journal)
@@ -70,7 +81,7 @@ internal object PushFaultRuntime {
             .addData("incomingCall", JSONObject(push.payload()).toString()).build())
     }
 
-    private fun coldStart(context: Context, request: PushFaultDelivery, journal: PushFaultLog) {
+    private fun coldStart(context: Context, request: PushFaultDelivery, journal: PushFaultLog, finished: () -> Unit) {
         val engine = ConversationEngine.get(context)
         val manager = context.getSystemService(NotificationManager::class.java)
         fun state() = (engine.snapshot["conversations"] as List<*>).filterIsInstance<Map<*, *>>()
@@ -137,6 +148,7 @@ internal object PushFaultRuntime {
                 outcome.cancelAndJoin()
                 engine.nativeMedia = previousMedia
                 ConversationActions.configure(previousHandler)
+                finished()
             } }
         }
     }

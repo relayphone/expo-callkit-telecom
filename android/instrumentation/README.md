@@ -88,6 +88,12 @@ the host requires `connecting`, supplies the application's `connected` report,
 and requires the connected snapshot before cleanup. With native media disabled,
 Answer alone does not report a media connection.
 
+Cold intake starts after the shell Activity resumes. The sender stays open
+until cleanup, allowing it to send the posted Activity PendingIntent as a user
+interaction. The launch Activity
+consumes the native answer delivery before JavaScript. Answer and Decline must
+both be posted; Answer must target an Activity and Decline a broadcast.
+
 It does not deliver FCM: Android does not deliver
 ordinary FCM messages to force-stopped apps until an explicit launch clears the
 stopped state. The activity remains debug/emulator-only and shell protected.
