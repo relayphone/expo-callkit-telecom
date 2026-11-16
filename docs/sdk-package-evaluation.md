@@ -1,6 +1,6 @@
 # Evaluate the fork with the released SDK
 
-The SDK is consumed from the [v0.7.0 release asset](https://github.com/relayphone/ios-voip-sdk/releases/tag/v0.7.0).
+The SDK is consumed from the [v0.8.0 release asset](https://github.com/relayphone/ios-voip-sdk/releases/tag/v0.8.0).
 Each consuming workflow downloads the SDK tarball and verifies its SHA-256 against that release's
 `SHA256SUMS` before installing the checked-in URL dependency and lockfile. The package evaluation
 workflow also installs the fork tarball together with the SDK URL in a separate consumer. The root package
@@ -32,7 +32,7 @@ To install in an app, first pack the chosen fork checkout with `npm pack`. Insta
 together with the SDK asset, using the actual fork tarball filename:
 
 ```sh
-npm install /path/to/expo-callkit-telecom-2.0.0-alpha.8.tgz https://github.com/relayphone/ios-voip-sdk/releases/download/v0.7.0/relayphone-ios-voip-sdk-0.7.0.tgz
+npm install /path/to/expo-callkit-telecom-2.0.0-alpha.14.tgz https://github.com/relayphone/ios-voip-sdk/releases/download/v0.8.0/relayphone-ios-voip-sdk-0.8.0.tgz
 npx expo install expo-notifications expo-build-properties
 ```
 
@@ -51,7 +51,7 @@ provides Apple's native sources. Inspect a real archive with:
 ```sh
 mkdir -p /tmp/fork-package
 npm pack --pack-destination /tmp/fork-package
-tar -tzf /tmp/fork-package/expo-callkit-telecom-2.0.0-alpha.8.tgz
+tar -tzf /tmp/fork-package/expo-callkit-telecom-2.0.0-alpha.14.tgz
 ```
 
 The consumer resolves both installed package entries, invokes both supported config plugin entries,
@@ -60,7 +60,8 @@ compiles a TypeScript consumer against the public root, `types` and SDK `plugin`
 The type consumer covers `prewarmFailed` and media `ended.failure` diagnostics, including optional
 stage, timeout and reason fields, and rejects native numeric phases and uppercase reason codes.
 A runtime fixture then loads both installed public roots with fake native and React boundaries. It verifies
-shared SDK function identity, media permission calls and results, raw IDs, sanitized canonical errors,
+shared SDK function identity, video commands, updated.video reports and all videoChanged payload sources,
+media permission calls and results, raw IDs, sanitized canonical errors,
 Bluetooth/other route updates, and Android's absent preview/Focus state. Route and untyped-error fault controls must fail this
 fixture. It uses
 pinned Expo 57, React 19.2.3 and React Native 0.86.3 dependencies. Host checks do not execute React

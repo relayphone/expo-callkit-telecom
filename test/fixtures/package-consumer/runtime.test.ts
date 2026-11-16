@@ -1,6 +1,8 @@
 import type { ConfigPlugin, ExportedConfig } from "expo/config-plugins";
 import type {
   ConversationMediaReadiness,
+  ConversationEventMap,
+  ConversationReport,
   MediaKind,
   MediaPermissions,
 } from "expo-callkit-telecom";
@@ -13,6 +15,10 @@ import { test } from "node:test";
 
 const listeners = new Map<string, (event: unknown) => void>();
 const selected: string[] = [];
+const videoCalls: (
+  | ["setConversationVideo", string, boolean]
+  | ["reportConversation", string, ConversationReport]
+)[] = [];
 const permissionCalls: (
   | ["getMediaPermissions"]
   | ["requestMediaPermissions", readonly MediaKind[]]
@@ -97,12 +103,17 @@ const native = {
     throw new Error('Native rejection: expo-conversation:{"code":"refused","message":"keepActive"}');
   },
   async setMuted() {},
+  async setConversationVideo(id: string, enabled: boolean) {
+    videoCalls.push(["setConversationVideo", id, enabled]);
+  },
   async playTones() {},
   async mergeConversations() {},
   async selectAudioRoute(id: string) {
     selected.push(id);
   },
-  async reportConversation() {},
+  async reportConversation(id: string, report: ConversationReport) {
+    videoCalls.push(["reportConversation", id, report]);
+  },
   async receiveCallEnded() {
     return false;
   },
@@ -117,7 +128,7 @@ const hooks = registerHooks({
       const source =
         specifier === "expo"
           ? 'export function requireNativeModule(name) { if (name !== "VoIPConversations") throw Error(name); return globalThis.compositionTestTransport; }'
-          : "export function useEffect() {} export function useRef(current) { return { current }; } export function useSyncExternalStore(_subscribe, read) { return read(); }";
+          : "export function useEffect(effect) { effect(); } export function useRef(current) { return { current }; } export function useSyncExternalStore(_subscribe, read) { return read(); }";
       return {
         shortCircuit: true,
         url: "data:text/javascript," + encodeURIComponent(source),
@@ -138,7 +149,7 @@ const hooks = registerHooks({
   },
 });
 
-test("installed packages share the SDK runtime, media permissions, canonical errors and route updates", async () => {
+test("installed packages share the SDK runtime, video changes, media permissions, canonical errors and route updates", async () => {
   try {
     const fork = await import("expo-callkit-telecom");
     const sdk = await import("@relayphone/ios-voip-sdk");
@@ -172,6 +183,26 @@ test("installed packages share the SDK runtime, media permissions, canonical err
       video: false,
     });
     assert.equal(id, "server/電話 42");
+    assert.equal(fork.setConversationVideo, sdk.setConversationVideo);
+    await fork.setConversationVideo(id, true);
+    await fork.reportConversation(id, { type: "updated", video: false });
+    assert.deepEqual(videoCalls, [
+      ["setConversationVideo", id, true],
+      ["reportConversation", id, { type: "updated", video: false }],
+    ]);
+    const videoEvents: ConversationEventMap["videoChanged"][] = [];
+    fork.useConversationEvent("videoChanged", (event) => videoEvents.push(event));
+    const nativeEvent = listeners.get("conversationEvent");
+    assert.ok(nativeEvent);
+    for (const source of ["app", "server", "system"] as const) {
+      nativeEvent({ type: "videoChanged", payload: { conversationId: id, isVideo: source !== "server", source } });
+    }
+    nativeEvent({ type: "audioActivated", payload: {} });
+    assert.deepEqual(videoEvents, [
+      { conversationId: id, isVideo: true, source: "app" },
+      { conversationId: id, isVideo: false, source: "server" },
+      { conversationId: id, isVideo: true, source: "system" },
+    ]);
     await assert.rejects(fork.joinConversation(id), (error: unknown) => {
       assert.ok(error instanceof Error);
       assert.equal(error.message, "Unknown call");

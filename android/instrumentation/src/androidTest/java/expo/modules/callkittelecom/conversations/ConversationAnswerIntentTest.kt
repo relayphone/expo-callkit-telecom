@@ -42,6 +42,11 @@ class ConversationAnswerIntentTest {
         }
         error("unreachable")
     }
+    private fun answerIntent(card: Notification): PendingIntent {
+        val answer = checkNotNull(card.extras.getParcelable(Notification.EXTRA_ANSWER_INTENT, PendingIntent::class.java))
+        assertTrue("CallStyle answer must remain an action", card.actions.any { it.actionIntent == answer })
+        return answer
+    }
     private suspend fun fixture(video: Boolean = false, body: suspend (String, List<Map<*, *>>) -> Unit) = withContext(Dispatchers.Main) {
         delay(2 * RINGING_ALERT_INTERVAL_MILLIS)
         val previousMedia = engine.nativeMedia
@@ -112,7 +117,7 @@ class ConversationAnswerIntentTest {
         val beforeVideoEvents = videoUpgradeCount()
         if (notification) {
             val card = notification(id, true)
-            val answer = card.actions.single { it.title.toString().equals("Answer", ignoreCase = true) }.actionIntent
+            val answer = answerIntent(card)
             assertTrue("Answer must target an Activity directly", answer.isActivity)
             home(); send(answer); foreground(id)
         } else engine.join(id)
@@ -132,7 +137,8 @@ class ConversationAnswerIntentTest {
     private suspend fun videoAnswer(fromNotification: Boolean) = fixture(video = true) { id, answers ->
         if (fromNotification) {
             val card = notification(id, true)
-            home(); send(card.actions.single { it.title.toString().equals("Answer", true) }.actionIntent)
+            println("videoAnswer actionTitles=${card.actions.map { it.title }}")
+            home(); send(answerIntent(card))
             foreground(id)
         } else engine.join(id)
         withTimeout(5000) { while (state(id)?.get("status") == "ringing") delay(10) }
@@ -149,7 +155,7 @@ class ConversationAnswerIntentTest {
     @Test fun notificationAnswerOpensTheLauncherAndActivityRecreationDoesNotAnswerTwice() = runBlocking {
         fixture { id, answers ->
             val card = notification(id, true)
-            val answer = card.actions.single { it.title.toString().equals("Answer", true) }.actionIntent
+            val answer = answerIntent(card)
             assertTrue(answer.isActivity)
             assertTrue(card.actions.single { it.title.toString().equals("Decline", true) }.actionIntent.isBroadcast)
             home(); send(answer); foreground(id)

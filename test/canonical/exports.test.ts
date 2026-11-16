@@ -43,6 +43,7 @@ const transport = {
   async endConversation() {},
   async setHeld() {},
   async setMuted() {},
+  async setConversationVideo() {},
   async playTones() {},
   async mergeConversations() {},
   async selectAudioRoute() {},
