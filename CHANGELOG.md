@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.14 (2026-11-16)
+
+### Fixes
+
+* **android:** keep audio-only calls audio-only before and after Answer on
+  Android 14–16, using Core-Telecom 1.1.0 with the appropriate compatibility
+  and activation paths
+  ([#164](https://github.com/relayphone/expo-callkit-telecom/pull/164)).
+* **android:** open the configured Activity from the standard notification
+  Answer action and deliver its native answer once, without waiting for
+  JavaScript
+  ([#164](https://github.com/relayphone/expo-callkit-telecom/pull/164)).
+* **android:** give incoming and ongoing notification bodies a default Activity
+  target while preserving app-provided content intents. Add the
+  `androidCallActivity` option to select a declared Activity
+  ([#164](https://github.com/relayphone/expo-callkit-telecom/pull/164)).
+
 ## 2.0.0-alpha.13 (2026-11-16)
 
 ### Fixes
