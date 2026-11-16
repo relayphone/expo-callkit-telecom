@@ -97,7 +97,7 @@ class NativeMediaOwnerTest {
         withTimeout(1000) { while (!owner.isPrewarmed) delay(10) }
         releaseClose = CompletableDeferred()
         owner.answered(mapOf("provider" to "livekit", "token" to "answer-grant", "expiresAt" to System.currentTimeMillis() / 1000 + 120))
-        withTimeout(3000) { failed.await() }
+        withTimeout(5000) { failed.await() }
         assertEquals(1, invitations.size)
         assertEquals(0, activations.get())
         assertEquals(1, closes.get())

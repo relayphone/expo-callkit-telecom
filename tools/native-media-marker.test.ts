@@ -162,6 +162,29 @@ async def check():
         assert (await fixture.retain_claim_timing(Request({**body, "publisherStartedNs": "private"}))).status == 400
         assert (await fixture.retain_claim_timing(Request({**body, "answerToFirstMarkerObservedMs": float("nan")}))).status == 400
         assert json.loads(saved.read_text()) == {**body, "negotiations": [], "receiver": None}
+        retirement = {**body, "prejoinReleaseCompletedNs": "9007199254740994", "retirement": [
+            {"stage": "closeRequested", "atNs": "9007199254740993", "measurements": {
+                "operationId": 7, "startedNs": 9007199254740993, "durationNs": 0}},
+            {"stage": "closeRoomReleased", "atNs": "9007202254740993", "measurements": {
+                "operationId": 7, "startedNs": 9007199254740993, "durationNs": 3000000000, "completed": 0}},
+            {"stage": "releaseCompleted", "atNs": "9007202254740994", "measurements": {
+                "operationId": 7, "startedNs": 9007199254740993, "durationNs": 3000000001, "completed": 0, "timeout": 1}}]}
+        assert (await fixture.retain_claim_timing(Request(retirement))).status == 200
+        expected = {**retirement, "negotiations": [], "receiver": None}
+        assert json.loads(saved.read_text()) == expected
+        entry = retirement["retirement"][0]
+        for invalid in [
+            {**retirement, "prejoinReleaseCompletedNs": "private"},
+            {**retirement, "retirement": retirement["retirement"] * 12},
+            {**retirement, "retirement": [{**entry, "stage": "private"}]},
+            {**retirement, "retirement": [{**entry, "atNs": "private"}]},
+            {**retirement, "retirement": [{**entry, "message": "private"}]},
+            *[{**retirement, "retirement": [{**entry, "measurements": {**entry["measurements"], **fields}}]}
+              for fields in [{"durationNs": -1}, {"durationNs": 0.5}, {"durationNs": True},
+                  {"durationNs": 2**63}, {"message": "private"}, {"completed": 2}]],
+        ]:
+            assert (await fixture.retain_claim_timing(Request(invalid))).status == 400
+        assert json.loads(saved.read_text()) == expected
         fixture.uplinks["native-ci-hooks-123"] = SimpleNamespace(started_ns=100, arrivals=[[25, 0, 480]], frames=480,
             detections=[{"endSamples": 480}], first_marker_ns=200)
         snapshot = json.loads((await fixture.claim_signaling(Request())).text)

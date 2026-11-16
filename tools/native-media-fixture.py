@@ -667,13 +667,35 @@ async def retain_claim_timing(request):
              "firstMarkerObservedNs", "publisherStartedNs", "publisherCompletedNs", "answerConnectedNs",
              "claimStartedNs", "claimCompletedNs", "answerActionCompletedNs"}
     durations = {"answerToFirstMarkerObservedMs", "swapToFirstMarkerObservedMs"}
+    timing_keys = nanos | durations | {"clock", "claimDelayMillis"}
+    retirement_keys = {"prejoinReleaseCompletedNs", "retirement"}
     if (not re.fullmatch(r"hooks-[0-9]+", server_id) or type(body) is not dict
-            or set(body) != nanos | durations | {"clock", "claimDelayMillis"}
+            or set(body) not in (timing_keys, timing_keys | retirement_keys)
             or body["clock"] != "android.elapsedRealtimeNanos"
             or type(body["claimDelayMillis"]) is not int or not 0 <= body["claimDelayMillis"] <= 2800
             or any(type(body[key]) is not str or not re.fullmatch(r"[0-9]{1,24}", body[key]) for key in nanos)
             or any(type(body[key]) not in (int, float) or not math.isfinite(body[key]) or body[key] < 0 for key in durations)):
         return web.Response(status=400)
+    if set(body) == timing_keys | retirement_keys:
+        stages = {"closeRequested", "closeLifetimeJoined", "closeSessionCompleted", "closeObservationDrained",
+                  "closeDisconnectEmitted", "closeTracksRemoved", "closeAudioHooksClosed", "closeRoomReleased", "releaseCompleted"}
+        if (type(body["prejoinReleaseCompletedNs"]) is not str
+                or not re.fullmatch(r"[0-9]{1,24}", body["prejoinReleaseCompletedNs"])
+                or type(body["retirement"]) is not list or not 1 <= len(body["retirement"]) <= 32):
+            return web.Response(status=400)
+        for event in body["retirement"]:
+            if (type(event) is not dict or set(event) != {"stage", "atNs", "measurements"}
+                    or type(event["stage"]) is not str or event["stage"] not in stages
+                    or type(event["atNs"]) is not str or not re.fullmatch(r"[0-9]{1,24}", event["atNs"])):
+                return web.Response(status=400)
+            flags = set() if event["stage"] == "closeRequested" else {"completed"}
+            if event["stage"] == "releaseCompleted":
+                flags.add("timeout")
+            values = event["measurements"]
+            if (type(values) is not dict or set(values) != {"operationId", "startedNs", "durationNs"} | flags
+                    or any(type(value) is not int or not 0 <= value < 2**63 for value in values.values())
+                    or any(values[flag] not in (0, 1) for flag in flags)):
+                return web.Response(status=400)
     evidence = directory / "media-evidence"
     evidence.mkdir(parents=True, exist_ok=True)
     snapshot = claim_signaling_snapshot(server_id)
