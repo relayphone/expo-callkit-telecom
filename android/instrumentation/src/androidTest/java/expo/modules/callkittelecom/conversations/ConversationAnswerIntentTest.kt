@@ -117,6 +117,7 @@ class ConversationAnswerIntentTest {
             home(); send(answer); foreground(id)
         } else engine.join(id)
         withTimeout(5000) { while (state(id)?.get("status") == "ringing") delay(10) }
+        withTimeout(5000) { while (TelecomEvidence.calls().singleOrNull()?.contains("state=ACTIVE") != true) delay(10) }
         assertEquals(false, state(id)?.get("isVideo"))
         val platform = TelecomEvidence.calls().single()
         val videoState = Regex("vidst=([^,\\]]+)").find(platform)?.groupValues?.get(1)
@@ -135,6 +136,7 @@ class ConversationAnswerIntentTest {
             foreground(id)
         } else engine.join(id)
         withTimeout(5000) { while (state(id)?.get("status") == "ringing") delay(10) }
+        withTimeout(5000) { while (TelecomEvidence.calls().singleOrNull()?.contains("state=ACTIVE") != true) delay(10) }
         assertEquals(true, state(id)?.get("isVideo"))
         val platform = TelecomEvidence.calls().single()
         val videoState = checkNotNull(Regex("vidst=([^,\\]]+)").find(platform)?.groupValues?.get(1))

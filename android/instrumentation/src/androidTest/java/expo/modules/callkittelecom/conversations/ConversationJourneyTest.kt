@@ -24,9 +24,11 @@ class ConversationJourneyTest {
     private suspend fun awaitTelecomRemoval() = withTimeout(5000) {
         while (TelecomEvidence.calls().isNotEmpty()) delay(10)
     }
-    private suspend fun awaitSingleTelecomState(state: String) = withTimeout(5000) {
-        while (TelecomEvidence.calls().singleOrNull()?.contains("state=$state") != true) delay(10)
-    }
+    private enum class PlatformState { RINGING, ACTIVE, ON_HOLD }
+    private suspend fun awaitSingleTelecomState(state: PlatformState) = awaitPresentationObservation(
+        "one platform call in $state", { TelecomEvidence.calls() },
+        { it.singleOrNull()?.contains("state=${state.name},") == true },
+        { calls -> calls.map { Regex("state=([^,]+)").find(it)?.groupValues?.get(1) }.toString() })
 
     @Test fun incomingAndOutgoingJourney() = runBlocking {
         withContext(Dispatchers.Main) {
@@ -58,14 +60,14 @@ class ConversationJourneyTest {
                 assertEquals("journey-incoming", id)
                 expect(id, "ringing")
                 assertEquals(id, engine.incoming(payload)["id"])
-                awaitSingleTelecomState("RINGING")
+                awaitSingleTelecomState(PlatformState.RINGING)
                 engine.join(id)
                 expect(id, "connecting")
                 engine.report(id, mapOf("type" to "connected"))
                 expect(id, "connected")
-                awaitSingleTelecomState("ACTIVE")
+                awaitSingleTelecomState(PlatformState.ACTIVE)
                 engine.hold(id, true)
-                awaitSingleTelecomState("HOLDING")
+                awaitSingleTelecomState(PlatformState.ON_HOLD)
                 expect(id, "held")
                 val second = engine.incoming(payload + mapOf("eventId" to "second-event", "serverCallId" to "second-call"))
                 assertEquals("reported", second["status"])
@@ -424,9 +426,9 @@ class ConversationJourneyTest {
             try {
                 assertEquals(first, engine.incoming(invitation(first))["id"])
                 // Legacy scope admission precedes the platform's connection-created reply.
-                awaitSingleTelecomState("RINGING")
-                engine.join(first); awaitSingleTelecomState("ACTIVE")
-                engine.hold(first, true); awaitSingleTelecomState("HOLDING")
+                awaitSingleTelecomState(PlatformState.RINGING)
+                engine.join(first); awaitSingleTelecomState(PlatformState.ACTIVE)
+                engine.hold(first, true); awaitSingleTelecomState(PlatformState.ON_HOLD)
                 assertEquals(second, engine.incoming(invitation(second))["id"])
                 suspend fun action(id: String): android.app.PendingIntent = withTimeout(5000) {
                     var found: android.app.PendingIntent? = null
