@@ -123,8 +123,8 @@ class ConversationAnswerIntentTest {
                     ConversationPresentation.configure(null)
                     if (state(id) != null) engine.report(id, mapOf("type" to "ended", "reason" to "remoteEnded"))
                     await(AnswerJourneyWait.PLATFORM_REMOVED) { while (platformCalls().isNotEmpty()) delay(10) }
-                    NotificationLaunchActivity.active?.finish()
-                    await(AnswerJourneyWait.ACTIVITY_DESTROYED) { while (NotificationLaunchActivity.active != null) delay(10) }
+                    NotificationLaunchActivity.finishAll()
+                    await(AnswerJourneyWait.ACTIVITY_DESTROYED) { while (NotificationLaunchActivity.hasActivities) delay(10) }
                 } finally {
                     engine.nativeMedia = previousMedia; engine.policy = previousPolicy
                     engine.actions.acceptUnhandled = previousAccept; engine.emit = previousEmit
@@ -152,6 +152,21 @@ class ConversationAnswerIntentTest {
                 throw error
             }
             trace.mark(AnswerJourneyPhase.WAIT_TIMED_OUT, wait)
+            if (wait == AnswerJourneyWait.ACTIVITY_FOREGROUND || wait == AnswerJourneyWait.ACTIVITY_DESTROYED) {
+                val count = NotificationLaunchActivity.activityCount
+                trace.launchDiagnostics = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val command = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(
+                            "logcat -d -b system -v brief -t 2000 -s ActivityTaskManager")
+                        val lines = ParcelFileDescriptor.AutoCloseInputStream(command).bufferedReader().use { it.readLines() }
+                        val own = lines.filter { context.packageName in it }
+                        val blocked = own.filter { it.contains("Background activity launch blocked", true) ||
+                            it.contains("Background activity start blocked", true) }
+                        AnswerLaunchDiagnostics(lines.size, blocked.size, blocked.count { trace.conversationId in it },
+                            own.count { "BAL_BLOCK" in it }, count)
+                    }.getOrNull()
+                }
+            }
             throw AssertionError("Answer wait ${wait.name} timed out: ${trace.json(testName.methodName, false)}", error)
         }
     }

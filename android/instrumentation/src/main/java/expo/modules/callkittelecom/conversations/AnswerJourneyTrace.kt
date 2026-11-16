@@ -7,7 +7,7 @@ import org.json.JSONObject
 internal enum class AnswerJourneyPhase {
     FIXTURE_STARTED, INCOMING_REPORTED, WAIT_STARTED, WAIT_COMPLETED, WAIT_TIMED_OUT, WAIT_CANCELLED,
     HOME_SENT, PENDING_INTENT_SENT, PENDING_INTENT_RETURNED, ACTIVITY_CREATED, ACTIVITY_NEW_INTENT,
-    ACTIVITY_RESUMED, TOKEN_CONSUMED_AT_RECEIVE_RETURN, NATIVE_ANSWER_STARTED,
+    ACTIVITY_RESUMED, ACTIVITY_DESTROYED, TOKEN_CONSUMED_AT_RECEIVE_RETURN, NATIVE_ANSWER_STARTED,
     CORE_ANSWER_STARTED, CORE_ANSWER_RETURNED, CORE_SET_ACTIVE_STARTED, CORE_SET_ACTIVE_RETURNED,
     TELECOM_READ_STARTED, TELECOM_READ_RETURNED, TELECOM_ACTIVE, SDK_SNAPSHOT,
     SDK_SNAPSHOT_CONNECTING, SDK_SNAPSHOT_CONNECTED,
@@ -20,10 +20,13 @@ internal enum class AnswerJourneyWait {
     CONTENT_OVERRIDE, ACTIVITY_RECREATED, PLATFORM_REMOVED, ACTIVITY_DESTROYED,
 }
 
+internal data class AnswerLaunchDiagnostics(val linesRead: Int, val packageBlockedLines: Int,
+    val conversationBlockedLines: Int, val balBlockMentions: Int, val fixtureActivities: Int)
+
 /** Bounded test observations only. Tokens receive local ordinals and are never serialized. */
 internal class AnswerJourneyTrace(val conversationId: String, private val now: () -> Long) {
     private data class Event(val phase: AnswerJourneyPhase, val nanos: Long, val wait: AnswerJourneyWait?,
-        val token: Int?, val tokenPresent: Boolean?, val state: String?)
+        val token: Int?, val tokenPresent: Boolean?, val state: String?, val conversationMatches: Boolean?)
     private val started = now()
     private val events = mutableListOf<Event>()
     private val tokens = mutableMapOf<String, Int>()
@@ -33,11 +36,13 @@ internal class AnswerJourneyTrace(val conversationId: String, private val now: (
     var lastTimeout: AnswerJourneyWait? = null
         private set
     private var firstTimeout: AnswerJourneyWait? = null
+    var launchDiagnostics: AnswerLaunchDiagnostics? = null
 
     fun mark(phase: AnswerJourneyPhase, wait: AnswerJourneyWait? = null, atNanos: Long = now(),
-        token: Int? = currentToken, tokenPresent: Boolean? = null, state: String? = null) {
+        token: Int? = currentToken, tokenPresent: Boolean? = null, state: String? = null,
+        conversationMatches: Boolean? = null) {
         if (events.size == 256) { events.removeAt(64); dropped++ }
-        val event = Event(phase, atNanos, wait, token, tokenPresent, state)
+        val event = Event(phase, atNanos, wait, token, tokenPresent, state, conversationMatches)
         events += event
         first.putIfAbsent(phase, event)
         if (phase == AnswerJourneyPhase.WAIT_TIMED_OUT) {
@@ -47,11 +52,14 @@ internal class AnswerJourneyTrace(val conversationId: String, private val now: (
     }
 
     fun intent(phase: AnswerJourneyPhase, intent: Intent): Int? {
-        if (intent.getStringExtra(ConversationNotificationIntents.EXTRA_CONVERSATION_ID) != conversationId) return null
+        if (intent.getStringExtra(ConversationNotificationIntents.EXTRA_CONVERSATION_ID) != conversationId) {
+            mark(phase, token = null, conversationMatches = false)
+            return null
+        }
         val token = intent.getStringExtra("expo.modules.callkittelecom.answerToken")
         val correlation = token ?: intent.data?.takeIf { it.scheme == "voip-conversation" }?.lastPathSegment
         currentToken = correlation?.let { tokens.getOrPut(it) { tokens.size + 1 } }
-        mark(phase, tokenPresent = token != null)
+        mark(phase, tokenPresent = token != null, conversationMatches = true)
         return currentToken
     }
 
@@ -70,6 +78,7 @@ internal class AnswerJourneyTrace(val conversationId: String, private val now: (
                 event.token?.let { put("tokenOrdinal", it) }
                 event.tokenPresent?.let { put("tokenPresent", it) }
                 event.state?.let { put("snapshotState", it) }
+                event.conversationMatches?.let { put("activityConversationMatches", it) }
             })
             previous = event.nanos
         }
@@ -80,6 +89,10 @@ internal class AnswerJourneyTrace(val conversationId: String, private val now: (
             put("lastReachedPhase", values.lastOrNull { it.wait == null }?.phase?.name ?: "NONE")
             firstTimeout?.let { put("timedOutWait", it.name) }
             lastTimeout?.let { put("lastTimedOutWait", it.name) }
+            launchDiagnostics?.let { put("launchDiagnostics", JSONObject()
+                .put("linesRead", it.linesRead).put("packageBlockedLines", it.packageBlockedLines)
+                .put("conversationBlockedLines", it.conversationBlockedLines)
+                .put("balBlockMentions", it.balBlockMentions).put("fixtureActivities", it.fixtureActivities)) }
             put("firstElapsedMs", JSONObject().apply {
                 first.forEach { (phase, event) -> put(phase.name, (event.nanos - started) / 1_000_000.0) }
             })

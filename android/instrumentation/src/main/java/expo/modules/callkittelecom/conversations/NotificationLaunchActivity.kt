@@ -7,6 +7,10 @@ import android.os.Bundle
 /** Real launcher for native notification-intent journeys, without React or JavaScript. */
 open class NotificationLaunchActivity : Activity() {
     companion object {
+        private val instances = linkedSetOf<NotificationLaunchActivity>()
+        val activityCount: Int get() = instances.size
+        val hasActivities: Boolean get() = instances.isNotEmpty()
+        fun finishAll() { instances.toList().forEach { it.finish() } }
         var active: NotificationLaunchActivity? = null
         var creations = 0
         var resumes = 0
@@ -26,6 +30,7 @@ open class NotificationLaunchActivity : Activity() {
     }
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        instances += this
         active = this; creations++
         receive(intent, AnswerJourneyPhase.ACTIVITY_CREATED)
     }
@@ -37,7 +42,12 @@ open class NotificationLaunchActivity : Activity() {
         super.onResume(); active = this; resumes++
         AnswerJourneyObservation.trace?.intent(AnswerJourneyPhase.ACTIVITY_RESUMED, intent)
     }
-    override fun onDestroy() { if (active === this) active = null; super.onDestroy() }
+    override fun onDestroy() {
+        AnswerJourneyObservation.trace?.intent(AnswerJourneyPhase.ACTIVITY_DESTROYED, intent)
+        instances -= this
+        if (active === this) active = null
+        super.onDestroy()
+    }
 }
 
 class NotificationAlternateActivity : NotificationLaunchActivity()
