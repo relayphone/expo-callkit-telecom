@@ -884,12 +884,14 @@ async def device_output(request):
     observation.pcm.extend(values)
     del observation.pcm[:max(0, len(observation.pcm) - 144000)]
     enqueue.update(exitedNs=str(time.monotonic_ns()), completed=True, frame=observation.frames)
-    sample = body["stats"]
-    if not 0 <= sample["fromFrame"] <= sample["frame"] <= observation.frames or len(observation.stats) >= 128:
+    samples = body["stats"] if isinstance(body["stats"], list) else [body["stats"]]
+    if not samples or len(observation.stats) + len(samples) > 128 or any(
+            not 0 <= sample["fromFrame"] <= sample["frame"] <= observation.frames for sample in samples):
         return web.Response(status=400)
-    observation.stats.append({"fromFrame": sample["fromFrame"], "frame": sample["frame"],
-                              "inbound": [{name: output_counter(sample["counters"].get(name)) for name in (
-                                  "inserted_samples_for_deceleration", "removed_samples_for_acceleration", "concealed_samples", "packets_lost")}]})
+    for sample in samples:
+        observation.stats.append({"fromFrame": sample["fromFrame"], "frame": sample["frame"],
+                                  "inbound": [{name: output_counter(sample["counters"].get(name)) for name in (
+                                      "inserted_samples_for_deceleration", "removed_samples_for_acceleration", "concealed_samples", "packets_lost")}]})
     measured = await observation.measure_output()
     response = observation.output_stage("HTTP_RESPONSE", received_ns, frame=observation.frames)
     response.update(exitedNs=str(time.monotonic_ns()), completed=True)

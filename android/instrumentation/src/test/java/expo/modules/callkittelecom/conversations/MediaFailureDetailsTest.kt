@@ -5,6 +5,10 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MediaFailureDetailsTest {
+    @Test fun sourceStartupTimeoutHasItsOwnSafeFailureMessage() {
+        assertEquals(listOf(MediaFailureDetail("AssertionError", "source-start-timeout")),
+            mediaFailureDetails(AssertionError("source-start-timeout")))
+    }
     @Test fun retainsNestedDrainCauseWithoutPublishingArbitraryMessages() {
         val error = AssertionError("private token or URL", IllegalStateException("Output capture consumer fell behind"))
         assertEquals(listOf(MediaFailureDetail("AssertionError", "Details retained in test XML"),
