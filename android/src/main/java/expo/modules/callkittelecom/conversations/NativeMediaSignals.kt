@@ -18,6 +18,11 @@ enum class NativeMediaStage(val value: String) {
     CAPTURE_STOPPED("captureStopped"), PLAYBACK_STARTED("playbackStarted"),
     PLAYBACK_STOPPED("playbackStopped"), REMOTE_SUBSCRIBED("remoteSubscribed"),
     REMOTE_UNSUBSCRIBED("remoteUnsubscribed"), CLOSED("closed"),
+    CLOSE_REQUESTED("closeRequested"), CLOSE_LIFETIME_JOINED("closeLifetimeJoined"),
+    CLOSE_SESSION_COMPLETED("closeSessionCompleted"), CLOSE_OBSERVATION_DRAINED("closeObservationDrained"),
+    CLOSE_DISCONNECT_EMITTED("closeDisconnectEmitted"), CLOSE_TRACKS_REMOVED("closeTracksRemoved"),
+    CLOSE_AUDIO_HOOKS_CLOSED("closeAudioHooksClosed"), CLOSE_ROOM_RELEASED("closeRoomReleased"),
+    RELEASE_COMPLETED("releaseCompleted"),
     TERMINAL_SIGNAL_COMPLETED("terminalSignalCompleted"),
     CORE_ADD_REQUESTED("coreAddRequested"), CORE_ADMITTED("coreAdmitted"), CORE_LATE_DISCONNECTED("coreLateDisconnected"),
     CORE_MUTE_OBSERVED("coreMuteObserved"),
@@ -44,6 +49,8 @@ enum class NativeMediaStage(val value: String) {
 /** Native observations contain no credentials/audio. ROOM_DISCONNECTED has an empty serverCallId and a reason name.
  * MUTE_* pairs share an operationId. EXITED has completed=1 only on normal return; elapsedRealtimeNanos
  * is captured at the work boundary, before delivery on main. SERIAL covers acquisition, not lock ownership.
+ * CLOSED marks the session cleanup return; RELEASE_COMPLETED marks settlement of the controller's
+ * release deferred, including failure. CLOSE_* durations share an operationId and include failed subcalls.
  */
 data class NativeMediaSignal(val serverCallId: String, val stage: NativeMediaStage,
     val elapsedRealtimeNanos: Long, val measurements: Map<String, Long> = emptyMap(), val reason: String? = null)

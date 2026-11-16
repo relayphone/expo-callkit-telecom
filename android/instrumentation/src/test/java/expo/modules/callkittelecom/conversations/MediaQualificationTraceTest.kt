@@ -173,4 +173,33 @@ class MediaQualificationTraceTest {
         trace.put("clock", "secret clock")
         assertFalse(mediaQualificationTrace(claim = trace).contains("\"clients\""))
     }
+
+    @Test fun boundedClaimFailureRetainsRetirementMeasurementsAndOnlyTypedAnswerReasons() {
+        val trace = claim(1)
+        val signals = trace.getJSONArray("signals")
+        signals.put(JSONObject().put("stage", "closeRequested").put("atNs", "9007199254740993"))
+        signals.put(JSONObject().put("stage", "closeRoomReleased").put("atNs", "9007202254740993")
+            .put("measurements", JSONObject().put("operationId", 7).put("startedNs", "9007199254740993")
+                .put("durationNs", 3000000000L).put("completed", 0)))
+        signals.put(JSONObject().put("stage", "releaseCompleted").put("atNs", "9007202254740994")
+            .put("measurements", JSONObject().put("completed", 0).put("timeout", 1)))
+        signals.put(JSONObject().put("stage", "answerFailed").put("atNs", "9007202254740995")
+            .put("reason", "PREJOIN_CLOSE_FAILED").put("message", "secret exception")
+            .put("measurements", JSONObject().put("phase", 1).put("timeout", 0)))
+        signals.put(JSONObject().put("stage", "answerFailed").put("reason", "PUBLISH_PERMISSION_NOT_GRANTED"))
+        signals.put(JSONObject().put("stage", "answerFailed").put("reason", "secret error"))
+        repeat(100) { signals.put(JSONObject().put("stage", "decoderFirstPcm").put("atNs", it)) }
+        val snapshot = mediaQualificationTrace(claim = trace)
+        assertTrue(snapshot.endsWith(MEDIA_XML_TRACE_TRUNCATED))
+        assertTrue(snapshot.contains("PREJOIN_CLOSE_FAILED"))
+        assertTrue(snapshot.contains("PUBLISH_PERMISSION_NOT_GRANTED"))
+        assertTrue(snapshot.contains("\"phase\":1"))
+        assertTrue(snapshot.contains("\"timeout\":0"))
+        assertTrue(snapshot.contains("\"timeout\":1"))
+        assertTrue(snapshot.contains("\"durationNs\":3000000000"))
+        assertTrue(snapshot.contains("\"startedNs\":\"9007199254740993\""))
+        assertTrue(snapshot.contains("\"completed\":0"))
+        assertFalse(snapshot.contains("secret"))
+        assertTrue(snapshot.toByteArray(Charsets.UTF_8).size <= MEDIA_XML_TRACE_BYTES)
+    }
 }

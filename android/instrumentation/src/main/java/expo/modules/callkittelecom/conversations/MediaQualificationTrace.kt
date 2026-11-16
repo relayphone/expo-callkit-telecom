@@ -51,8 +51,17 @@ internal fun mediaQualificationTrace(
             val signal = signals?.optJSONObject(index)?.takeIf { it.opt("stage") in allowed } ?: return@mapNotNull null
             numericFields(signal, "atNs", "permissionUnavailable").put("stage", signal.opt("stage"))
                 .put("measurements", numericFields(signal.optJSONObject("measurements"), "localMicrophones", "localPublications",
-                    "frames", "sampleRate", "channels", "muted", "role", "sampled", "pollIntervalMs", "statsCacheMs", "requestNanos"))
+                    "frames", "sampleRate", "channels", "muted", "role", "sampled", "pollIntervalMs", "statsCacheMs", "requestNanos",
+                    "operationId", "startedNs", "durationNs", "completed", "phase", "timeout"))
+                .apply {
+                    val reason = signal.opt("reason")
+                    if (reason in setOf("PUBLISH_PERMISSION_NOT_GRANTED", "PREJOIN_CLOSE_FAILED")) put("reason", reason)
+                }
         }
+        // Keep failure details and cleanup durations ahead of optional history when the trace is bounded.
+        retained.filter { it.opt("stage") == NativeMediaStage.ANSWER_FAILED.value ||
+            it.opt("stage") == NativeMediaStage.RELEASE_COMPLETED.value ||
+            it.optString("stage").startsWith("close") }.forEach { lines += "claim.retirement=$it" }
         retained.groupBy { it.getString("stage") }.forEach { (stage, spans) ->
             lines += "claim.stage=${JSONObject().put("stage", stage).put("count", spans.size)
                 .put("firstNs", spans.first().opt("atNs")).put("lastNs", spans.last().opt("atNs"))}"

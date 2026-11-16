@@ -73,7 +73,7 @@ internal class NativeRoomConnection(
 
     /** Preserve a reason already emitted by LiveKit before recording our own release, including cancellation cleanup. */
     suspend fun closeForRelease() = withContext(NonCancellable) {
-        yield()
-        close(DisconnectReason.CLIENT_INITIATED)
+        traceNativeClose(NativeCloseStep.OBSERVATION_DRAIN) { yield() }
+        traceNativeClose(NativeCloseStep.DISCONNECT_EMISSION) { close(DisconnectReason.CLIENT_INITIATED) }
     }
 }
