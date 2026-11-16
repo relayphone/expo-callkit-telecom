@@ -43,6 +43,15 @@ remain separate in the fixture's `python.time.monotonic_ns` clock. A zero-client
 prejoin failure does not imply that Answer or publication occurred. The fallback
 adds no network request or wait, and preserves the existing count assertions.
 
+The muted-source journey first requires a valid 480-frame recordingless buffer
+within 1500 ms of microphone publication, then runs its existing 100 ms progress
+and pacing assertions. Evidence records publication, pump-start and first-buffer
+times and startup latency. A readiness failure reports `source-start-timeout`.
+Output qualification drains while at most one HTTP acknowledgement is pending,
+batching contiguous PCM and every RTC counter sample for the next request.
+Both the tap backlog and pending batch retain the 24,000-frame / 500 ms limit;
+an overflow, stopped source, missing output or failed fixture still fails.
+
 The recordingless journey flushes its original assertion, test/phase, process ID,
 receiver clock/counts and the last eight source samples before optional failure
 enrichment. Samples retain monotonic elapsed nanoseconds and injected-frame

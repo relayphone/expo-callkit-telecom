@@ -7,6 +7,7 @@ internal fun mediaFailureDetails(error: Throwable): List<MediaFailureDetail> =
     generateSequence(error) { it.cause }.take(8).map { cause ->
         val message = cause.message.orEmpty()
         val safe = message == "Output capture consumer fell behind" ||
+            message == "source-start-timeout" ||
             message == "Media fixture request failed" || Regex("Timed out waiting for \\d+ ms").matches(message)
         MediaFailureDetail(cause.javaClass.simpleName, if (safe) message else "Details retained in test XML")
     }.toList()

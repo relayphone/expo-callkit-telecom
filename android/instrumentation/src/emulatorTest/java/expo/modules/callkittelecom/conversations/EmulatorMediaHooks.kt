@@ -28,6 +28,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
     val trace = MediaCaptureTrace()
     val gateTrace = MediaGateTrace(SystemClock::elapsedRealtimeNanos)
     val outputConsumerTrace = OutputConsumerTrace(SystemClock::elapsedRealtimeNanos)
+    val sourceReadiness = MediaSourceReadiness(SystemClock::elapsedRealtimeNanos)
     @Volatile private var gateProbe: EmulatorGateProbe? = null
     override fun audioDeviceCreated(device: JavaAudioDeviceModule) { gateProbe = EmulatorGateProbe(device) }
     val postApm = MediaApmCapture(markerId, SystemClock::elapsedRealtimeNanos)
@@ -167,6 +168,7 @@ internal class EmulatorMediaHooks(context: Context, markerId: String, tapEnabled
                         generatedWords.addAndGet((first + frames) / wordFrames - first / wordFrames)
                     }
                     if (bytesRead == 0) recordinglessCallbacks.incrementAndGet()
+                    sourceReadiness.buffer(SystemClock.elapsedRealtimeNanos(), frames, rate, bytesRead, publication?.muted)
                     val crc = CRC32().apply { update(buffer.duplicate().apply { clear() }) }.value
                     trace.returned(entered, first, frames, rate, bytesRead, publication?.muted, crc)
                     postApm.returned(first, frames, rate, channels, buffer)

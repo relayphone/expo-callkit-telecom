@@ -749,6 +749,48 @@ print(json.dumps(asyncio.run(check())))`;
   });
 }
 
+test("batched output retains every counter sample including a recovered loss spike", () => {
+  const code = `import asyncio,base64,importlib.util,json
+s=importlib.util.spec_from_file_location("fixture","tools/native-media-fixture.py")
+f=importlib.util.module_from_spec(s);s.loader.exec_module(f)
+f.settings["deviceAuth"]="host-fixture"
+class Request:
+    match_info={"server_id":"hooks-7"}
+    headers={"Authorization":"Bearer host-fixture"}
+    def __init__(self,body): self.body=body
+    async def json(self): return self.body
+def sample(frame):
+    return {"fromFrame":frame,"frame":frame,"counters":{"packets_lost":3 if frame==24000 else 0,
+        "concealed_samples":0,"inserted_samples_for_deceleration":0,"removed_samples_for_acceleration":0}}
+async def send(first,data,stats,reset=False):
+    response=await f.device_output(Request({"reset":reset,"sampleRate":48000,"firstFrame":first,
+        "pcm16":base64.b64encode(data).decode(),"stats":stats}))
+    assert response.status==200
+    return json.loads(response.text)
+async def check():
+    try:
+        await send(0,b"",sample(0),True)
+        data=f.TonesV2Signal("hooks-7:toDevice",48000).pcm(107520)
+        for first in range(0,107520,24000):
+            end=min(107520,first+24000)
+            stats=[sample(frame) for frame in range(first+4800,end+1,4800)]
+            if not stats or stats[-1]["frame"]!=end: stats.append(sample(end))
+            await send(first,data[first*2:end*2],stats)
+        observation=f.downlinks["hooks-7"]
+        if observation.output_task is not None: await observation.output_task
+        result=await send(107520,b"",[sample(107520)])
+        retained=[row["inbound"][0]["packets_lost"] for row in observation.stats]
+        assert 3 in retained and retained[-1]==0
+        assert any(c["receiveStats"]["status"]=="impaired" for c in result["phaseDetections"])
+        print(json.dumps({"retainedSpike":True,"impaired":True}))
+    finally: await f.close_output_measurements(None)
+asyncio.run(check())`;
+  const result = JSON.parse(execFileSync(process.env.NATIVE_MEDIA_PYTHON ?? "python3", ["-c", code], {
+    encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL",
+  }));
+  assert.deepEqual(result, { retainedSpike: true, impaired: true });
+});
+
 test("device-output counter normalization preserves integer precision and rejects malformed counters", () => {
   const code = `import asyncio,base64,importlib.util,json
 s=importlib.util.spec_from_file_location("fixture","tools/native-media-fixture.py")

@@ -349,19 +349,22 @@ class MediaHookFeasibilityTest {
                         .put("firstFrame", 0).put("pcm16", "").put("stats", baseline))
                 }
                 hooks.startOutputCapture()
-                var peer: JSONObject
-                do {
-                    trace.measure(OutputConsumerTrace.Stage.WAIT) { delay(100) }
+                pipelineMediaOutput(read = {
                     val stats = trace.measure(OutputConsumerTrace.Stage.RTC_STATS) { hooks.outputStats() }
                     val (first, bytes) = trace.measure(OutputConsumerTrace.Stage.DRAIN) { hooks.drainOutput() }
-                    peer = trace.measure(OutputConsumerTrace.Stage.HTTP_ACK) {
+                    MediaOutputChunk(first, bytes, stats)
+                }, send = { batch ->
+                    trace.measure(OutputConsumerTrace.Stage.HTTP_ACK) {
                         fixture("/fixture/output/$id", body = JSONObject().put("sampleRate", 48000)
-                            .put("firstFrame", first).put("pcm16", Base64.getEncoder().encodeToString(bytes)).put("stats", stats))
+                            .put("firstFrame", batch.firstFrame).put("pcm16", Base64.getEncoder().encodeToString(batch.pcm))
+                            .put("stats", batch.stats))
+                    }.also { peer ->
+                        assertTrue(peer.isNull("error")); assertTrue(peer.getBoolean("running"))
+                        record(peer)
                     }
-                    assertTrue(peer.isNull("error")); assertTrue(peer.getBoolean("running"))
-                    record(peer)
-                } while (peer.getLong("cleanCyclesWithPostRoll") < 1)
-                peer
+                }, finished = { it.getLong("cleanCyclesWithPostRoll") >= 1 },
+                    checkPending = trace::checkDrain,
+                    pause = { trace.measure(OutputConsumerTrace.Stage.WAIT) { delay(100) } })
             }
         } finally { hooks.stopOutputCapture() }
     }
@@ -464,6 +467,10 @@ class MediaHookFeasibilityTest {
             val observer = NativeMediaObserver {
                 if (it.serverCallId == id) {
                     signals += it
+                    if (it.stage == NativeMediaStage.MICROPHONE_PUBLISHED)
+                        hooks.sourceReadiness.published(it.elapsedRealtimeNanos)
+                    if (it.stage == NativeMediaStage.CAPTURE_PUMP_STARTED)
+                        hooks.sourceReadiness.pumpStarted(it.elapsedRealtimeNanos)
                     if (it.stage == NativeMediaStage.CORE_MUTE_OBSERVED)
                         hooks.gateTrace.event(MediaGateTrace.Point.CORE_MUTE_OBSERVED, it.elapsedRealtimeNanos,
                             it.measurements["muted"] == 1L)
@@ -587,6 +594,10 @@ class MediaHookFeasibilityTest {
                 val generation = peer.getLong("generation")
                 healthy(peer, generation)
                 assertTrue(peer.getBoolean("muted"))
+                step = "source readiness"
+                hooks.sourceReadiness.awaitReady()
+                evidence.put("sourceStart", hooks.sourceReadiness.snapshot())
+                step = "muted publication"
                 val wordsBefore = hooks.generatedWords.get()
                 var injected = hooks.injectedFrames.get()
                 var sampledAtNs = android.os.SystemClock.elapsedRealtimeNanos()
@@ -704,6 +715,7 @@ class MediaHookFeasibilityTest {
                 stage(NativeMediaStage.CLOSED)
             } catch (error: Throwable) {
                 caught = error
+                evidence.put("sourceStart", hooks.sourceReadiness.snapshot())
                 rethrowMediaJourneyFailure(context.filesDir.resolve("media-hook-results.json"), evidence, error,
                     "realRecordinglessCapturePublicationGateDecodedAndPostMuteOutput", step, android.os.Process.myPid(),
                     forcedFailure, progress, receiverWait.put("reads", receiverReads)
@@ -739,6 +751,7 @@ class MediaHookFeasibilityTest {
                         writeMediaEvidence(context.filesDir.resolve("media-hook-results.json"), evidence.put("step", step)
                             .put("receiverWait", receiverSnapshot())
                             .put("outputConsumerTrace", hooks.outputConsumerTrace.snapshot())
+                            .put("sourceStart", hooks.sourceReadiness.snapshot())
                             .put("passed", caught == null).put("pipeline", pipeline)
                             .put("muteTimings", org.json.JSONArray(signals.filter {
                                 it.measurements.containsKey("operationId") && NativeMuteStep.entries.any { step ->
