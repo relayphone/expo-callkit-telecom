@@ -5,7 +5,7 @@
     "": {
       "name": "expo-callkit-telecom",
       "dependencies": {
-        "@relayphone/ios-voip-sdk": "https://github.com/relayphone/ios-voip-sdk/releases/download/v0.5.0/relayphone-ios-voip-sdk-0.5.0.tgz",
+        "@relayphone/ios-voip-sdk": "https://github.com/relayphone/ios-voip-sdk/releases/download/v0.6.0/relayphone-ios-voip-sdk-0.6.0.tgz",
       },
       "devDependencies": {
         "@types/node": "^26.6.2",
@@ -444,7 +444,7 @@
 
     "@react-native/virtualized-lists": ["@react-native/virtualized-lists@0.86.3", "", { "dependencies": { "invariant": "^2.2.4", "nullthrows": "^1.1.1" }, "peerDependencies": { "@types/react": "^19.2.0", "react": "*", "react-native": "0.86.3" }, "optionalPeers": ["@types/react"] }, "sha512-1j44NEyNn05Ut40vHAmoSWbsIcybFkMAOBTwQt1PrESyfSS+qBoyU1LGIogNva0VIa0rQyEC5PzbA7R4/7Nhyw=="],
 
-    "@relayphone/ios-voip-sdk": ["@relayphone/ios-voip-sdk@https://github.com/relayphone/ios-voip-sdk/releases/download/v0.5.0/relayphone-ios-voip-sdk-0.5.0.tgz", { "peerDependencies": { "expo": ">=57.0.0", "expo-notifications": "*", "react": "*", "react-native": "*" }, "optionalPeers": ["expo-notifications"] }, "sha512-XMfL5ghIS+GfqdG5j9KM88/Barh4cnDVSBMCP2MNDHLgCcxU65DJHcYNIztAyz9081LGLHMbfHcYGmOBEaM/Bw=="],
+    "@relayphone/ios-voip-sdk": ["@relayphone/ios-voip-sdk@https://github.com/relayphone/ios-voip-sdk/releases/download/v0.6.0/relayphone-ios-voip-sdk-0.6.0.tgz", { "peerDependencies": { "expo": ">=57.0.0", "expo-notifications": "*", "react": "*", "react-native": "*" }, "optionalPeers": ["expo-notifications"] }, "sha512-Ej23gNl6cXp9LmfiOmCYLJ9UfEYSt6xwvK03EfYo4kRv1Dk/a0ERSK0+LuhZD74XKZE3G4+N2NvjYE0tY9rGIA=="],
 
     "@rtsao/scc": ["@rtsao/scc@1.1.0", "", {}, "sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g=="],
 
