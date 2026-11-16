@@ -1,6 +1,7 @@
 package expo.modules.callkittelecom.conversations
 
 import android.app.Activity
+import android.app.ActivityOptions
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -114,7 +115,9 @@ internal object PushFaultRuntime {
                         check(state()?.get("status") == "ringing")
                     } },
                     answer = {
-                        checkNotNull(answer).send()
+                        val options = if (Build.VERSION.SDK_INT >= 34) ActivityOptions.makeBasic()
+                            .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED).toBundle() else null
+                        checkNotNull(answer).send(context, 0, null, null, null, null, options)
                         withTimeout(5000) {
                             check(outcome.await().outcome is ConversationCommandOutcome.Performed)
                             check(state()?.get("status") == "connecting")
