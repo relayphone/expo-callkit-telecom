@@ -30,7 +30,12 @@ class ConversationMediaTest {
         val sessions = CopyOnWriteArrayList<Session>()
         val signals = mutableListOf<NativeMediaSignal>()
         val performed = mutableListOf<Map<*, *>>()
+        val prewarmFailures = mutableListOf<Map<*, *>>()
         var preparationGate: CompletableDeferred<Unit>? = null
+        var preparationFailure: Exception? = null
+        var preparationStage = NativePrewarmStage.CONNECT
+        var failureAfterJoinFailure: Exception? = null
+        var activationPermissionRefused = false
         var roomConnectGate: CompletableDeferred<Unit>? = null
         var ended: Map<*, *>? = null
         var terminalSnapshots = 0
@@ -41,6 +46,7 @@ class ConversationMediaTest {
             engine.actions.resetBridge(); engine.actions.acceptUnhandled = true
             engine.emit = { name, body ->
                 if (name == "conversationEvent" && body["type"] == "actionPerformed") performed += body["payload"] as Map<*, *>
+                if (name == "conversationEvent" && body["type"] == "prewarmFailed") prewarmFailures += body["payload"] as Map<*, *>
                 if (name == "conversationsChanged") {
                 (body["conversations"] as List<*>).filterIsInstance<Map<*, *>>().firstOrNull {
                     it["id"] == id && it["status"] == "ended"
@@ -63,6 +69,11 @@ class ConversationMediaTest {
             var closes = 0
             @Volatile private var roomLive = false
             override val isPrepared get() = roomLive
+            override val prewarmStage get() = preparationStage
+            private var answerFailureReason: (NativeAnswerFailureReason) -> Unit = {}
+            private var preparationFailed: (NativePrewarmFailure) -> Unit = {}
+            override fun setAnswerFailureReasonListener(listener: (NativeAnswerFailureReason) -> Unit) { answerFailureReason = listener }
+            override fun setPreparationFailureListener(listener: (NativePrewarmFailure) -> Unit) { preparationFailed = listener }
             @Volatile var muted = false
             var mutedAtActivation = false
             val tones = CopyOnWriteArrayList<String>()
@@ -78,17 +89,39 @@ class ConversationMediaTest {
             fun disconnect() { roomLive = false; failure() }
             override suspend fun prewarm(payload: Map<String, Any?>) {
                 this.payload = payload; entered.complete(Unit); preparationGate?.await()
+                preparationFailure?.let { throw it }
                 roomLive = true
+                val connectFailure = NativeConnectFailure({ preparationFailed(it) }, {
+                    roomLive = false; disconnection(NativeMediaDisconnection.FAILURE)
+                })
                 connection = NativeRoomConnection(scope, { stage, reason ->
                     stage.connection()?.let { connectionChanged(it) }
                     NativeMediaSignals.emit(id, stage, reason = reason)
                 }, { reason ->
-                    roomLive = false; disconnection(reason?.disconnection() ?: NativeMediaDisconnection.FAILURE)
+                    if (!(reason == DisconnectReason.JOIN_FAILURE && connectFailure.deferJoinFailure())) {
+                        roomLive = false; disconnection(reason?.disconnection() ?: NativeMediaDisconnection.FAILURE)
+                    }
                 }).also { it.observe(room) }
                 observing.complete(Unit); roomConnectGate?.await()
+                failureAfterJoinFailure?.let { error -> withContext(Dispatchers.Main.immediate) {
+                    room.emit(NativeRoomState.DISCONNECTED(DisconnectReason.JOIN_FAILURE))
+                    yield()
+                    connectFailure.failed(prewarmStage, error)
+                    throw error
+                } }
+                connectFailure.connected()
                 NativeMediaSignals.emit(id, NativeMediaStage.ROOM_CONNECTED)
             }
-            override suspend fun activate() { mutedAtActivation = muted; activations++ }
+            override suspend fun activate() {
+                if (activationPermissionRefused) {
+                    publishNativeMicrophone(kotlinx.coroutines.flow.MutableStateFlow(null), {
+                        val reason = NativeAnswerFailureReason.PUBLISH_PERMISSION_NOT_GRANTED
+                        answerFailureReason(reason)
+                        NativeMediaSignals.emit(id, NativeMediaStage.ANSWER_FAILED, reason = reason.nativeValue)
+                    }) { error("Refused permission must never publish") }
+                }
+                mutedAtActivation = muted; activations++
+            }
             override suspend fun setHeld(held: Boolean) { this.held = held }
             override suspend fun setMuted(muted: Boolean) { this.muted = muted }
             override suspend fun playTones(digits: String) {
@@ -132,6 +165,107 @@ class ConversationMediaTest {
     }
 
     private enum class AnswerCredentials { PUSH, HANDLER, PROVIDED }
+
+    private class PublishRefusedException(message: String) : Exception(message)
+
+    @Test fun aConnectFailureThatDisconnectsBeforeThrowingStillDiagnosesTheRingingPrewarm() = fixture {
+        engine.policy.put("prewarm", true)
+        failureAfterJoinFailure = IllegalStateException("private token=$grant wss://private.example")
+        val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+        assertEquals("reported", engine.incoming(incoming.payload())["status"])
+        stage(NativeMediaStage.PREWARM_LOST)
+        stage(NativeMediaStage.PREWARM_FAILED)
+        assertEquals(listOf(mapOf("conversationId" to id, "stage" to "connect", "errorType" to "IllegalStateException")), prewarmFailures)
+        assertEquals(1, signals.count { it.stage == NativeMediaStage.PREWARM_FAILED })
+        assertEquals("ringing", state()?.get("status")); assertNull(ended)
+        assertTrue(TelecomEvidence.calls().single().contains("state=RINGING"))
+    }
+
+    @Test fun aConnectFailureThatDisconnectsBeforeThrowingRetainsTheAnswerStage() = fixture {
+        failureAfterJoinFailure = IllegalStateException("private token=$grant wss://private.example")
+        val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+        assertEquals("reported", engine.incoming(incoming.payload())["status"])
+        engine.join(id)
+        withTimeout(3000) { while (ended == null) delay(10) }
+        assertEquals(mapOf("kind" to "media", "stage" to "prepare", "timedOut" to false), ended?.get("failure"))
+        assertTrue(prewarmFailures.isEmpty())
+        assertTrue(sessions.all { it.activations == 0 })
+    }
+
+    @Test fun aRefusedPublishDuringPrewarmEmitsOnlyItsStageAndTypeWhileTheCallKeepsRinging() = fixture {
+        engine.policy.put("prewarm", true)
+        preparationStage = NativePrewarmStage.SUBSCRIBE
+        preparationFailure = PublishRefusedException("private token=$grant wss://private.example room=private")
+        val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+        assertEquals("reported", engine.incoming(incoming.payload())["status"])
+        stage(NativeMediaStage.PREWARM_FAILED)
+        withTimeout(1000) { while (prewarmFailures.isEmpty()) delay(10) }
+        assertEquals(listOf(mapOf("conversationId" to id, "stage" to "subscribe", "errorType" to "PublishRefusedException")), prewarmFailures)
+        assertEquals(NativePrewarmFailure(NativePrewarmStage.SUBSCRIBE, "PublishRefusedException"),
+            signals.single { it.stage == NativeMediaStage.PREWARM_FAILED }.prewarmFailure)
+        assertEquals("ringing", state()?.get("status")); assertNull(ended)
+        assertTrue(TelecomEvidence.calls().single().contains("state=RINGING"))
+        assertEquals(0, sessions.single().activations)
+        preparationFailure = null
+        ConversationActions.configure { ConversationActionResult.Proceed(grant + ("token" to "fresh-answer-grant")) }
+        engine.join(id); stage(NativeMediaStage.CONNECTED)
+        assertEquals(2, sessions.size)
+        assertEquals(1, sessions.sumOf { it.activations })
+    }
+
+    @Test fun anEightSecondPrewarmStallEmitsADeadlineDiagnosticAndKeepsRinging() = fixture {
+        engine.policy.put("prewarm", true)
+        preparationGate = CompletableDeferred()
+        val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+        assertEquals("reported", engine.incoming(incoming.payload())["status"])
+        withTimeout(10000) { while (prewarmFailures.isEmpty()) delay(10) }
+        assertEquals(listOf(mapOf("conversationId" to id, "stage" to "deadline", "errorType" to "TimeoutCancellationException")), prewarmFailures)
+        stage(NativeMediaStage.PREWARM_FAILED)
+        assertEquals(NativePrewarmFailure(NativePrewarmStage.DEADLINE, "TimeoutCancellationException"),
+            signals.single { it.stage == NativeMediaStage.PREWARM_FAILED }.prewarmFailure)
+        assertEquals("ringing", state()?.get("status")); assertNull(ended)
+        assertTrue(TelecomEvidence.calls().single().contains("state=RINGING"))
+        assertEquals(0, sessions.single().activations)
+    }
+
+    @Test fun aPhaseOneAnswerTimeoutPublishesItsNamedStageAndFiveSecondDeadline() = fixture {
+        engine.policy.put("prewarm", true)
+        preparationGate = CompletableDeferred()
+        val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+        assertEquals("reported", engine.incoming(incoming.payload())["status"])
+        engine.join(id)
+        withTimeout(7000) { while (ended == null) delay(10) }
+        assertEquals("failed", ended?.get("reason"))
+        assertEquals(mapOf("kind" to "media", "stage" to "prepare", "timedOut" to true, "timeoutMs" to 5000L), ended?.get("failure"))
+        stage(NativeMediaStage.ANSWER_FAILED)
+        val failure = signals.single { it.stage == NativeMediaStage.ANSWER_FAILED }
+        assertEquals(mapOf("phase" to 1L, "timeout" to 1L, "timeoutMs" to 5000L), failure.measurements)
+        assertTrue(prewarmFailures.isEmpty())
+        assertTrue(sessions.all { it.activations == 0 })
+    }
+
+    @Test fun aCredentialsDeadlineRetainsThreeSecondsInsteadOfTheAnswerCap() = fixture {
+        engine.policy.put("credentials", JSONObject(mapOf("name" to id)))
+        NativeMediaRegistry.fetchers[id] = { awaitCancellation() }
+        try {
+            val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+            assertEquals("reported", engine.incoming(incoming.payload())["status"])
+            engine.join(id)
+            withTimeout(5000) { while (ended == null) delay(10) }
+            assertEquals(mapOf("kind" to "media", "stage" to "prepare", "timedOut" to true, "timeoutMs" to 3000L), ended?.get("failure"))
+        } finally { NativeMediaRegistry.fetchers.remove(id) }
+    }
+
+    @Test fun refusedAnswerPublicationRetainsItsTypedReasonAndActivationDeadline() = fixture {
+        activationPermissionRefused = true
+        val incoming = IncomingCallPush(id, "$id-event", mapOf("handleType" to "generic", "value" to "peer", "displayName" to "Peer"), media = grant)
+        assertEquals("reported", engine.incoming(incoming.payload())["status"])
+        engine.join(id)
+        withTimeout(7000) { while (ended == null) delay(10) }
+        assertEquals(mapOf("kind" to "media", "stage" to "activate", "timedOut" to true,
+            "timeoutMs" to 5000L, "reason" to "publishPermissionNotGranted"), ended?.get("failure"))
+        assertTrue(sessions.all { it.activations == 0 })
+    }
 
     @Test fun tonesReachTheSessionAndNativeControlsPublishOneReceiptPerPress() = fixture {
         start(); ConversationMedia.provide(context, id, grant); stage(NativeMediaStage.CONNECTED)

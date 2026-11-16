@@ -660,7 +660,12 @@ class ConversationEngine(val context: Context) {
             }
         }
         run {
-            call.media = call.media ?: NativeMediaOwner(nativeMedia, call.audio, initiallyMuted = call.state["isMuted"] == true) { answerMedia ->
+            call.media = call.media ?: NativeMediaOwner(nativeMedia, call.audio, initiallyMuted = call.state["isMuted"] == true,
+                prewarmFailed = { failure ->
+                    if (calls[id] === call && live(call) && call.state["status"] == "ringing")
+                        emit("conversationEvent", mapOf("type" to "prewarmFailed", "payload" to mapOf(
+                            "conversationId" to id, "stage" to failure.stage.value, "errorType" to failure.errorType)))
+                }) { answerMedia ->
                 call.connection.observe(NativeMediaConnection.RECONNECTED)
                 NativeMediaController(context,
                 if (answerMedia == null) payload else payload + ("media" to answerMedia),
@@ -1078,7 +1083,7 @@ class ConversationEngine(val context: Context) {
         current.timeout?.cancel()
         current.collectors?.cancel()
         current.state["status"] = "ended"
-        current.state["ended"] = conversationEnd(Instant.now().toString(), reason, current.failure)
+        current.state["ended"] = conversationEnd(Instant.now().toString(), reason, current.failure, current.media?.answerFailure)
         current.visible = true
         pendingTerminals[id] = current
         current.media?.close(if (reason == "local" && current.state["connectedAt"] == null) "declined" else "ended")

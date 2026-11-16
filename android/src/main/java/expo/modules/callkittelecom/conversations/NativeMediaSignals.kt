@@ -8,6 +8,7 @@ import java.util.concurrent.CopyOnWriteArraySet
 enum class NativeMediaStage(val value: String) {
     PUSH_RECEIVED("pushReceived"), PUSH_REFUSED("pushRefused"), REPORTED("reported"), PREWARM_STARTED("prewarmStarted"),
     ROOM_CONNECTED("roomConnected"), ROOM_DISCONNECTED("roomDisconnected"), PREJOINED("prejoined"), PREWARM_LOST("prewarmLost"),
+    PREWARM_FAILED("prewarmFailed"),
     JS_WARM_STARTED("jsWarmStarted"), ANSWER_REQUESTED("answerRequested"),
     HANDLER_STARTED("handlerStarted"), HANDLER_RESPONDED("handlerResponded"), CONNECTED("connected"),
     MEDIA_PROVIDED("mediaProvided"), MEDIA_IGNORED("mediaIgnored"),
@@ -53,7 +54,8 @@ enum class NativeMediaStage(val value: String) {
  * release deferred, including failure. CLOSE_* durations share an operationId and include failed subcalls.
  */
 data class NativeMediaSignal(val serverCallId: String, val stage: NativeMediaStage,
-    val elapsedRealtimeNanos: Long, val measurements: Map<String, Long> = emptyMap(), val reason: String? = null)
+    val elapsedRealtimeNanos: Long, val measurements: Map<String, Long> = emptyMap(), val reason: String? = null,
+    val prewarmFailure: NativePrewarmFailure? = null)
 
 fun interface NativeMediaObserver { fun onSignal(signal: NativeMediaSignal) }
 
@@ -62,9 +64,10 @@ object NativeMediaSignals {
     val observers = CopyOnWriteArraySet<NativeMediaObserver>()
     private val main = Handler(Looper.getMainLooper())
     fun emit(serverCallId: String, stage: NativeMediaStage, measurements: Map<String, Long> = emptyMap(),
-        observedAtNanos: Long = SystemClock.elapsedRealtimeNanos(), reason: String? = null) {
+        observedAtNanos: Long = SystemClock.elapsedRealtimeNanos(), reason: String? = null,
+        prewarmFailure: NativePrewarmFailure? = null) {
         val signal = NativeMediaSignal(if (stage == NativeMediaStage.ROOM_DISCONNECTED) "" else serverCallId,
-            stage, observedAtNanos, measurements, reason)
+            stage, observedAtNanos, measurements, reason, prewarmFailure)
         main.post { observers.forEach { observer -> runCatching { observer.onSignal(signal) } } }
     }
 }

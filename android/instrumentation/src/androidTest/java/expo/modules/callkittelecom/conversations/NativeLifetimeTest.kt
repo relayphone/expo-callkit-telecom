@@ -239,6 +239,85 @@ class NativeLifetimeTest {
 
     @Test fun a3500MillisecondRetirementFailsWithItsReasonAndMeasurements() = retirement(3500, false)
 
+    @Test fun anExpiredPhaseOneAnswerDoesNotStartAnotherPreparation() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val failed = CompletableDeferred<Unit>()
+            val attempts = java.util.concurrent.atomic.AtomicInteger()
+            val previous = NativeMediaRegistry.factories.put("livekit") {
+                object : NativeMediaSession {
+                    override suspend fun prewarm(payload: Map<String, Any?>) {
+                        attempts.incrementAndGet(); entered.complete(Unit); release.await()
+                    }
+                    override suspend fun activate() { fail("Expired Answer must not activate") }
+                    override suspend fun setHeld(held: Boolean) {}
+                    override suspend fun setMuted(muted: Boolean) {}
+                    override suspend fun close(reason: String) {}
+                }
+            }
+            val controller = NativeMediaController(InstrumentationRegistry.getInstrumentation().targetContext,
+                mapOf("serverCallId" to "expired-preparation", "media" to mapOf("provider" to "livekit",
+                    "expiresAt" to System.currentTimeMillis() / 1000 + 120)),
+                JSONObject(mapOf("media" to "livekit")), scope, { failed.complete(Unit) }, {})
+            try {
+                controller.prewarm()
+                withTimeout(1000) { entered.await() }
+                controller.answered {}
+                withTimeout(6000) { failed.await() }
+                // Leave cleanup to this test so an incorrectly launched retry can actually run.
+                release.complete(Unit)
+                withTimeout(1000) { while (!controller.isPrewarmed) delay(5) }
+                assertEquals(1, attempts.get())
+            } finally {
+                controller.close("ended")
+                withContext(NonCancellable) { withTimeout(5000) { controller.awaitClosed() } }
+                scope.cancel()
+                if (previous == null) NativeMediaRegistry.factories.remove("livekit")
+                else NativeMediaRegistry.factories["livekit"] = previous
+            }
+        }
+    }
+
+    @Test fun answerPreparationFailureIsClassifiedBeforeAnsweredIsCalled() = runBlocking {
+        withContext(Dispatchers.Main) {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            val observed = CompletableDeferred<NativeMediaDiagnostic>()
+            val previous = NativeMediaRegistry.factories.put("livekit") {
+                object : NativeMediaSession {
+                    private var preparationFailed: (NativePrewarmFailure) -> Unit = {}
+                    override fun setPreparationFailureListener(listener: (NativePrewarmFailure) -> Unit) { preparationFailed = listener }
+                    override suspend fun prewarm(payload: Map<String, Any?>) {
+                        preparationFailed(NativePrewarmFailure(NativePrewarmStage.CONNECT, "IllegalStateException"))
+                        throw IllegalStateException("controlled connect failure")
+                    }
+                    override suspend fun activate() { fail("Failed preparation must not activate") }
+                    override suspend fun setHeld(held: Boolean) {}
+                    override suspend fun setMuted(muted: Boolean) {}
+                    override suspend fun close(reason: String) {}
+                }
+            }
+            val controller = NativeMediaController(InstrumentationRegistry.getInstrumentation().targetContext,
+                mapOf("serverCallId" to "early-answer-failure", "media" to mapOf("provider" to "livekit",
+                    "expiresAt" to System.currentTimeMillis() / 1000 + 120)),
+                JSONObject(mapOf("media" to "livekit")), scope, {}, {})
+            controller.setDiagnosticListener { observed.complete(it) }
+            try {
+                controller.prewarmForAnswer()
+                assertEquals(NativeMediaDiagnostic.Answer(NativeAnswerFailure(NativeAnswerStage.PREPARE, false)),
+                    withTimeout(1000) { observed.await() })
+                controller.answered {}
+            } finally {
+                controller.close("ended")
+                withContext(NonCancellable) { withTimeout(5000) { controller.awaitClosed() } }
+                scope.cancel()
+                if (previous == null) NativeMediaRegistry.factories.remove("livekit")
+                else NativeMediaRegistry.factories["livekit"] = previous
+            }
+        }
+    }
+
     private fun retirement(closeMillis: Long, shouldConnect: Boolean) = runBlocking {
         withContext(Dispatchers.Main) {
             val context = InstrumentationRegistry.getInstrumentation().targetContext

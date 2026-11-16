@@ -5,13 +5,12 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
 
 /** Core activation already owns focus; endpoint metadata is not another activation acknowledgment. */
 internal object NativeAudioAuthority {
     suspend fun await(isCurrentActive: () -> Boolean, mode: () -> Int, timedOut: () -> Unit = {}) {
         try {
-            withTimeout(1500) {
+            withNativeMediaDeadline(1500) {
                 while (true) {
                     check(isCurrentActive()) { "Native call is no longer active" }
                     if (mode() == AudioManager.MODE_IN_COMMUNICATION) break

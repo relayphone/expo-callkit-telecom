@@ -5,6 +5,7 @@ import android.content.pm.ApplicationInfo
 import io.livekit.android.*
 import io.livekit.android.audio.NoAudioHandler
 import io.livekit.android.events.RoomEvent
+import io.livekit.android.events.DisconnectReason
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
 import io.livekit.android.room.track.LocalAudioTrack
@@ -23,6 +24,8 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     @Volatile private var room: Room? = null
     override val isPrepared: Boolean get() = room != null
+    @Volatile override var prewarmStage = NativePrewarmStage.CONNECT
+        private set
     private var microphone: LocalAudioTrack? = null
     private var publication: LocalTrackPublication? = null
     private var recording: JavaAudioDeviceModule? = null
@@ -34,10 +37,14 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     @Volatile private var muted = false
     @Volatile private var closed = false
     private var failed: () -> Unit = {}
+    @Volatile private var answerFailureReason: (NativeAnswerFailureReason) -> Unit = {}
+    @Volatile private var preparationFailed: (NativePrewarmFailure) -> Unit = {}
     private var disconnected: (NativeMediaDisconnection) -> Unit = { failed() }
     @Volatile private var connectionChanged: (NativeMediaConnection) -> Unit = {}
     private var connection: NativeRoomConnection? = null
     override fun setFailureListener(listener: () -> Unit) { failed = listener }
+    override fun setAnswerFailureReasonListener(listener: (NativeAnswerFailureReason) -> Unit) { answerFailureReason = listener }
+    override fun setPreparationFailureListener(listener: (NativePrewarmFailure) -> Unit) { preparationFailed = listener }
     override fun setDisconnectListener(listener: (NativeMediaDisconnection) -> Unit) { disconnected = listener }
     override fun setConnectionListener(listener: (NativeMediaConnection) -> Unit) { connectionChanged = listener }
     private var pcm = NativePcmProbe(invitationId)
@@ -50,6 +57,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
 
     @Suppress("UNCHECKED_CAST")
     private suspend fun connect(payload: Map<String, Any?>, warmReceiver: Boolean): Unit = withContext(Dispatchers.Main.immediate) {
+        prewarmStage = NativePrewarmStage.CONNECT
         check(!closed && room == null)
         serverId = payload["serverCallId"] as? String ?: error("Invalid media invitation")
         val media = payload["media"] as? Map<String, Any?> ?: error("Missing media credentials")
@@ -88,6 +96,9 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
         val subscriberReady = CompletableDeferred<Unit>()
         val remoteTrackReady = CompletableDeferred<Unit>()
         val transportJobs = mutableListOf<Job>()
+        val connectFailure = NativeConnectFailure({ preparationFailed(it) }, {
+            if (!closed) disconnected(NativeMediaDisconnection.FAILURE)
+        })
         val collector = scope.launch(start = CoroutineStart.UNDISPATCHED) { candidate.events.collect { event ->
             when (event) {
                 is RoomEvent.TrackPublished -> if (!closed) (event.publication as? RemoteTrackPublication)?.setSubscribed(true)
@@ -112,7 +123,8 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             stage.connection()?.let { connectionChanged(it) }
             NativeMediaSignals.emit(serverId, stage, reason = reason)
         }, { reason ->
-            if (!closed && room === candidate) {
+            if (!closed && room === candidate &&
+                !(reason == DisconnectReason.JOIN_FAILURE && connectFailure.deferJoinFailure())) {
                 room = null; transportJobs.forEach { it.cancel() }; collector.cancel()
                 probe.close(); decode.close(); heat.close()
                 runCatching { audioHooks?.close() }; runCatching { candidate.release() }
@@ -135,12 +147,15 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             // Own the candidate during connect too: a server end can arrive before connect returns.
             room = candidate
             candidate.connect(url, token, ConnectOptions(autoSubscribe = true, audio = false, video = false))
+            connectFailure.connected()
             check(!closed)
+            prewarmStage = NativePrewarmStage.IDENTITY
             require(candidate.name == media["room"] && candidate.localParticipant.identity?.value == media["identity"])
             NativeMediaSignals.emit(serverId, NativeMediaStage.MEDIA_CONNECT_COMPLETED)
             NativeMediaSignals.emit(serverId, NativeMediaStage.ROOM_CONNECTED)
             // Receive-only prejoin never creates or publishes a local audio track.
             // A silent/muted caller, or one not yet publishing, remains answerable.
+            prewarmStage = NativePrewarmStage.SUBSCRIBE
             try {
                 if (warmReceiver) {
                     withTimeoutOrNull(2000) {
@@ -167,6 +182,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             } }; tracks.clear()
             microphone = null; publication = null; captureEnabled = false; recording = null
             runCatching { audioHooks?.close() }; runCatching { candidate.release() }
+            connectFailure.failed(prewarmStage, error)
             throw error
         }
     }
@@ -174,7 +190,9 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
     private suspend fun publishMutedMicrophone() {
         val participant = room?.localParticipant ?: error("Media not prepared")
         publishNativeMicrophone(participant::permissions.flow, {
-            NativeMediaSignals.emit(serverId, NativeMediaStage.ANSWER_FAILED, reason = "PUBLISH_PERMISSION_NOT_GRANTED")
+            val reason = NativeAnswerFailureReason.PUBLISH_PERMISSION_NOT_GRANTED
+            answerFailureReason(reason)
+            NativeMediaSignals.emit(serverId, NativeMediaStage.ANSWER_FAILED, reason = reason.nativeValue)
         }) {
             recording?.setAudioRecordEnabled(false)
             val defaults = participant.audioTrackCaptureDefaults
@@ -249,7 +267,7 @@ internal class LiveKitNativeSession(private val context: Context, invitationId: 
             recording?.setAudioRecordEnabled(true)
             warmth.publishRecordingEnabled()
             publication!!.muted = false
-            withTimeout(1500) { ready.await() }
+            withNativeMediaDeadline(1500) { ready.await() }
         } else if (captureEnabled) {
             // Runtime recordingless toggles are asynchronous; detach the sender to stop physical capture.
             traceNativeMute(NativeMuteStep.PUBLICATION) { publication?.muted = true }
