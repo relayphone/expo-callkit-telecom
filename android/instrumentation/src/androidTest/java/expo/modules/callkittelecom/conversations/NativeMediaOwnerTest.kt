@@ -89,6 +89,8 @@ class NativeMediaOwnerTest {
         assertEquals(1, invitations.size)
         assertEquals(0, activations.get())
         assertEquals(1, closes.get())
+        assertEquals(NativeAnswerFailure(NativeAnswerStage.PREPARE, false,
+            reason = NativeAnswerFailureReason.PREJOIN_CLOSE_FAILED), owner.answerFailure)
     }
 
     @Test fun aRetirementTimeoutNeverPreparesOrActivatesTheReplacement() = fixture {
@@ -101,6 +103,8 @@ class NativeMediaOwnerTest {
         assertEquals(1, invitations.size)
         assertEquals(0, activations.get())
         assertEquals(1, closes.get())
+        assertEquals(NativeAnswerFailure(NativeAnswerStage.PREPARE, false,
+            reason = NativeAnswerFailureReason.PREJOIN_CLOSE_FAILED), owner.answerFailure)
     }
 
     @Test fun nativeActivationComesFromAudioAuthorityBeforeTransportAndCannotDuplicateOnUnmute() = fixture {

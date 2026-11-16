@@ -260,6 +260,27 @@ Observe `ANSWER_REQUESTED`, `HANDLER_STARTED`, `HANDLER_RESPONDED`,
 before the answer can emit `ROOM_CONNECTED` earlier. Signals contain monotonic
 timings, counts and reason codes, never names, phone numbers or media grants.
 
+JavaScript can observe optional prewarm failures without native hooks:
+
+```ts
+useConversationEvent("prewarmFailed", ({ conversationId, stage, errorType }) => {
+  console.warn("Media prewarm failed", { conversationId, stage, errorType });
+});
+```
+
+The stage is `connect`, `identity`, `subscribe` or `deadline`; `errorType` is the
+platform exception type name, never its message. A failed optional prewarm leaves
+an incoming call ringing so that Answer can prepare media again. Retired sessions
+cannot emit diagnostics for their replacement.
+
+When Answer fails, inspect the ended snapshot after narrowing
+`ended.reason === "failed"` and `ended.failure?.kind === "media"`. The optional
+`stage` identifies `prepare`, `audioSession` or `activate`; `timedOut` reports a
+deadline failure, and `timeoutMs` identifies the expired deadline when known.
+`reason` can be `publishPermissionNotGranted` or `prejoinCloseFailed`. Native
+signals retain their uppercase reason codes. These diagnostics do not extend the
+prewarm or Answer deadlines.
+
 ## Your own ringing screen
 
 Configure notification content from `Application.onCreate`. The library keeps the

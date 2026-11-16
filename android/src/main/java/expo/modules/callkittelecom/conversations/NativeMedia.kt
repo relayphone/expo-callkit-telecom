@@ -14,6 +14,9 @@ enum class NativeMediaDisconnection { REMOTE_ENDED, CLIENT_INITIATED, FAILURE }
 /** Implementations honor cancellation; failed prewarm releases resources and remains retryable. */
 interface NativeMediaSession {
     val isPrepared: Boolean get() = true
+    val prewarmStage: NativePrewarmStage get() = NativePrewarmStage.CONNECT
+    fun setPreparationFailureListener(listener: (NativePrewarmFailure) -> Unit) {}
+    fun setAnswerFailureReasonListener(listener: (NativeAnswerFailureReason) -> Unit) {}
     fun setFailureListener(listener: () -> Unit) {}
     /** Report a final room disconnect separately from preparation and activation failures. */
     fun setDisconnectListener(listener: (NativeMediaDisconnection) -> Unit) {}
@@ -67,6 +70,12 @@ internal class NativeMediaController(private val context: Context, private val p
     @Volatile private var activating = false
     @Volatile private var held = false
     private var retried = false
+    @Volatile private var diagnostic: (NativeMediaDiagnostic) -> Unit = {}
+    @Volatile private var answerFailureReason: NativeAnswerFailureReason? = null
+    @Volatile private var prewarmFailureReported = false
+    @Volatile private var preparingAnswer = false
+
+    override fun setDiagnosticListener(listener: (NativeMediaDiagnostic) -> Unit) { diagnostic = listener }
 
     init {
         lifetime.invokeOnCompletion { close("cancelled") }
@@ -89,6 +98,24 @@ internal class NativeMediaController(private val context: Context, private val p
         session?.setConnectionListener { state ->
             operations.launch(Dispatchers.Main.immediate) { if (!closed) connectionChanged(state) }
         }
+        session?.setAnswerFailureReasonListener { reason -> answerFailureReason = reason }
+        session?.setPreparationFailureListener { failure ->
+            prewarmFailureReported = true
+            operations.launch(Dispatchers.Main.immediate) { if (!closed) {
+                if (preparingAnswer) {
+                    val details = NativeAnswerFailure(NativeAnswerStage.PREPARE, false)
+                    (payload["serverCallId"] as? String)?.let {
+                        NativeMediaSignals.emit(it, NativeMediaStage.ANSWER_FAILED, mapOf("phase" to 1L, "timeout" to 0L))
+                    }
+                    diagnostic(NativeMediaDiagnostic.Answer(details))
+                } else {
+                    (payload["serverCallId"] as? String)?.let {
+                        NativeMediaSignals.emit(it, NativeMediaStage.PREWARM_FAILED, prewarmFailure = failure)
+                    }
+                    diagnostic(NativeMediaDiagnostic.Prewarm(failure))
+                }
+            } }
+        }
         currentCoroutineContext().ensureActive(); check(!closed)
         val pushed = payload["media"] as? Map<String, Any?>
         val fresh = (pushed?.get("expiresAt") as? Number)?.toLong()?.let { it > System.currentTimeMillis() / 1000 } == true
@@ -99,7 +126,7 @@ internal class NativeMediaController(private val context: Context, private val p
         (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.CREDENTIALS_STARTED) }
         val resolved = if (nativeNegotiation || (policy.opt("credentials") !is JSONObject && fresh && compatiblePush)) payload else {
             val source = policy.optJSONObject("credentials") ?: policy.optJSONObject("fallback")
-            val credentials = withTimeout(3000) {
+            val credentials = withNativeMediaDeadline(3000) {
                 val fetcher = source?.optString("name")?.let { NativeMediaRegistry.fetchers[it] }
                     ?: error("Native credentials unavailable")
                 fetcher(payload)
@@ -113,17 +140,32 @@ internal class NativeMediaController(private val context: Context, private val p
     }
     override fun prewarm() {
         check(!closed)
-        if (policy.optBoolean("prewarm", true)) preparation = operations.async {
+        if (policy.optBoolean("prewarm", true)) preparation = operations.async(NativeMediaDeadlines()) {
             (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.PREWARM_STARTED) }
-            withTimeout(8000) { prepare() }
+            try { withNativeMediaDeadline(8000) { prepare() } }
+            catch (error: Exception) {
+                ensureActive()
+                if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                if (prewarmFailureReported) throw error
+                val failure = NativePrewarmFailure(
+                    if (coroutineContext[NativeMediaDeadlines]?.timeoutMs(error) != null) NativePrewarmStage.DEADLINE
+                    else session?.prewarmStage ?: NativePrewarmStage.CONNECT,
+                    error.javaClass.simpleName.ifEmpty { error.javaClass.name })
+                (payload["serverCallId"] as? String)?.let {
+                    NativeMediaSignals.emit(it, NativeMediaStage.PREWARM_FAILED, prewarmFailure = failure)
+                }
+                withContext(Dispatchers.Main) { if (!closed) diagnostic(NativeMediaDiagnostic.Prewarm(failure)) }
+                throw error
+            }
         }
     }
     override fun prewarmForAnswer(previous: NativeMediaControl?) {
         check(!closed)
+        preparingAnswer = true
         previous?.close("replaced")
-        preparation = operations.async {
+        preparation = operations.async(NativeMediaDeadlines()) {
             (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.PREWARM_STARTED) }
-            withTimeout(8000) {
+            withNativeMediaDeadline(8000) {
                 try { previous?.awaitClosed() }
                 catch (error: Exception) {
                     currentCoroutineContext().ensureActive()
@@ -136,10 +178,11 @@ internal class NativeMediaController(private val context: Context, private val p
     override suspend fun awaitClosed() { releaseCompleted.await() }
     override fun answered(audioReady: suspend () -> Unit) {
         if (answerJob != null || closed) return
-        answerJob = operations.launch {
-            var phase = 1L
+        preparingAnswer = true
+        answerJob = operations.launch(NativeMediaDeadlines()) {
+            var stage = NativeAnswerStage.PREPARE
             try {
-                withTimeout(5000) {
+                withNativeMediaDeadline(5000) {
                     try {
                         preparation?.await() ?: error("No pre-warm")
                         check(session?.isPrepared != false) { "Pre-warm disconnected" }
@@ -149,13 +192,15 @@ internal class NativeMediaController(private val context: Context, private val p
                         if (error is NativePrejoinRetirementFailure) throw error
                         if (retried) throw error
                         retried = true
-                        preparation = operations.async { withTimeout(8000) { prepare(afterAnswer = true) } }
+                        preparation = operations.async(coroutineContext[NativeMediaDeadlines]!!) {
+                            withNativeMediaDeadline(8000) { prepare(afterAnswer = true) }
+                        }
                         preparation!!.await()
                     }
                     (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.PREPARATION_READY) }
-                    phase = 2L
+                    stage = NativeAnswerStage.AUDIO_SESSION
                     audioReady()
-                    phase = 3L
+                    stage = NativeAnswerStage.ACTIVATE
                     serial.withLock {
                         ensureActive(); check(!closed && !held)
                         session?.setHeld(false)
@@ -171,10 +216,19 @@ internal class NativeMediaController(private val context: Context, private val p
                 withContext(Dispatchers.Main) { if (!closed) connected() }
             } catch (error: Exception) {
                 if (isActive && !closed && !held) {
+                    val failure = NativeAnswerFailure(stage, error is TimeoutCancellationException,
+                        coroutineContext[NativeMediaDeadlines]?.timeoutMs(error),
+                        if (error is NativePrejoinRetirementFailure) NativeAnswerFailureReason.PREJOIN_CLOSE_FAILED
+                        else answerFailureReason)
                     (payload["serverCallId"] as? String)?.let { NativeMediaSignals.emit(it, NativeMediaStage.ANSWER_FAILED,
-                        mapOf("phase" to phase, "timeout" to if (error is TimeoutCancellationException) 1L else 0L),
-                        reason = if (error is NativePrejoinRetirementFailure) "PREJOIN_CLOSE_FAILED" else null) }
-                    withContext(Dispatchers.Main) { if (!closed) failed() }
+                        buildMap {
+                            put("phase", stage.phase); put("timeout", if (failure.timedOut) 1L else 0L)
+                            failure.timeoutMs?.let { put("timeoutMs", it) }
+                        }, reason = failure.reason?.nativeValue) }
+                    withContext(Dispatchers.Main) { if (!closed) {
+                        diagnostic(NativeMediaDiagnostic.Answer(failure))
+                        failed()
+                    } }
                 }
             }
         }

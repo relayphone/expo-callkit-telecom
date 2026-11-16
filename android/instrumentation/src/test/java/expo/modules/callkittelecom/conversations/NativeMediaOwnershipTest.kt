@@ -12,7 +12,13 @@ class NativeMediaOwnershipTest {
         val closes = mutableListOf<String>()
         var answers = 0
         var muted = false
+        var diagnostic: (NativeMediaDiagnostic) -> Unit = {}
+        var duringAnswerPreparation: () -> Unit = {}
+        override fun setDiagnosticListener(listener: (NativeMediaDiagnostic) -> Unit) { diagnostic = listener }
         override fun prewarm() { isPrewarmed = true }
+        override fun prewarmForAnswer(previous: NativeMediaControl?) {
+            previous?.close("replaced"); prewarm(); duringAnswerPreparation()
+        }
         override fun answered(audioReady: suspend () -> Unit) { answers++ }
         override suspend fun pause() {}
         override fun resume(audioReady: suspend () -> Unit) {}
@@ -91,6 +97,48 @@ class NativeMediaOwnershipTest {
         assertEquals(1, sessions.last().answers)
         assertTrue(sessions.last().muted)
         assertTrue(audioEvents.isEmpty())
+        owner.close("ended")
+    }
+
+    @Test fun diagnosticsBelongOnlyToTheCurrentControllerAndOptionalPreparation() {
+        val sessions = mutableListOf<Session>()
+        val failures = mutableListOf<NativePrewarmFailure>()
+        val owner = NativeMediaOwner(AndroidNativeMedia.LIVEKIT, NativeAudioLifecycle({ true }, { 0 }, {}),
+            prewarmFailed = failures::add) { Session().also { sessions += it } }
+        val prewarm = NativePrewarmFailure(NativePrewarmStage.IDENTITY, "IllegalArgumentException")
+        val answer = NativeAnswerFailure(NativeAnswerStage.PREPARE, true, 5000)
+        owner.prewarm()
+        sessions.single().diagnostic(NativeMediaDiagnostic.Prewarm(prewarm))
+        assertEquals(listOf(prewarm), failures)
+        owner.answered(mapOf("token" to "fresh"))
+        sessions.first().diagnostic(NativeMediaDiagnostic.Answer(answer))
+        sessions.first().diagnostic(NativeMediaDiagnostic.Prewarm(prewarm))
+        assertNull(owner.answerFailure)
+        sessions.last().diagnostic(NativeMediaDiagnostic.Prewarm(prewarm))
+        assertEquals(listOf(prewarm), failures)
+        sessions.last().diagnostic(NativeMediaDiagnostic.Answer(answer))
+        assertEquals(answer, owner.answerFailure)
+        owner.close("ended")
+        sessions.last().diagnostic(NativeMediaDiagnostic.Answer(answer.copy(timeoutMs = 8000)))
+        assertEquals(answer, owner.answerFailure)
+    }
+
+    @Test fun replacementOwnsAFailureDeliveredDuringPreparationBeforeAnswered() {
+        val failure = NativeAnswerFailure(NativeAnswerStage.PREPARE, false)
+        val sessions = mutableListOf<Session>()
+        val owner = NativeMediaOwner(AndroidNativeMedia.LIVEKIT, NativeAudioLifecycle({ true }, { 0 }, {})) {
+            Session().also { session ->
+                sessions += session
+                session.duringAnswerPreparation = {
+                    assertEquals(0, session.answers)
+                    session.diagnostic(NativeMediaDiagnostic.Answer(failure))
+                }
+            }
+        }
+        owner.prewarm()
+        owner.answered(mapOf("token" to "fresh"))
+        assertEquals(failure, owner.answerFailure)
+        assertEquals(1, sessions.last().answers)
         owner.close("ended")
     }
 }

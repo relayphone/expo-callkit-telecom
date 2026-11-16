@@ -143,7 +143,8 @@ class EndedFailureTest {
             val id = engine.incoming(invitation("media-failure"))["id"] as String
             engine.join(id)
             withTimeout(10_000) { while (ended(snapshots) { it["id"] == id } == null) delay(10) }
-            assertEquals(mapOf("kind" to "media"), ended(snapshots) { it["id"] == id }?.get("failure"))
+            assertEquals(mapOf("kind" to "media", "stage" to "prepare", "timedOut" to false),
+                ended(snapshots) { it["id"] == id }?.get("failure"))
         } finally {
             if (previous != null) NativeMediaRegistry.factories["webrtc"] = previous
             else NativeMediaRegistry.factories.remove("webrtc")

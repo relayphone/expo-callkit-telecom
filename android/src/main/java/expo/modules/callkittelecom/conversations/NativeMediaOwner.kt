@@ -15,6 +15,7 @@ internal enum class AndroidNativeMedia {
 internal interface NativeMediaControl {
     val isPrewarmed: Boolean
     val hasSession: Boolean
+    fun setDiagnosticListener(listener: (NativeMediaDiagnostic) -> Unit) {}
     fun prewarm()
     /** Retire the previous transport before preparing credentials for the same participant. */
     fun prewarmForAnswer(previous: NativeMediaControl? = null) { previous?.close("replaced"); prewarm() }
@@ -35,12 +36,16 @@ internal class NativeMediaOwner(
     private val selection: AndroidNativeMedia,
     private val audio: NativeAudioLifecycle,
     initiallyMuted: Boolean = false,
+    private val prewarmFailed: (NativePrewarmFailure) -> Unit = {},
     private val create: (Map<String, Any?>?) -> NativeMediaControl,
 ) {
     private var controller: NativeMediaControl? = null
     private var closed = false
     private var transition = 0L
     private var desiredMuted = initiallyMuted
+    private var answering = false
+    var answerFailure: NativeAnswerFailure? = null
+        private set
     internal val isPrewarmed: Boolean get() = controller?.isPrewarmed == true
     internal val hasSession: Boolean get() = controller?.hasSession == true
 
@@ -70,14 +75,16 @@ internal class NativeMediaOwner(
     /** Called after a successful native answer; the app-managed path owns no native session. */
     fun answered(media: Map<String, Any?>? = null) {
         check(!closed)
+        answering = true
+        answerFailure = null
         transition++
         if (selection == AndroidNativeMedia.NONE) audio.coreActivated()
         else {
             if (media != null) {
                 val previous = controller
-                controller = createController(media).also {
-                    it.prewarmForAnswer(previous)
-                }
+                val replacement = createController(media)
+                controller = replacement
+                replacement.prewarmForAnswer(previous)
             }
             prewarm()
             controller!!.answered { audio.nativeActivated() }
@@ -103,7 +110,15 @@ internal class NativeMediaOwner(
         }
     }
 
-    private fun createController(media: Map<String, Any?>?) = create(media).also { it.setDesiredMuted(desiredMuted) }
+    private fun createController(media: Map<String, Any?>?) = create(media).also { created ->
+        created.setDesiredMuted(desiredMuted)
+        created.setDiagnosticListener { diagnostic ->
+            if (!closed && controller === created) when (diagnostic) {
+                is NativeMediaDiagnostic.Prewarm -> if (!answering) prewarmFailed(diagnostic.failure)
+                is NativeMediaDiagnostic.Answer -> answerFailure = diagnostic.failure
+            }
+        }
+    }
     suspend fun mute() { check(!closed); desiredMuted = true; controller?.mute() }
     fun clearMute() { check(!closed); desiredMuted = false; controller?.clearMute() }
     fun unmute() { check(!closed); desiredMuted = false; controller?.unmute { audio.nativeActivated() } }

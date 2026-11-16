@@ -35,11 +35,13 @@ internal enum class EndedFailure(val kind: String, val cause: NativeIncomingFilt
 }
 
 /** The TypeScript `ConversationEnd`. Only a failed conversation carries its cause, when Android knows it. */
-internal fun conversationEnd(at: String, reason: String, failure: EndedFailure?): Map<String, Any?> =
+internal fun conversationEnd(at: String, reason: String, failure: EndedFailure?,
+    mediaFailure: NativeAnswerFailure? = null): Map<String, Any?> =
     if (reason == "failed" && failure != null) {
         mapOf("at" to at, "reason" to reason, "failure" to buildMap {
             put("kind", failure.kind)
             failure.cause?.let { put("cause", it.value) }
+            if (failure == EndedFailure.MEDIA) mediaFailure?.snapshot()?.let(::putAll)
         })
     } else {
         mapOf("at" to at, "reason" to reason)
