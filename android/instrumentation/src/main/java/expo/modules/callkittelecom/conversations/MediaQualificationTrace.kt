@@ -22,7 +22,9 @@ internal fun mediaQualificationTrace(
     if (claimTrace != null) {
         lines += "claim.clock=android.elapsedRealtimeNanos"
         lines += "claim.counts=${numericFields(claimTrace, "claimDelayMillis", "grant", "muteBeforeAnswer", "creations",
-            "clients", "clientObservationNs", "truncatedEvents")}"
+            "clients", "clientObservationNs", "truncatedEvents", "receiverGeneration")}"
+        lines += "claim.capture=${numericFields(claimTrace.optJSONObject("capture"), "captureRate", "injectedFrames",
+            "recordinglessCallbacks", "generatedWords")}"
         val negotiations = claimTrace.optJSONObject("signaling")?.optJSONArray("negotiations")
         sourceTruncated = (negotiations?.length() ?: 0) > 8 || claimTrace.optInt("truncatedEvents") > 0
         for (index in 0 until minOf(negotiations?.length() ?: 0, 8)) {
@@ -74,9 +76,26 @@ internal fun mediaQualificationTrace(
     lines += "device.guard=${numericFields(device?.optJSONObject("guard"), "atNs", "limitFrames", "pendingFrames", "capturedFrames", "drainedFrames")}"
     lines += "device.counts=${numericFields(device, "drainLimitFrames", "pendingFrames", "capturedFrames", "drainedFrames", "observedAtNs", "captureStartedNs", "droppedSpans")}"
     lines += "receiver.clock=android.elapsedRealtimeNanos"
-    val receiverTrace = receiver?.takeIf { it.opt("clock") == "android.elapsedRealtimeNanos" }
+    val receiverTrace = (receiver ?: claimTrace?.optJSONObject("receiverWait"))?.takeIf { it.opt("clock") == "android.elapsedRealtimeNanos" }
     lines += "receiver=${numericFields(receiverTrace,
-        "budgetMs", "startedNs", "prejoinedObservedNs", "lastReadStartedNs", "lastReadCompletedNs", "completedNs", "failureObservedNs", "reads", "lastRunning")}"
+        "budgetMs", "startedNs", "prejoinedObservedNs", "lastReadStartedNs", "lastReadCompletedNs", "completedNs", "failureObservedNs", "reads", "lastRunning", "droppedPolls")}"
+    fun pollFields(poll: JSONObject) = numericFields(poll, "startedNs", "endedNs").apply {
+        if (poll.opt("phase") in MediaReceiverHttpPhase.entries.map { it.name }) put("phase", poll.opt("phase"))
+        if (!poll.isNull("errorClass")) put("errorClass", mediaErrorClass(poll.opt("errorClass") as? String))
+    }
+    val lastReceiver = receiverTrace?.optJSONObject("last")
+    if (lastReceiver != null) lines += "receiver.last=${numericFields(lastReceiver, "running", "generation", "frames", "markers",
+        "markersWithPostRoll", "cleanCyclesWithPostRoll").apply {
+        if (!lastReceiver.isNull("errorClass")) put("errorClass", mediaErrorClass(lastReceiver.opt("errorClass") as? String))
+    }}"
+    val polls = receiverTrace?.optJSONArray("polls")
+    sourceTruncated = sourceTruncated || (polls?.length() ?: 0) > 32 || (receiverTrace?.optInt("droppedPolls") ?: 0) > 0
+    if (polls != null) for (index in polls.length() - 1 downTo maxOf(0, polls.length() - 32)) {
+        polls.optJSONObject(index)?.let { poll ->
+            if (index == polls.length() - 1) lines += "receiver.latestPoll=${pollFields(poll)}"
+            else histories += "receiver.poll=${pollFields(poll)}"
+        }
+    }
     val signals = receiverTrace?.optJSONArray("signals")
     sourceTruncated = sourceTruncated || (signals?.length() ?: 0) > 128
     val allowedSignals = setOf("mediaConnectStarted", "mediaConnectCompleted", "microphonePublishStarted",

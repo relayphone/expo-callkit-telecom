@@ -17,6 +17,30 @@ internal class MediaSourceProgress {
         .put("samples", JSONArray(samples.toList()))
 }
 
+/** Replace any earlier journey's capture with the failing claim's own bounded callback trace. */
+internal fun retainMediaClaimCapture(file: File, original: Throwable, claimId: String, claimDelayMillis: Long,
+    capture: () -> JSONObject) {
+    try {
+        require(claimId.matches(Regex("hooks-[0-9]+")))
+        val trace = capture().put("claimId", claimId).put("claimDelayMillis", claimDelayMillis)
+        val callbacks = trace.getJSONArray("callbacks")
+        trace.put("callbacks", JSONArray((0 until callbacks.length()).filter {
+            it < 16 || it >= callbacks.length() - 240
+        }.map { callbacks.get(it) })).put("droppedCallbacks", maxOf(0, callbacks.length() - 256))
+        val previous = if (file.isFile) JSONObject(file.readText()).optJSONArray("claimFailures") else null
+        val count = previous?.length() ?: 0
+        val failures = JSONArray((maxOf(0, count - 3) until count).map { previous!!.get(it) }).put(trace)
+        writeMediaEvidence(file, JSONObject(trace.toString()).put("claimFailures", failures).toString())
+    } catch (diagnostic: Throwable) { if (diagnostic !== original) original.addSuppressed(diagnostic) }
+}
+
+/** Later qualification writes retain the bounded captures belonging to earlier failed claims. */
+internal fun writeMediaCaptureEvidence(file: File, capture: JSONObject) {
+    val failures = if (file.isFile) JSONObject(file.readText()).optJSONArray("claimFailures") else null
+    if (failures != null) capture.put("claimFailures", failures)
+    writeMediaEvidence(file, capture.toString())
+}
+
 /** Flush the original assertion before optional diagnostics, then rethrow that same instance. */
 internal suspend fun rethrowMediaJourneyFailure(file: File, evidence: JSONObject, error: Throwable,
     test: String, phase: String, pid: Int, forced: Boolean, progress: MediaSourceProgress,

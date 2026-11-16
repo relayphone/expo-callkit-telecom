@@ -16,7 +16,10 @@ internal class NativeConnectFailure(
         return true
     }
 
-    fun connected() { connecting = false }
+    fun connected() {
+        if (joinFailed) failed(NativePrewarmStage.CONNECT, IllegalStateException())
+        else connecting = false
+    }
 
     fun failed(stage: NativePrewarmStage, error: Throwable) {
         connecting = false
