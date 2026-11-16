@@ -24,6 +24,11 @@ class ConversationJourneyTest {
     private suspend fun awaitTelecomRemoval() = withTimeout(5000) {
         while (TelecomEvidence.calls().isNotEmpty()) delay(10)
     }
+    private enum class PlatformState { RINGING, ACTIVE, ON_HOLD }
+    private suspend fun awaitSingleTelecomState(state: PlatformState) = awaitPresentationObservation(
+        "one platform call in $state", { TelecomEvidence.calls() },
+        { it.singleOrNull()?.contains("state=${state.name},") == true },
+        { calls -> calls.map { Regex("state=([^,]+)").find(it)?.groupValues?.get(1) }.toString() })
 
     @Test fun incomingAndOutgoingJourney() = runBlocking {
         withContext(Dispatchers.Main) {
@@ -55,11 +60,14 @@ class ConversationJourneyTest {
                 assertEquals("journey-incoming", id)
                 expect(id, "ringing")
                 assertEquals(id, engine.incoming(payload)["id"])
+                awaitSingleTelecomState(PlatformState.RINGING)
                 engine.join(id)
                 expect(id, "connecting")
                 engine.report(id, mapOf("type" to "connected"))
                 expect(id, "connected")
+                awaitSingleTelecomState(PlatformState.ACTIVE)
                 engine.hold(id, true)
+                awaitSingleTelecomState(PlatformState.ON_HOLD)
                 expect(id, "held")
                 val second = engine.incoming(payload + mapOf("eventId" to "second-event", "serverCallId" to "second-call"))
                 assertEquals("reported", second["status"])
@@ -77,6 +85,9 @@ class ConversationJourneyTest {
                 engine.end(id)
                 assertNull(status(id))
                 seen += "incoming-ended"
+                // Logical end precedes native removal; finish this scenario before starting another.
+                withTimeout(5000) { while (engine.jobs.coroutineContext[Job]!!.children.count { it.isActive } > baselineJobs) delay(10) }
+                awaitTelecomRemoval()
                 val outgoing = engine.start(mapOf("id" to "outgoing-${System.nanoTime()}", "to" to mapOf("id" to "callee"), "video" to false))
                 expect(outgoing, "dialing")
                 engine.report(outgoing, mapOf("type" to "connecting"))
@@ -417,7 +428,10 @@ class ConversationJourneyTest {
             fun present(id: String) = (engine.snapshot["conversations"] as List<*>).any { (it as Map<*, *>)["id"] == id }
             try {
                 assertEquals(first, engine.incoming(invitation(first))["id"])
-                engine.join(first); engine.hold(first, true)
+                // Legacy scope admission precedes the platform's connection-created reply.
+                awaitSingleTelecomState(PlatformState.RINGING)
+                engine.join(first); awaitSingleTelecomState(PlatformState.ACTIVE)
+                engine.hold(first, true); awaitSingleTelecomState(PlatformState.ON_HOLD)
                 assertEquals(second, engine.incoming(invitation(second))["id"])
                 suspend fun action(id: String): android.app.PendingIntent = withTimeout(5000) {
                     var found: android.app.PendingIntent? = null

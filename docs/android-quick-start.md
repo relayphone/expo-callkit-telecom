@@ -1,5 +1,9 @@
 # Android v2 quick-start
 
+Call notification Answer and body taps open the app's launch Activity by default.
+Use `androidCallActivity` to choose another Activity; see
+[native answer and notification navigation](contracts/android-answer.md).
+
 Install the v2 prerelease from the GitHub release asset in your `package.json`:
 
 ```json

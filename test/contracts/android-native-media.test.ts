@@ -122,6 +122,75 @@ test("unknown native providers fail configuration before mods are installed", ()
   );
 });
 
+test("call Activity override is validated and removed when returning to the default", async () => {
+  const { withAndroidOptions } = await import(
+    "../../plugin/build/androidOptions.js"
+  );
+  let manifest: AndroidManifest = {
+    manifest: {
+      $: { "xmlns:android": "http://schemas.android.com/apk/res/android" },
+      application: [
+        {
+          $: { "android:name": ".MainApplication" },
+          "meta-data": [
+            { $: { "android:name": "unrelated", "android:value": "retained" } },
+          ],
+        },
+      ],
+    },
+  };
+  for (const androidCallActivity of [
+    ".CallActivity",
+    "com.example.CallActivity",
+    "com.example.CallActivity",
+    undefined,
+  ]) {
+    const config = withAndroidOptions(
+      { name: "call-test", slug: "call-test" },
+      { androidCallActivity }
+    );
+    manifest = await evaluate(config, config.mods?.android?.manifest, manifest);
+    const entries = manifest.manifest.application?.[0]?.["meta-data"] ?? [];
+    assert.deepEqual(
+      entries.filter(
+        (entry) => entry.$["android:name"] === "ExpoCallKitTelecomCallActivity"
+      ),
+      androidCallActivity === undefined
+        ? []
+        : [
+            {
+              $: {
+                "android:name": "ExpoCallKitTelecomCallActivity",
+                "android:value": androidCallActivity,
+              },
+            },
+          ]
+    );
+    assert.deepEqual(
+      entries.find((entry) => entry.$["android:name"] === "unrelated"),
+      { $: { "android:name": "unrelated", "android:value": "retained" } }
+    );
+  }
+  for (const androidCallActivity of [
+    null,
+    false,
+    0,
+    "",
+    "Call Activity",
+    "../Activity",
+    "com.example.",
+  ]) {
+    assert.throws(
+      () =>
+        Reflect.apply(withAndroidOptions, undefined, [
+          { name: "call-test", slug: "call-test" },
+          { androidCallActivity },
+        ]),
+      /androidCallActivity must name an Android Activity class/
+    );
+  }
+});
+
 test("FCM ownership defaults to library and app ownership preserves other services", async () => {
   const { withAndroidOptions } = await import(
     "../../plugin/build/androidOptions.js"

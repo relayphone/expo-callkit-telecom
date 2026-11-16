@@ -21,7 +21,8 @@ class CoreCallRetentionTest {
     @Test fun retainedScopeCanDisconnectAfterItsAdmissionJobIsCancelled() = runBlocking {
         withContext(Dispatchers.Main) {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
-            val manager = CallsManager(context).apply { registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE) }
+            val manager = CallsManager(context).apply { registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE,
+                backwardsCompatSdkLevel = CORE_LEGACY_THROUGH_SDK) }
             val ready = CompletableDeferred<CallControlScope>()
             val owner = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
             val admission = owner.launch {

@@ -27,6 +27,14 @@ export const withAndroidOptions: ConfigPlugin<ComposedPluginProps> = (
     typeof props.androidSupportsHold !== "boolean"
   )
     throw new Error("androidSupportsHold must be a boolean.");
+  if (
+    props.androidCallActivity !== undefined &&
+    (typeof props.androidCallActivity !== "string" ||
+      !/^\.?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(
+        props.androidCallActivity
+      ))
+  )
+    throw new Error("androidCallActivity must name an Android Activity class.");
   if ("joinPolicy" in props)
     throw new Error(
       "joinPolicy was removed; use androidNativeMedia for native media selection."
@@ -60,6 +68,8 @@ export const withAndroidOptions: ConfigPlugin<ComposedPluginProps> = (
       ),
     };
     const ringtone = props.defaultRingtoneAndroid;
+    if (props.androidCallActivity !== undefined)
+      values.ExpoCallKitTelecomCallActivity = props.androidCallActivity;
     if (ringtone && ringtone !== "default") {
       if (!props.sounds?.some((sound) => basename(sound) === ringtone))
         throw new Error("defaultRingtoneAndroid must name a provided sound.");
@@ -69,6 +79,7 @@ export const withAndroidOptions: ConfigPlugin<ComposedPluginProps> = (
       "ExpoCallKitTelecomJoinPolicy",
       "ExpoCallKitTelecomDefaultDialtone",
       "ExpoCallKitTelecomDefaultRingtone",
+      "ExpoCallKitTelecomCallActivity",
     ];
     app["meta-data"] = (app["meta-data"] ?? []).filter(
       (item) =>

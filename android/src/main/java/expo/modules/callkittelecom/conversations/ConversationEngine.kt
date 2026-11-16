@@ -83,7 +83,8 @@ class ConversationEngine(val context: Context) {
     }
     internal fun canWarmIncoming(id: String): Boolean = calls[id]?.let { !it.terminal && !it.ending && !it.ringExpired && it.incoming?.intent == null } == true
     private val telecom = CallsManager(context).apply {
-        registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE or CallsManager.CAPABILITY_SUPPORTS_VIDEO_CALLING)
+        registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE or CallsManager.CAPABILITY_SUPPORTS_VIDEO_CALLING,
+            backwardsCompatSdkLevel = CORE_LEGACY_THROUGH_SDK)
     }
     internal var coreAdmission = CoreCallAdmission { attributes, callbacks, admitted ->
         telecom.addCall(attributes, callbacks.answer, callbacks.disconnect, callbacks.activate, callbacks.deactivate, admitted)
@@ -805,7 +806,7 @@ class ConversationEngine(val context: Context) {
         requireLive(current)
         current.timeout?.cancel()
         native(id, NativePerformedAction.Answer, origin) {
-            checked(control(id).answer(if (current.state["isVideo"] == true) CallAttributesCompat.CALL_TYPE_VIDEO_CALL else CallAttributesCompat.CALL_TYPE_AUDIO_CALL))
+            checked(answerCoreCall(control(id), current.state["isVideo"] == true))
         }
     }
     /** Same entry point used by Core's onAnswer callback, including app-request echoes. */

@@ -73,7 +73,8 @@ class DndMatrixTest {
             val id = UUID.randomUUID().toString()
             val ready = CompletableDeferred<CallControlScope>()
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-            val telecom = CallsManager(context).apply { registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE) }
+            val telecom = CallsManager(context).apply { registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE,
+                backwardsCompatSdkLevel = CORE_LEGACY_THROUGH_SDK) }
             DndObservationService.observations.remove(name)
             val raw = scope.launch {
                 try { telecom.addCall(CallAttributesCompat(name, identity.coreAddress(),

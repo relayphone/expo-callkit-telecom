@@ -445,6 +445,9 @@ class ConversationPresentationJourneyTest {
                 extraActions = listOf(NotificationCompat.Action(0, extraAction, activityIntent(extraAction))))
         }
         incoming()
+        awaitPresentationObservation("ringing audio routes discovered", { engine.audioRoutes() },
+            { it["current"] != null && (it["routes"] as List<*>).contains(it["current"]) },
+            { "available=${(it["routes"] as List<*>).size}, currentType=${(it["current"] as? Map<*, *>)?.get("type")}" })
         stage = "original ringing card"
         val original = card()
         assertNotNull(original.notification.fullScreenIntent)
