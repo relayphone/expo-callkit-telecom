@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.11 (2026-11-16)
+
+### Changed
+
+* Pin the verified iOS SDK 0.6.0 release asset in the package and example, and
+  expose its media permission and readiness API through the package entry points
+  ([#154](https://github.com/relayphone/expo-callkit-telecom/pull/154)).
+
+### Features
+
+* **android:** add `getMediaPermissions`, `requestMediaPermissions` and
+  `conversationMediaReadiness`. Permission reads and readiness checks never
+  prompt; explicit permission requests serialize and require the foreground
+  ([#152](https://github.com/relayphone/expo-callkit-telecom/pull/152),
+  [#154](https://github.com/relayphone/expo-callkit-telecom/pull/154)).
+
+### Testing
+
+* **android:** persist original media assertions before diagnostic enrichment,
+  retain bounded JUnit traces and sanitized ART crash classifications, and
+  qualify failure reporting, process exit and cleanup with a forced assertion
+  ([#147](https://github.com/relayphone/expo-callkit-telecom/pull/147),
+  [#153](https://github.com/relayphone/expo-callkit-telecom/pull/153)).
+
 ## 2.0.0-alpha.10 (2026-11-15)
 
 ### Fixes
