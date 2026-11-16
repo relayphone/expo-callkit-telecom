@@ -15,21 +15,28 @@ open class NotificationLaunchActivity : Activity() {
         var lastClass: String? = null
         fun reset() { creations = 0; resumes = 0; answers = 0; lastIntent = null; lastClass = null }
     }
-    private fun receive(value: Intent) {
+    private fun receive(value: Intent, phase: AnswerJourneyPhase) {
+        val token = AnswerJourneyObservation.trace?.intent(phase, value)
         lastIntent = Intent(value)
         lastClass = javaClass.name
-        if (ConversationNotificationIntents.receive(this, value)) answers++
+        if (ConversationNotificationIntents.receive(this, value)) {
+            answers++
+            AnswerJourneyObservation.trace?.consumed(token)
+        }
     }
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         active = this; creations++
-        receive(intent)
+        receive(intent, AnswerJourneyPhase.ACTIVITY_CREATED)
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent); receive(intent)
+        setIntent(intent); receive(intent, AnswerJourneyPhase.ACTIVITY_NEW_INTENT)
     }
-    override fun onResume() { super.onResume(); active = this; resumes++ }
+    override fun onResume() {
+        super.onResume(); active = this; resumes++
+        AnswerJourneyObservation.trace?.intent(AnswerJourneyPhase.ACTIVITY_RESUMED, intent)
+    }
     override fun onDestroy() { if (active === this) active = null; super.onDestroy() }
 }
 
