@@ -88,6 +88,21 @@ class MediaQualificationTraceTest {
         assertTrue(trace.all { it == '\n' || it.code in 32..126 })
     }
 
+    @Test fun receiverPollDetailsRejectPayloadsAndUnknownPhasesInTheTransportedTrace() {
+        val receiver = receiver().put("last", JSONObject().put("running", true).put("generation", 7)
+            .put("frames", "private frames").put("errorClass", "private exception message").put("pcm16", "private PCM"))
+            .put("polls", JSONArray().put(JSONObject().put("startedNs", "9007199254740993")
+                .put("endedNs", JSONObject.NULL).put("phase", "BODY").put("errorClass", "IOException"))
+                .put(JSONObject().put("phase", "private phase").put("errorClass", "private error")))
+        val trace = mediaQualificationTrace(receiver = receiver)
+        assertTrue(trace.contains("receiver.latestPoll="))
+        assertTrue(trace.contains("BODY"))
+        assertTrue(trace.contains("IOException"))
+        assertTrue(trace.contains("\"generation\":7"))
+        assertFalse(trace.contains("private"))
+        assertTrue(trace.all { it == '\n' || it.code in 32..126 })
+    }
+
     @Test fun fixtureScoreAndAcknowledgementRemainVisibleBeforeOversizedHistory() {
         val device = consumer().put("stages", JSONArray().apply {
             repeat(128) { put(JSONObject().put("stage", "WAIT").put("enteredNs", "10").put("exitedNs", "20").put("completed", true)) }

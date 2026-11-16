@@ -25,10 +25,6 @@ import java.util.concurrent.Executors
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.Response
-import java.io.IOException
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -37,8 +33,6 @@ import org.junit.Rule
 import org.junit.rules.RuleChain
 import org.junit.Test
 import org.junit.runner.RunWith
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 @RunWith(AndroidJUnit4::class)
 class MediaHookFeasibilityTest {
@@ -70,7 +64,10 @@ class MediaHookFeasibilityTest {
             var creations = 0
             val claimTrace = JSONObject().put("clock", "android.elapsedRealtimeNanos").put("claimDelayMillis", claimDelayMillis)
                 .put("grant", grant).put("muteBeforeAnswer", muteBeforeAnswer)
-            failureTrace.snapshot = { mediaQualificationTrace(claim = claimTrace) }
+            val receiverWait = MediaReceiverTrace(android.os.SystemClock::elapsedRealtimeNanos)
+            val mutedReceiverWait = MediaReceiverTrace(android.os.SystemClock::elapsedRealtimeNanos)
+            fun receiverSnapshot() = (if (receiverWait.snapshot().has("startedNs")) receiverWait else mutedReceiverWait).snapshot()
+            failureTrace.snapshot = { mediaQualificationTrace(receiver = receiverSnapshot(), claim = claimTrace) }
             var failure: Throwable? = null
             val permissionChecks = MediaPermissionObservation.microphoneChecks.get()
             NativeMediaRegistry.factories["livekit"] = {
@@ -147,7 +144,8 @@ class MediaHookFeasibilityTest {
                 assertTrue(retired.elapsedRealtimeNanos <= connect.elapsedRealtimeNanos)
                 if (muteBeforeAnswer) {
                     val beforeUnmute = withTimeout(5000) {
-                        val peer = awaitMediaReceiver({ true }, { fixture("/fixture/markers/$id") })
+                        val peer = awaitMediaReceiver({ true }, { phase -> fixture("/fixture/markers/$id", onPhase = phase) },
+                            trace = mutedReceiverWait)
                         assertTrue(peer.getBoolean("muted"))
                         var snapshot: JSONObject
                         do {
@@ -167,7 +165,9 @@ class MediaHookFeasibilityTest {
                 }
                 var first: Long? = null
                 val receiving = async {
-                    val receiver = awaitMediaReceiver({ true }, { fixture("/fixture/markers/$id") })
+                    val receiver = awaitMediaReceiver({ true }, { phase -> fixture("/fixture/markers/$id", onPhase = phase) },
+                        trace = receiverWait)
+                    claimTrace.put("receiverGeneration", receiver.getLong("generation"))
                     peerAudio(id, receiver.getLong("generation")) { if (first == null) first = it }
                 }
                 assertTrue(stage(NativeMediaStage.REMOTE_SUBSCRIBED, 2).elapsedRealtimeNanos >= connect.elapsedRealtimeNanos)
@@ -228,6 +228,15 @@ class MediaHookFeasibilityTest {
                     .put("reason", it.reason ?: JSONObject.NULL)
                     .put("permissionUnavailable", it.reason == "PUBLISH_PERMISSION_NOT_GRANTED") })
                 claimTrace.put("creations", creations).put("signals", timing).put("truncatedEvents", maxOf(0, signals.size - 64))
+                    .put("receiverWait", receiverSnapshot()).put("mutedReceiverWait", mutedReceiverWait.snapshot())
+                    .put("capture", JSONObject().put("captureRate", hooks.captureSampleRate)
+                        .put("injectedFrames", hooks.injectedFrames.get()).put("recordinglessCallbacks", hooks.recordinglessCallbacks.get())
+                        .put("generatedWords", hooks.generatedWords.get()))
+                retainMediaClaimCapture(context.filesDir.resolve("capture-trace.json"), error, id, claimDelayMillis) {
+                    hooks.trace.snapshot().put("sourceStart", hooks.sourceReadiness.snapshot())
+                        .put("receiverWait", receiverSnapshot()).put("capture", claimTrace.getJSONObject("capture"))
+                        .put("postApm", JSONObject().put("observed", false))
+                }
                 InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply { putString("claimFailureTimeline", timing.toString()) })
                 throw error
             } finally {
@@ -300,24 +309,12 @@ class MediaHookFeasibilityTest {
         }
     }
 
-    private suspend fun fixture(path: String, reset: Boolean = false, body: JSONObject? = null): JSONObject = suspendCancellableCoroutine { continuation ->
+    private suspend fun fixture(path: String, reset: Boolean = false, body: JSONObject? = null,
+        onPhase: (MediaReceiverHttpPhase) -> Unit = {}): JSONObject {
         val request = Request.Builder().url(settings.getString("baseUrl") + path)
             .header("Authorization", "Bearer " + settings.getString("authentication"))
         if (reset || body != null) request.post((body?.toString() ?: "{}").toRequestBody("application/json".toMediaType()))
-        val call = client.newCall(request.build())
-        continuation.invokeOnCancellation { call.cancel() }
-        call.enqueue(object : Callback {
-            override fun onFailure(call: Call, error: IOException) {
-                if (continuation.isActive) continuation.resumeWithException(error)
-            }
-            override fun onResponse(call: Call, response: Response) {
-                val result = runCatching { response.use {
-                    check(it.isSuccessful) { "Media fixture request failed" }
-                    JSONObject(it.body!!.string())
-                } }
-                if (continuation.isActive) result.fold(continuation::resume, continuation::resumeWithException)
-            }
-        })
+        return readMediaFixture(client, request.build(), onPhase)
     }
 
     private fun healthy(peer: JSONObject, generation: Long) {
@@ -486,10 +483,8 @@ class MediaHookFeasibilityTest {
             val evidence = JSONObject().put("captureRate", rate).put("profile", "tones-v2").put("pipeline", "unobserved")
             val progress = MediaSourceProgress()
             var roomCleanupCompleted = false
-            val receiverWait = JSONObject().put("clock", "android.elapsedRealtimeNanos").put("budgetMs", 10_000)
-            var receiverReads = 0
-            fun receiverTime(key: String) = receiverWait.put(key, android.os.SystemClock.elapsedRealtimeNanos().toString())
-            fun receiverSnapshot() = receiverWait.put("reads", receiverReads).put("signals", org.json.JSONArray(
+            val receiverWait = MediaReceiverTrace(android.os.SystemClock::elapsedRealtimeNanos)
+            fun receiverSnapshot() = receiverWait.snapshot().put("signals", org.json.JSONArray(
                 signals.filter { it.stage in setOf(NativeMediaStage.MEDIA_CONNECT_STARTED,
                     NativeMediaStage.MEDIA_CONNECT_COMPLETED, NativeMediaStage.MICROPHONE_PUBLISH_STARTED,
                     NativeMediaStage.MICROPHONE_PUBLISHED, NativeMediaStage.PREJOINED,
@@ -547,17 +542,8 @@ class MediaHookFeasibilityTest {
                 step = "muted answer"
                 engine.join(id); stage(NativeMediaStage.CONNECTED)
                 step = "receiver subscription"
-                receiverTime("startedNs")
                 awaitMediaReceiver({ true },
-                    {
-                        receiverTime("lastReadStartedNs")
-                        receiverReads++
-                        fixture("/fixture/markers/$id").also {
-                            receiverTime("lastReadCompletedNs")
-                            receiverWait.put("lastRunning", it.opt("running"))
-                        }
-                    })
-                receiverTime("completedNs")
+                    { phase -> fixture("/fixture/markers/$id", onPhase = phase) }, trace = receiverWait)
                 step = "muted publication"
                 assertTrue(hooks.directArrayVerified)
                 val publication = hooks.publicationIdentity()
@@ -718,8 +704,7 @@ class MediaHookFeasibilityTest {
                 evidence.put("sourceStart", hooks.sourceReadiness.snapshot())
                 rethrowMediaJourneyFailure(context.filesDir.resolve("media-hook-results.json"), evidence, error,
                     "realRecordinglessCapturePublicationGateDecodedAndPostMuteOutput", step, android.os.Process.myPid(),
-                    forcedFailure, progress, receiverWait.put("reads", receiverReads)
-                        .put("failureObservedNs", android.os.SystemClock.elapsedRealtimeNanos().toString())) {
+                    forcedFailure, progress, receiverSnapshot()) {
                     if (step == "answered output") runCatching {
                         evidence.put("outputServerTrace", fixture("/fixture/output/$id"))
                     }.onFailure { evidence.put("outputServerTraceReadError", it.javaClass.simpleName) }
@@ -769,8 +754,8 @@ class MediaHookFeasibilityTest {
                             muteDiagnosticError?.javaClass?.simpleName ?: JSONObject.NULL)).toString())
                     }
                     publications.write(MediaEvidencePublications.File.CAPTURE) {
-                        writeMediaEvidence(context.filesDir.resolve("capture-trace.json"), hooks.trace.snapshot()
-                            .put("postApm", hooks.postApm.finish()).toString())
+                        writeMediaCaptureEvidence(context.filesDir.resolve("capture-trace.json"), hooks.trace.snapshot()
+                            .put("postApm", hooks.postApm.finish()))
                     }
                     InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
                         putString("captureTraceFile", "capture-trace.json")

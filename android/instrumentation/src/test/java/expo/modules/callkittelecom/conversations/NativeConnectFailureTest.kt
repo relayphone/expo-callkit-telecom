@@ -5,6 +5,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NativeConnectFailureTest {
+    @Test fun joinFailureFollowedByNormalConnectReturnStillReportsAndDisconnectsOnce() {
+        val events = mutableListOf<Any>()
+        val failure = NativeConnectFailure({ events += it }, { events += "disconnected" })
+        assertTrue(failure.deferJoinFailure())
+        failure.connected()
+        assertEquals(listOf(NativePrewarmFailure(NativePrewarmStage.CONNECT, "IllegalStateException"), "disconnected"), events)
+        assertFalse(failure.deferJoinFailure())
+        failure.connected()
+        failure.failed(NativePrewarmStage.CONNECT, IllegalStateException())
+        assertEquals(2, events.size)
+    }
+
     @Test fun joinFailureIsClassifiedBeforeDisconnectionAndOnlyWhileConnecting() {
         val events = mutableListOf<Any>()
         val failure = NativeConnectFailure({ events += it }, { events += "disconnected" })

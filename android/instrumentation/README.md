@@ -43,6 +43,16 @@ remain separate in the fixture's `python.time.monotonic_ns` clock. A zero-client
 prejoin failure does not imply that Answer or publication occurred. The fallback
 adds no network request or wait, and preserves the existing count assertions.
 
+Receiver waits keep the latest 32 poll start/end times, the reached HTTP phase,
+and the last typed running state, generation, error class and counters. The
+shared 10-second budget and receiver assertions are unchanged. Requests, response
+payloads and exception messages are excluded. Claim failures also retain their
+own capture counters in JUnit and callback traces in `capture-trace.json`'s
+`claimFailures`, labelled with the fixture claim ID and configured claim delay.
+Each of the latest four failed claims retains its first 16 and last 240 callbacks,
+with a dropped count; later journey writes preserve those entries. Claim capture
+does not perform the separate post-APM qualification.
+
 The muted-source journey first requires a valid 480-frame recordingless buffer
 within 1500 ms of microphone publication, then runs its existing 100 ms progress
 and pacing assertions. Evidence records publication, pump-start and first-buffer
