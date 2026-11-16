@@ -76,11 +76,15 @@ The CLI derives durations only within that device clock. Functional CI runs this
 after the standard journeys and retains the new journal under `coldStart` in
 `push-fault-events.json`, preserving the earlier process's fault events.
 
-CI also runs the cold journey separately on API 34, 35 and 36. After assembling
-the Debug host, repeat that check on a disposable emulator with
+CI runs the cold journey on API 35. Local qualification covers API 34, 35 and 36.
+After assembling the Debug host, run it on a disposable emulator with
 `bash tools/run-android-cold-push.sh emulator-5554`. It installs and precompiles
 the APK, then retains the journal, final state and logcat under
 `android/instrumentation/build/cold-push-results`.
+
+After the native cleanup stage, the host polls until Telecom has removed the
+call and the call notification is gone. This check has a five-second cap within
+the existing command deadline. Disconnected calls still count until removed.
 
 This is a cold-start intake/bootstrap qualification with media disabled and a
 native handler that proceeds. After the posted Answer settles as `Performed`,
