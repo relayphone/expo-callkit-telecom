@@ -12,7 +12,8 @@ import expo.modules.core.interfaces.ReactActivityLifecycleListener
 class ExpoCallKitTelecomPackage : Package {
     override fun createReactActivityLifecycleListeners(activityContext: Context?): List<ReactActivityLifecycleListener> =
         listOf(object : ReactActivityLifecycleListener {
-            private var context: Context? = activityContext?.applicationContext
+            // Expo constructs this listener before Android attaches the Activity's base context.
+            private var context: Context? = null
             override fun onCreate(activity: Activity, savedInstanceState: Bundle?) {
                 context = activity.applicationContext
                 ConversationNotificationIntents.receive(activity, activity.intent)

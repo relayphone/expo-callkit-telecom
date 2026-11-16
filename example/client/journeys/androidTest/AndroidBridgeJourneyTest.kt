@@ -2,6 +2,7 @@ package expo.modules.callkittelecom.conversations
 
 import android.app.Notification
 import android.app.NotificationManager
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -10,6 +11,7 @@ import android.os.Process
 import androidx.core.telecom.CallControlScope
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import expo.modules.callkittelecom.ExpoCallKitTelecomPackage
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.*
@@ -70,6 +72,12 @@ class AndroidBridgeJourneyTest {
     }
 
     @Test fun notificationIdentityUsesDecodedUriComponents() {
+        instrumentation.runOnMainSync {
+            val activity = Activity()
+            assertNull(activity.baseContext)
+            val listener = ExpoCallKitTelecomPackage().createReactActivityLifecycleListeners(activity).single()
+            assertFalse(listener.onNewIntent(Intent()))
+        }
         val id = "raw:/?#+"
         for (uri in listOf(Uri.fromParts("sip", id, null),
             Uri.fromParts("voip", "${context.packageName}/$id", null))) {

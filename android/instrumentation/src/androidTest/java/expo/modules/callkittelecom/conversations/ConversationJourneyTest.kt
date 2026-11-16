@@ -85,6 +85,9 @@ class ConversationJourneyTest {
                 engine.end(id)
                 assertNull(status(id))
                 seen += "incoming-ended"
+                // Logical end precedes native removal; finish this scenario before starting another.
+                withTimeout(5000) { while (engine.jobs.coroutineContext[Job]!!.children.count { it.isActive } > baselineJobs) delay(10) }
+                awaitTelecomRemoval()
                 val outgoing = engine.start(mapOf("id" to "outgoing-${System.nanoTime()}", "to" to mapOf("id" to "callee"), "video" to false))
                 expect(outgoing, "dialing")
                 engine.report(outgoing, mapOf("type" to "connecting"))
