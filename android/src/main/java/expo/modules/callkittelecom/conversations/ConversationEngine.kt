@@ -968,8 +968,13 @@ class ConversationEngine(val context: Context) {
                 current.state["connectedAt"] = current.state["connectedAt"] ?: Instant.now().toString()
             }
             "updated" -> {
-                report["video"]?.let { require(it is Boolean) { "invalid_arguments" }; setVideo(id, it, VideoChangeSource.SERVER) }
-                report["members"]?.let { current.state["members"] = it }
+                applyConversationUpdate(updateMembers = {
+                    report["members"]?.let { current.state["members"] = it; publish() }
+                }, requestedVideo = {
+                    report["video"]?.let { require(it is Boolean) { "invalid_arguments" }; it }
+                }, currentVideo = { current.state["isVideo"] == true }) {
+                    setVideo(id, it, VideoChangeSource.SERVER)
+                }
             }
             "ended" -> { finish(id, report["reason"] as? String ?: error("invalid_arguments"), EndedFailure.SERVER); return }
             else -> error("invalid_arguments")

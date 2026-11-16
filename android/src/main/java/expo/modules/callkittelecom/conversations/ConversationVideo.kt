@@ -15,6 +15,14 @@ internal data class ConversationTelecomRegistration(val backwardsCompatSdkLevel:
 
 internal enum class VideoChangeSource(val wire: String) { APP("app"), SERVER("server"), SYSTEM("system") }
 
+/** Publish participant changes independently of a report's optional platform video request. */
+internal suspend fun applyConversationUpdate(updateMembers: () -> Unit, requestedVideo: () -> Boolean?,
+    currentVideo: () -> Boolean, changeVideo: suspend (Boolean) -> Unit) {
+    updateMembers()
+    val enabled = requestedVideo() ?: return
+    if (enabled != currentVideo()) changeVideo(enabled)
+}
+
 /** Main-confined state; one Core collector observes while app/server mutations share a mutex. */
 internal class ConversationVideo(
     initialVideo: Boolean,

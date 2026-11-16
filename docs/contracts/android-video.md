@@ -27,6 +27,8 @@ the requested value. Snapshots and CallStyle notifications then follow `isVideo`
 Same-value requests resolve without a new event. Unsupported calls reject with
 `unsupported`, missing IDs with `unknown_conversation`, and retained or recently
 ended IDs with `invalid_arguments` (the most recent 128 ends are remembered).
+Updated reports publish member changes first and ignore unchanged video even
+when unsupported; a changed video failure still rejects, with members retained.
 
 `videoChanged` carries `conversationId`, `isVideo`, and `source`: `app` for a local
 request, `server` for an updated report, and `system` for an unmatched platform

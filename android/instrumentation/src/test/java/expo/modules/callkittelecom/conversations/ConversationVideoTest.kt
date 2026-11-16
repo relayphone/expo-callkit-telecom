@@ -108,6 +108,44 @@ class ConversationVideoTest {
         assertTrue(f.events.isEmpty())
     }
 
+    @Test fun updatedMembersWithUnchangedVideoSucceedEvenWhenVideoIsUnsupported() = runBlocking {
+        val f = Fixture()
+        f.supported = false
+        var members = listOf("before")
+        var published = members
+        var requests = 0
+        applyConversationUpdate(updateMembers = { members = listOf("after"); published = members.toList() },
+            requestedVideo = { false }, currentVideo = { f.video.isVideo }) { enabled ->
+            requests++
+            f.set(enabled, VideoChangeSource.SERVER)
+        }
+        assertEquals(listOf("after"), members)
+        assertEquals(members, published)
+        assertEquals(0, requests)
+        assertTrue(f.events.isEmpty())
+        assertEquals("unsupported", runCatching { f.set(false) }.exceptionOrNull()?.message)
+    }
+
+    @Test fun updatedMembersArePublishedBeforeAChangedVideoWaitTimesOut() = runBlocking {
+        val f = Fixture()
+        var members = listOf("before")
+        var published = members
+        var requests = 0
+        val failure = runCatching {
+            applyConversationUpdate(updateMembers = { members = listOf("after"); published = members.toList() },
+                requestedVideo = { true }, currentVideo = { f.video.isVideo }) { enabled ->
+                assertEquals(listOf("after"), published)
+                f.video.set(enabled, VideoChangeSource.SERVER, { requests++ }, {})
+            }
+        }.exceptionOrNull()
+        assertTrue(failure is TimeoutCancellationException)
+        assertEquals(listOf("after"), members)
+        assertEquals(members, published)
+        assertEquals(1, requests)
+        assertFalse(f.video.isVideo)
+        assertTrue(f.events.isEmpty())
+    }
+
     @Test fun endingWakesPendingCommandWithoutPublishingSuccess() = runBlocking {
         val f = Fixture()
         val result = async(start = CoroutineStart.UNDISPATCHED) {
