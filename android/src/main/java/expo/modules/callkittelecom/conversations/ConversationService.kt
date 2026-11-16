@@ -55,6 +55,10 @@ class ConversationService : Service() {
         private val lastAlertedCards = mutableMapOf<String, NotificationCard>()
         private var instance: ConversationService? = null
         private var foregroundStartPending = false
+        private fun notify(manager: NotificationManager, id: Int, notification: Notification): Boolean =
+            postNotification({ manager.notify(id, notification) }) { refusal ->
+                android.util.Log.w("ExpoCallKitTelecom", "Notification post refused: $refusal")
+            }
         fun incomingChannelId(context: Context): String {
             val metadata = context.packageManager.getApplicationInfo(context.packageName, android.content.pm.PackageManager.GET_META_DATA).metaData
             val ringtone = metadata?.getString("ExpoCallKitTelecomDefaultRingtone") ?: "default"
@@ -67,7 +71,7 @@ class ConversationService : Service() {
         internal fun recordFiltered(context: Context, state: Map<String, Any?>) {
             val manager = context.getSystemService(NotificationManager::class.java)
             val id = nextId++
-            manager.notify(id, notification(context, card(context, state, null)))
+            notify(manager, id, notification(context, card(context, state, null)))
             manager.cancel(id)
             ConversationNotificationIntents.retire(state["id"] as String)
         }
@@ -95,7 +99,7 @@ class ConversationService : Service() {
                     foreground = notification(context, refreshed)
                 } else waitingCards[id] = checkNotNull(waiting).copy(card = refreshed)
                 if (refreshed.phase == CallPhase.RINGING) requestRingingPost(context, id, allowCreate = false)
-                else manager.notify(checkNotNull(notificationId), notification(context, refreshed).apply {
+                else notify(manager, checkNotNull(notificationId), notification(context, refreshed, callStyle = primary).apply {
                     flags = flags or (previous.notification.flags and Notification.FLAG_FOREGROUND_SERVICE)
                 })
             }
@@ -125,7 +129,7 @@ class ConversationService : Service() {
                             flags = flags or ((previous?.notification?.flags ?: 0) and Notification.FLAG_FOREGROUND_SERVICE)
                             extras.putLong(RINGING_POST_SEQUENCE, sequence)
                         }
-                        application.getSystemService(NotificationManager::class.java).notify(notificationId, update)
+                        if (!notify(application.getSystemService(NotificationManager::class.java), notificationId, update)) return@launch
                         observeRingingPost(application.getSystemService(NotificationManager::class.java), notificationId, sequence)
                         lastAlertedCards[id] = NotificationCard(notificationId, card)
                         if (primary != null) foreground = update
@@ -199,7 +203,7 @@ class ConversationService : Service() {
                     val notificationId = endingIds[id] ?: previous?.notificationId ?: nextId++
                     waitingCards[id] = NotificationCard(notificationId, content)
                     if (content.phase == CallPhase.RINGING) requestRingingPost(context, id, allowCreate = true)
-                    else manager.notify(notificationId, notification(context, content))
+                    else notify(manager, notificationId, notification(context, content, callStyle = false))
                 }
             }
             // Snapshot-only changes still reach the customizer, but must not exhaust
@@ -272,7 +276,7 @@ class ConversationService : Service() {
                     }
                 }, isVideo = state["isVideo"] == true)
         }
-        private fun notification(context: Context, card: Card): Notification {
+        private fun notification(context: Context, card: Card, callStyle: Boolean = true): Notification {
             val id = card.id
             val content = card.content
             val ringing = card.phase == CallPhase.RINGING
@@ -311,9 +315,11 @@ class ConversationService : Service() {
                 // Compat CallStyle reads extras directly when rendering on API 26–30.
                 builder.addExtras(Bundle().apply { putCharSequence(NotificationCompat.EXTRA_TEXT, content.heldSummary) })
             }
-            content.extraActions.forEach { builder.addAction(it) }
-            builder.setStyle((if (ringing) NotificationCompat.CallStyle.forIncomingCall(person, action("decline"), ConversationNotificationIntents.activity(context, id, answer = true))
+            if (callStyle) builder.setStyle((if (ringing) NotificationCompat.CallStyle.forIncomingCall(person, action("decline"), ConversationNotificationIntents.activity(context, id, answer = true))
                 else NotificationCompat.CallStyle.forOngoingCall(person, action("end"))).setIsVideo(card.isVideo))
+            else builder.setContentTitle(content.title)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Hang Up", action("end"))
+            content.extraActions.forEach { builder.addAction(it) }
             return builder.build().apply {
                 if (ringing) flags = flags or Notification.FLAG_INSISTENT
             }
