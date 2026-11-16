@@ -203,7 +203,13 @@ export async function runColdPushJourney(serial: string, input: Delivery, run: E
         stages = journal.events.map(event => event.kind === "coldStart" ? event.stage : event.kind);
         if (stages.includes("cleaned")) {
           coldPushTimings(receipt, request);
-          const state = collectAndroidEmulatorState(serial, app, bounded);
+          commandDeadline = Math.min(commandDeadline, timing.now() + 5000);
+          let state = collectAndroidEmulatorState(serial, app, bounded);
+          while (state.calls.length !== 0 || state.notifications.callPresent) {
+            await timing.pause(100);
+            if (timing.now() >= commandDeadline) break;
+            state = collectAndroidEmulatorState(serial, app, bounded);
+          }
           assert.equal(state.calls.length, 0, "Cold push left a Telecom call");
           assert.equal(state.notifications.callPresent, false, "Cold push left a call notification");
           passed = true;

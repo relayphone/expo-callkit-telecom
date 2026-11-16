@@ -168,6 +168,34 @@ test("a process surviving force-stop and a leftover Telecom call cannot qualify"
   }
 });
 
+test("a disconnected Telecom record must disappear before cleanup can qualify", async () => {
+  const f = coldDevice();
+  let reads = 0;
+  await runColdPushJourney("emulator-5554", coldRequest, args => {
+    const value = f.run(args);
+    if (args.at(-1) === "telecom" && ++reads <= 2)
+      return "mCalls:\n  [Call id=TC@1, state=DISCONNECTED, other]\nnext:\n";
+    return value;
+  }, f.timing);
+  assert.equal(reads, 3);
+  assert.equal(f.commands.filter(args => args.includes("force-stop")).length, 1);
+});
+
+test("permanent disconnected calls and late empty evidence stay fatal", async () => {
+  for (const fault of ["disconnected", "late"] as const) {
+    const f = coldDevice();
+    await assert.rejects(runColdPushJourney("emulator-5554", coldRequest, args => {
+      const value = f.run(args);
+      if (args.at(-1) === "telecom") {
+        if (fault === "disconnected") return "mCalls:\n  [Call id=TC@1, state=DISCONNECTED, other]\nnext:\n";
+        void f.timing.pause(5001);
+      }
+      return value;
+    }, f.timing), fault === "disconnected" ? /Cold push left a Telecom call/ : /Cold push command budget expired/);
+    assert.equal(f.commands.filter(args => args.includes("force-stop")).length, 2);
+  }
+});
+
 test("stalled adb reads share a deadline and reserve bounded force-stop cleanup", async () => {
   const f = coldDevice();
   const timeouts: number[] = [];
