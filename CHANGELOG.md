@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.15 (2026-11-16)
+
+### Features
+
+* **android:** support mid-call video changes through `setConversationVideo`
+  and the `updated` report's `video` field. Emit `videoChanged` with source
+  `app`, `server` or `system`, with system changes best-effort per API level.
+  CallStyle follows `isVideo`, the receiver is restored after an upgrade's
+  automatic speaker move when no later route choice intervenes, and
+  `capabilities.video` follows the registration path. See the
+  [Android video contract](docs/contracts/android-video.md)
+  ([#163](https://github.com/relayphone/expo-callkit-telecom/pull/163)).
+
+### Dependencies
+
+* Pin `@relayphone/ios-voip-sdk` 0.8.0, including iOS mid-call video signalling
+  ([#163](https://github.com/relayphone/expo-callkit-telecom/pull/163)).
+
+### Breaking changes
+
+* **native Swift:** SDK 0.8.0 adds `CallEvent.videoChanged`; exhaustive switches
+  over `CallEvent` must handle the new case.
+
 ## 2.0.0-alpha.14 (2026-11-16)
 
 ### Fixes
