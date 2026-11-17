@@ -633,11 +633,36 @@ ConversationMedia.provide(context, conversationId, media)
 
 `media` has the same LiveKit shape as an incoming push: `provider`, `url`, `room`,
 `identity`, `token` and `expiresAt` (Unix seconds). Outgoing calls join natively,
-including credentials supplied while placement is still pending. Capture and
-audible output wait for Core-Telecom activation; the existing connected path
-publishes `connected` and emits `CONNECTED` after native media activation.
+including credentials supplied while placement is still pending. Once admitted,
+a dialing outgoing call can use communication audio for ringback and early media.
+Providing media or finishing media activation leaves its SDK status `connecting`
+and Telecom state `DIALING`. When the remote party answers, the app must call
+`reportConversation(id, { type: "connected" })` (native: `engine.report(id,
+mapOf("type" to "connected"))`). Only that report sets Telecom `ACTIVE`, records
+`connectedAt`, and emits the call's `CONNECTED` signal. App hold/resume is available
+after this connected report.
+For outgoing calls, `MEDIA_ACTIVATED` records native media readiness independently
+of that call report.
 Ringing incoming calls without a prewarmed session keep the credentials privately
 until answer. An answer handler's `Proceed.media`, when supplied, takes precedence.
+
+### Show an outgoing call while the server dials
+
+Call `startConversation` (native: `engine.start`) at the tap and accept placement
+promptly. Do not block its placement handler on the server dial: Telecom admission
+and the dialing notification wait for that handler to finish. Start the server
+dial after accepting local placement, supply media when the dial returns, and
+report `connected` when the server says the remote party answered. Report an
+ended reason if server placement fails or nobody answers.
+
+There is no separate deadline from `start` to media provision. The existing
+outgoing-call timeout defaults to **60 seconds from Telecom admission** until the
+app reports `connected`; configure it with `outgoingCallTimeout`. Android also
+requires new transactional calls to become active within its **60-second**
+[startup limit](https://developer.android.com/reference/android/telecom/CallControl).
+The placement handler has a default effective **9-second** deadline, before
+admission. Native media's **8-second preparation** and **5-second Answer** guards
+start when media is supplied, rather than when `start` is called.
 
 LiveKit signaling URLs require `wss://` in release apps. Debuggable apps also
 accept `ws://` for local development; the app's network security policy still applies.

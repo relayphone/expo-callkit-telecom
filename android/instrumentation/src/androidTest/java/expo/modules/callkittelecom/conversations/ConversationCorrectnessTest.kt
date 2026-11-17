@@ -34,6 +34,7 @@ class ConversationCorrectnessTest {
         var disconnects = 0
         var echoDisconnect = false
         val causes = mutableListOf<Int>()
+        val causeReasons = mutableListOf<String?>()
         var throwsRemaining = 0
         var refusal: Int? = null
         var admitAfterCancellation = false
@@ -62,6 +63,7 @@ class ConversationCorrectnessTest {
                     override suspend fun disconnect(cause: DisconnectCause): CallControlResult {
                         disconnects++
                         causes += cause.code
+                        causeReasons += cause.reason
                         disconnectEntered.complete(Unit)
                         if (echoDisconnect) callbacks.disconnect(cause)
                         disconnectGate?.await()
@@ -147,6 +149,24 @@ class ConversationCorrectnessTest {
             val fixture = Fixture()
             try { withTimeout(10_000) { fixture.body() } } finally { withContext(NonCancellable) { fixture.close() } }
         }
+    }
+
+    @Test fun unansweredOutgoingUsesRemoteAndKeepsTheReason() = fixture {
+        ready()
+        engine.report(id, mapOf("type" to "ended", "reason" to "unanswered"))
+        ended()
+        assertEquals(listOf(DisconnectCause.REMOTE), core.causes)
+        assertEquals(listOf("unanswered"), core.causeReasons)
+        assertEquals("unanswered", ended?.get("reason"))
+    }
+
+    @Test fun unansweredIncomingStillUsesMissedAndKeepsTheReason() = fixture {
+        incoming()
+        engine.report(id, mapOf("type" to "ended", "reason" to "unanswered"))
+        ended()
+        assertEquals(listOf(DisconnectCause.MISSED), core.causes)
+        assertEquals(listOf("unanswered"), core.causeReasons)
+        assertEquals("unanswered", ended?.get("reason"))
     }
 
     @Test fun appMuteBeforeAdmissionSurvivesCoreBaselineAndLaterSystemMuteApplies() = fixture {

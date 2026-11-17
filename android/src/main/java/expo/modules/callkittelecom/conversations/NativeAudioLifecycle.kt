@@ -7,7 +7,7 @@ internal enum class NativeAudioEvent { ACTIVATED, DEACTIVATED, ACTIVATION_MISSIN
 
 /** Main-thread audio ownership; handler settlement and transport readiness do not activate audio. */
 internal class NativeAudioLifecycle(
-    private val isCurrentActive: () -> Boolean,
+    private val isAudioEligible: () -> Boolean,
     private val mode: () -> Int,
     private val emit: (NativeAudioEvent) -> Unit,
 ) {
@@ -17,14 +17,14 @@ internal class NativeAudioLifecycle(
 
     /** Used only after Core-Telecom successfully activates an app-managed call. */
     fun coreActivated() {
-        check(!closed && isCurrentActive())
+        check(!closed && isAudioEligible())
         activate()
     }
 
     /** Native capture waits for authority; endpoint observations are not authorization. */
     suspend fun nativeActivated() = withContext(Dispatchers.Main.immediate) {
         val expected = generation
-        fun current() = !closed && generation == expected && isCurrentActive()
+        fun current() = !closed && generation == expected && isAudioEligible()
         NativeAudioAuthority.await(::current, mode) {
             if (current()) emit(NativeAudioEvent.ACTIVATION_MISSING)
         }

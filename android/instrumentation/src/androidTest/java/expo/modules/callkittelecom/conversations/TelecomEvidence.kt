@@ -7,6 +7,16 @@ import kotlinx.coroutines.withContext
 
 /** API35 CallsManager dump section; retain only counts/states, never the raw dump. */
 internal object TelecomEvidence {
+    suspend fun outgoingPendingState(): String {
+        val call = calls().single()
+        val state = checkNotNull(Regex("state=([A-Z_]+)").find(call)?.groupValues?.get(1))
+        // API 35 transactional admission reports CONNECTING; Android 16 reports DIALING.
+        check(state == "DIALING" || android.os.Build.VERSION.SDK_INT == 35 && state == "CONNECTING") {
+            "Outgoing call must remain pending before the app reports connected: $state"
+        }
+        return state
+    }
+
     suspend fun calls(): List<String> = withContext(Dispatchers.IO) {
         val command = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("dumpsys -t 5 telecom")
         val lines = ParcelFileDescriptor.AutoCloseInputStream(command).bufferedReader().use { it.readLines() }

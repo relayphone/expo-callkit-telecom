@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Breaking (android)
+
+* Outgoing calls now become active only when the app reports `connected`.
+  Providing media or connecting to the media server leaves Telecom dialing and
+  the SDK connecting until that report.
+
+### Fixes
+
+* **android:** map unanswered outgoing calls to `DisconnectCause.REMOTE`,
+  preserving the `unanswered` reason. Unanswered incoming calls remain `MISSED`.
+
 ## 2.0.0-alpha.17 (2026-11-17)
 
 ### Fixes

@@ -120,7 +120,7 @@ class ConversationEngine(val context: Context) {
         var job: Job? = null
         var collectors: Job? = null
         var active = false
-        val connection = NativeConnectionStatus()
+        val connection = NativeConnectionStatus(reservation.direction)
         var admitted = false
         var visible = false
         var endpoint: CallEndpointCompat? = null
@@ -505,12 +505,12 @@ class ConversationEngine(val context: Context) {
             emit("conversationEvent", mapOf("type" to "videoChanged", "payload" to mapOf(
                 "conversationId" to id, "isVideo" to enabled, "source" to source.wire)))
         }
-        call.audio = NativeAudioLifecycle({ live(call) && call.active }, { audio.mode }) { event ->
+        call.audio = NativeAudioLifecycle({ canUseAudio(call) }, { audio.mode }) { event ->
             val type = when (event) { NativeAudioEvent.ACTIVATED -> "audioActivated"
                 NativeAudioEvent.DEACTIVATED -> "audioDeactivated"; NativeAudioEvent.ACTIVATION_MISSING -> "audioActivationMissing" }
             if (event == NativeAudioEvent.ACTIVATED) {
                 signal(call, NativeMediaStage.AUDIO_MODE_READY)
-                signal(call, NativeMediaStage.AUDIO_AUTHORIZED, mapOf("audioMode" to audio.mode.toLong(), "coreActive" to 1L, "endpointObserved" to if (call.endpoint != null) 1L else 0L))
+                signal(call, NativeMediaStage.AUDIO_AUTHORIZED, mapOf("audioMode" to audio.mode.toLong(), "coreActive" to if (call.active) 1L else 0L, "endpointObserved" to if (call.endpoint != null) 1L else 0L))
             }
             if (event == NativeAudioEvent.ACTIVATION_MISSING) signal(call, NativeMediaStage.AUDIO_WAIT_EXPIRED, mapOf("audioMode" to audio.mode.toLong(), "hasEndpoint" to if (call.endpoint != null) 1L else 0L, "active" to if (call.active) 1L else 0L))
             emit("conversationEvent", mapOf("type" to type, "payload" to mapOf("conversationId" to id)))
@@ -645,11 +645,8 @@ class ConversationEngine(val context: Context) {
         val owner = checkNotNull(current.media)
         val work = jobs.launch(start = CoroutineStart.LAZY) {
             try {
-                val controls = current.ready.await()
+                current.ready.await()
                 if (!live(current) || current.state["status"] == "held") return@launch
-                if (!current.active) checked(controls.setActive())
-                if (!live(current) || current.state["status"] == "held") return@launch
-                current.active = true
                 if (current.state["connectedAt"] == null) current.state["status"] = "connecting"
                 signal(current, NativeMediaStage.AUDIO_WAIT_STARTED)
                 owner.answered()
@@ -691,10 +688,15 @@ class ConversationEngine(val context: Context) {
                 if (answerMedia == null) payload else payload + ("media" to answerMedia),
                 policy, jobs, failed = { disconnected(NativeMediaDisconnection.FAILURE) }, connected = {
                 if (calls[id] === call) {
-                    call.timeout?.cancel()
-                    call.state["connectedAt"] = call.state["connectedAt"] ?: Instant.now().toString()
-                    if (call.state["status"] != "held") markConnected(call)
+                    if (call.connection.connectsOnMedia) {
+                        call.timeout?.cancel()
+                        call.state["connectedAt"] = call.state["connectedAt"] ?: Instant.now().toString()
+                        if (call.state["status"] != "held") markConnected(call)
+                    } else if (call.state["connectedAt"] == null && call.state["status"] != "held") {
+                        call.state["status"] = "connecting"
+                    }
                     publish()
+                    if (!call.connection.connectsOnMedia && live(call)) signal(call, NativeMediaStage.MEDIA_ACTIVATED)
                 }
             }, disconnected = ::disconnected, connectionChanged = { state ->
                 if (live(call) && call.connection.observe(state) && call.state["connectedAt"] != null) {
@@ -793,11 +795,11 @@ class ConversationEngine(val context: Context) {
                         refreshRoutes()
                     }
                     is NativePerformedAction.Mute -> {
-                        if (action.muted) current.media?.mute() else if (current.active) current.media?.unmute() else current.media?.clearMute()
+                        if (action.muted) current.media?.mute() else if (canUseAudio(current)) current.media?.unmute() else current.media?.clearMute()
                         requireLive(current)
                         if (!latest()) return@performWhile
-                        if (current.active && origin == NativeActionOrigin.APP) audio.isMicrophoneMute = action.muted
-                        if (current.active && origin == NativeActionOrigin.APP)
+                        if (canUseAudio(current) && origin == NativeActionOrigin.APP) audio.isMicrophoneMute = action.muted
+                        if (canUseAudio(current) && origin == NativeActionOrigin.APP)
                             observeControl(id, action, origin, NativeControlPoint.PLATFORM_ACKNOWLEDGED)
                         current.state["isMuted"] = action.muted
                     }
@@ -841,7 +843,7 @@ class ConversationEngine(val context: Context) {
         val status = current.connection.connected(held = false)
         if (current.state["status"] != status) {
             current.state["status"] = status
-            signal(current, NativeMediaStage.CONNECTED)
+            if (status != "connecting") signal(current, NativeMediaStage.CONNECTED)
         }
     }
     @Suppress("UNCHECKED_CAST")
@@ -902,6 +904,9 @@ class ConversationEngine(val context: Context) {
         requireLive(current)
         current.capabilities.requireHold()
         if ((current.state["status"] == "held") == held && current.receipts.keys.none { it is NativePerformedAction.Hold }) return
+        // Core cannot resume a held outgoing call back to DIALING.
+        if (origin == NativeActionOrigin.APP)
+            check(current.reservation.direction != NativeCallDirection.OUTGOING || current.state["connectedAt"] != null) { "invalid_arguments" }
         native(id, NativePerformedAction.Hold(held), origin,
             if (origin == NativeActionOrigin.APP) suspend { checked(if (held) control(id).setInactive() else control(id).setActive()) } else null)
     }
@@ -963,7 +968,15 @@ class ConversationEngine(val context: Context) {
             "connecting" -> if (current.state["status"] in listOf("dialing", "connecting")) current.state["status"] = "connecting"
             "connected" -> {
                 require(current.state["status"] != "ringing") { "invalid_arguments" }
-                if (current.state["status"] != "held") { if (!current.active) checked(control(id).setActive()); requireLive(current); current.active = true; if (current.media == null) current.audio.coreActivated(); markConnected(current) }
+                current.connection.reportConnected {
+                    if (current.state["status"] != "held") {
+                        if (!current.active) checked(control(id).setActive())
+                        requireLive(current)
+                        current.active = true
+                        if (current.media == null) current.audio.coreActivated()
+                    }
+                }
+                if (current.state["status"] != "held") markConnected(current)
                 current.timeout?.cancel()
                 current.state["connectedAt"] = current.state["connectedAt"] ?: Instant.now().toString()
             }
@@ -1025,7 +1038,7 @@ class ConversationEngine(val context: Context) {
             if (intent != null) current.failure = EndedFailure.SERVER.takeIf { endedReason == "failed" }
             val cause = intent?.payload?.disconnectCause() ?: DisconnectCause(when (reason) {
                 "local", "failed" -> DisconnectCause.LOCAL
-                "unanswered" -> DisconnectCause.MISSED
+                "unanswered" -> unansweredDisconnectCode(current.reservation.direction)
                 "answeredElsewhere" -> if (android.os.Build.VERSION.SDK_INT >= 34) DisconnectCause.REMOTE else DisconnectCause.ANSWERED_ELSEWHERE
                 else -> DisconnectCause.REMOTE
             }, reason)
@@ -1157,10 +1170,13 @@ class ConversationEngine(val context: Context) {
         }
         if (publishNow) publish()
     }
+    private fun canUseAudio(call: Call): Boolean = live(call) &&
+        call.connection.canUseAudio(call.admitted, call.active, call.state["status"] == "held")
+
     private fun preferredStartingEndpoint(video: Boolean): CallEndpointCompat? {
         // Only pass endpoints emitted by the public starting-endpoint flow. Preserve
         // an existing active route, including a speaker the user already selected.
-        val current = calls.values.firstOrNull { it.active }?.endpoint
+        val current = calls.values.firstOrNull(::canUseAudio)?.endpoint
         startingEndpoints.firstOrNull { it.identifier == current?.identifier }?.let { return it }
         startingEndpoints.firstOrNull { it.type == CallEndpointCompat.TYPE_WIRED_HEADSET }?.let { return it }
         val bluetooth = startingEndpoints.filter { it.type == CallEndpointCompat.TYPE_BLUETOOTH }
@@ -1191,12 +1207,12 @@ class ConversationEngine(val context: Context) {
         refreshRoutes()
     }
     private fun refreshProximity() {
-        val active = calls.values.firstOrNull { it.active && live(it) && it.state["status"] != "held" }
+        val active = calls.values.firstOrNull(::canUseAudio)
         proximity.update(active != null, active?.endpoint?.type)
     }
     private fun refreshRoutes() {
         refreshProximity()
-        val selected = calls.values.firstOrNull { it.active && !it.terminal } ?: calls.values.firstOrNull { it.admitted && !it.terminal }
+        val selected = calls.values.firstOrNull(::canUseAudio) ?: calls.values.firstOrNull { it.admitted && !it.terminal }
         val available = selected?.endpoints?.map(::route) ?: emptyList()
         val current = selected?.endpoint?.let(::route)
         if (routes["routes"] == available && routes["current"] == current) return
@@ -1204,7 +1220,7 @@ class ConversationEngine(val context: Context) {
         emit("audioRoutesChanged", routes)
     }
     suspend fun selectRoute(id: String) {
-        val current = calls.values.firstOrNull { it.active && !it.terminal } ?: error("unknown_conversation")
+        val current = calls.values.firstOrNull(::canUseAudio) ?: error("unknown_conversation")
         val endpoint = current.endpoints.firstOrNull { it.identifier.toString() == id } ?: error("invalid_arguments")
         val controls = current.ready.await()
         requireLive(current)
