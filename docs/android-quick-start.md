@@ -636,7 +636,8 @@ ConversationMedia.provide(context, conversationId, media)
 including credentials supplied while placement is still pending. Once admitted,
 a dialing outgoing call can use communication audio for ringback and early media.
 Providing media or finishing media activation leaves its SDK status `connecting`
-and Telecom state `DIALING`. When the remote party answers, the app must call
+and Telecom state `DIALING` (Android 15 transactional calls can label this pending
+state `CONNECTING`). When the remote party answers, the app must call
 `reportConversation(id, { type: "connected" })` (native: `engine.report(id,
 mapOf("type" to "connected"))`). Only that report sets Telecom `ACTIVE`, records
 `connectedAt`, and emits the call's `CONNECTED` signal. App hold/resume is available
@@ -661,8 +662,10 @@ app reports `connected`; configure it with `outgoingCallTimeout`. Android also
 requires new transactional calls to become active within its **60-second**
 [startup limit](https://developer.android.com/reference/android/telecom/CallControl).
 The placement handler has a default effective **9-second** deadline, before
-admission. Native media's **8-second preparation** and **5-second Answer** guards
-start when media is supplied, rather than when `start` is called.
+admission. Supplying media can begin native preparation, which has an **8-second**
+guard. The **5-second media Answer** guard begins when the admitted call starts
+media activation, after any pending placement or hold. Neither guard measures
+the wait from `start` until credentials arrive.
 
 LiveKit signaling URLs require `wss://` in release apps. Debuggable apps also
 accept `ws://` for local development; the app's network security policy still applies.
