@@ -102,6 +102,7 @@ private suspend fun collapseShade(device: UiDevice) {
     val retry = NotificationUiRetry(SystemClock::uptimeMillis)
     val dismissed = InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
         AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+    delay(10)
     while (device.notificationShadeIsExpanded()) {
         retry.onceAfter(if (dismissed) 1000 else 0) { device.pressBack() }
         delay(10)
@@ -143,10 +144,14 @@ internal suspend fun tapNotificationTestCard(person: String, actionTitle: String
                         return@systemUi
                     }
             } else if (!scrolled) {
-                device.findObject(By.res("com.android.systemui", "notification_stack_scroller"))?.scroll(Direction.DOWN, 0.6f)
-                scrolled = true
+                // The opening shade exposes this container before scrolling is available.
+                device.findObject(By.res("com.android.systemui", "notification_stack_scroller"))?.takeIf { it.isScrollable }?.let {
+                    it.scroll(Direction.DOWN, 0.6f)
+                    scrolled = true
+                }
             }
-            retry.onceAfter(1500) { device.pressBack(); device.openNotification(); expanded = false; scrolled = false }
+            // Re-request expansion without dismissing an asynchronously opening shade.
+            retry.onceAfter(1500) { device.openNotification(); expanded = false; scrolled = false }
             delay(10)
         }
     }

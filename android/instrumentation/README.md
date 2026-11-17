@@ -8,7 +8,9 @@ under `Android/media` and pulls it before shutdown. Only manual invocations
 without that argument fall back to external app files. Capture is deduplicated
 per test. These fixtures use synthetic call identities on en-US emulator images.
 The UI helper selects the unique call person, expands its notification and can
-scroll/re-open the shade once within the original five-second wait. Shade
+scroll/re-open the shade once within the original five-second wait. It scrolls
+only a scrollable container and requests expansion again without first pressing
+Back, so an opening shade cannot be dismissed by its own lookup fallback. Shade
 dismissal can fall back to Back; Home waits for the resolved launcher package
 and can fall back to the HOME intent. Product assertions are never retried.
 
@@ -16,7 +18,8 @@ The notification UI workflow runs both complete Answer and Activity-cleanup
 classes 20 times on API 35, in four batches of five. Each batch records class
 timings and original instrumentation output, rejects incomplete/skipped/failed
 tests, and stops at its first failure. A missing-card timeout control also checks
-that both UI artifacts were written.
+that both UI artifacts were written. A delayed-notification control exercises
+row lookup while the shade is opening and checks actual content-intent delivery.
 
 Hold revokes the current capture generation and disables ADM recording before
 publication mute, unpublish, prewarm stop or disposal. A restarted pump reapplies
