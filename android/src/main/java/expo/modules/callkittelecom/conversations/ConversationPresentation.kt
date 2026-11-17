@@ -64,8 +64,11 @@ object ConversationPresentation {
     /**
      * Re-run app content for live calls and update existing cards in place. Safe from any thread;
      * customization runs on main. Unchanged content posts nothing. Changed ringing content
-     * restarts the ring and is coalesced at least 1.1 seconds apart. Updates queued for a call
-     * that leaves ringing are discarded. Ringing avatar replacements require an explicit refresh.
+     * restarts the ring and is coalesced at least 1.1 seconds apart. Ongoing refreshes keep the
+     * latest content per card and post at least 1.1 seconds apart, including after lifecycle posts.
+     * Ringing keeps its alert scheduling; initial foreground posts and promotion bypass the refresh
+     * queue. Updates queued for a call that leaves ringing are discarded. Ringing avatar
+     * replacements require an explicit refresh.
      * Retained ending cards and calls without a posted notification are left unchanged.
      */
     @JvmStatic fun refresh(context: Context) {

@@ -381,6 +381,44 @@ class ConversationPresentationJourneyTest {
         assertEquals("local", ended?.get("reason"))
     }
 
+    private suspend fun Fixture.avatarBurst(update: suspend Fixture.(Int) -> Unit) {
+        var color = 0xff000001.toInt()
+        fun avatar() = Icon.createWithBitmap(Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888).apply { eraseColor(color) })
+        fun pixel(notification: Notification) = (notification.extras
+            .getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.icon?.loadDrawable(context)
+            as? android.graphics.drawable.BitmapDrawable)?.bitmap?.getPixel(0, 0)
+        var image = avatar()
+        ConversationPresentation.configure { _, _ -> CallNotificationContent(title = id, avatar = image) }
+        observePosts {
+            incoming(); engine.join(id); engine.report(id, mapOf("type" to "connected"))
+            val original = card()
+            delay(2 * RINGING_ALERT_INTERVAL_MILLIS)
+            val before = DndObservationService.posts.size
+            repeat(12) { index ->
+                color++; image = avatar(); update(index); delay(20)
+            }
+            val latest = posted(original.id) { pixel(it) == color }
+            withTimeout(5000) {
+                while (DndObservationService.posts.drop(before).none {
+                    it.id == original.id && pixel(it.notification) == color
+                }) delay(10)
+            }
+            val updates = DndObservationService.posts.drop(before).count { it.id == original.id }
+            assertTrue("Twelve avatar updates must coalesce into at most two posts; actual=$updates", updates in 1..2)
+            assertEquals(color, checkNotNull(pixel(latest.notification)))
+            assertTrue(latest.notification.flags and Notification.FLAG_FOREGROUND_SERVICE != 0)
+            assertEquals("connected", state()?.get("status"))
+        }
+    }
+
+    @Test fun ongoingAvatarRefreshesCoalesceAndPublishTheLatestAvatar() = fixture {
+        avatarBurst { refreshPresentation() }
+    }
+
+    @Test fun ongoingSnapshotUpdatesCoalesceAndPublishTheLatestAvatar() = fixture {
+        avatarBurst { updateMembers(it % 2 == 0) }
+    }
+
     @Test fun removingTheRosterBeforeTheStartCallbackLeavesNoServiceOrCard() = fixture {
         withTimeout(5000) { while (service() != null) delay(10) }
         val requests = ServiceRequests(context)

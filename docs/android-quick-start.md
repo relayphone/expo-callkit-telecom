@@ -333,11 +333,13 @@ restarts its ring once; updates are spaced at least 1.1 seconds apart. Requests
 during that window merge into one trailing update with the latest content,
 cancelled if the call is answered or ends.
 Title, held summary, action titles and intents, channel, screen and content intents
-are compared by value. Avatar replacements require `refresh`; resource and URI icons
+are compared by value. Ringing avatar replacements require `refresh`; resource and URI icons
 use stable keys, and bitmap/data icons use `Icon` identity. Reuse the same bitmap
 `Icon` until its image changes. Unrelated snapshots do not restart a ring just
-because the customizer returns a new avatar or action object. Non-ringing cards update
-quietly. Ended calls and retained
+because the customizer returns a new avatar or action object. Ongoing cards update
+quietly, with refreshes spaced at least 1.1 seconds apart per card. Rapid changes
+keep the latest content, including changes from ordinary snapshots. Initial
+foreground posts and promotion bypass that refresh queue. Ended calls and retained
 “Ending call…” cards are unchanged, and missing cards are not created.
 In the API 35 screen-off observation, the initial full-screen intent opened the
 activity once; an alerting refresh did not open it again. See
