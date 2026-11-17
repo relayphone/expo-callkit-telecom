@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -26,7 +26,12 @@ test('each batch executes both complete classes five times with distinct timings
     qualifyNotificationUi(2, output, args => {
       calls.push(args);
       const name = args[7]?.split('.').at(-1);
-      return args[0] === 'pull' ? '' : result(name!, name === 'NotificationUiArtifactsTest' ? 1 : name === 'ConversationAnswerIntentTest' ? 9 : 2);
+      if (args[0] === 'pull') {
+        const directory = join(output, 'systemui-failures'); mkdirSync(directory);
+        writeFileSync(join(directory, 'timeout.xml'), '<hierarchy/>'); writeFileSync(join(directory, 'timeout.png'), 'image');
+        return '';
+      }
+      return result(name!, name === 'NotificationUiArtifactsTest' ? 1 : name === 'ConversationAnswerIntentTest' ? 9 : 2);
     }, null);
     const rows = JSON.parse(readFileSync(join(output, 'timings.json'), 'utf8')) as { run: number; className: string; passed: boolean }[];
     assert.equal(rows.length, 11); assert.ok(rows.every(row => row.passed));
@@ -34,14 +39,26 @@ test('each batch executes both complete classes five times with distinct timings
     assert.equal(calls.filter(args => args[0] === 'pull').length, 1);
   } finally { rmSync(output, { recursive: true, force: true }); }
 });
+test('passing device tests cannot qualify when the mandatory timeout artifacts fail to transfer', () => {
+  for (const pullThrows of [false, true]) {
+    const output = mkdtempSync(join(tmpdir(), 'notification-ui-'));
+    try {
+      assert.throws(() => qualifyNotificationUi(1, output, args => {
+        if (args[0] === 'pull') { if (pullThrows) throw Error('device offline'); return ''; }
+        const name = args[7]!.split('.').at(-1)!;
+        return result(name, name === 'NotificationUiArtifactsTest' ? 1 : name === 'ConversationAnswerIntentTest' ? 9 : 2);
+      }, null), /Missing transferred UI timeout XML\/screenshot pair/);
+    } finally { rmSync(output, { recursive: true, force: true }); }
+  }
+});
 test('the first failed class stops qualification and persists its failure plus UI artifacts', () => {
   const output = mkdtempSync(join(tmpdir(), 'notification-ui-')); let instruments = 0, pulls = 0;
   try {
     assert.throws(() => qualifyNotificationUi(1, output, args => {
-      if (args[0] === 'pull') { pulls++; return ''; }
+      if (args[0] === 'pull') { pulls++; throw Error('device offline'); }
       instruments++;
       return instruments === 1 ? result('NotificationUiArtifactsTest', 1) : 'INSTRUMENTATION_STATUS_CODE: -2\nINSTRUMENTATION_CODE: -1';
-    }, null));
+    }, null), /Test failure, skip or runner error/);
     assert.equal(instruments, 2); assert.equal(pulls, 1);
     const rows = JSON.parse(readFileSync(join(output, 'timings.json'), 'utf8'));
     assert.equal(rows.length, 2); assert.equal(rows[1].passed, false);

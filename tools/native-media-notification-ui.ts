@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const app = 'expo.modules.callkittelecom.instrumentation';
@@ -32,15 +32,24 @@ export function checkNotificationUiInstrumentation(log: string, className: strin
 }
 
 /** Always collect before the emulator action shuts down; diagnostic failure cannot replace an assertion. */
-export function collectNotificationUiArtifacts(output: string, run: Run = adb): void {
-  try { run(['pull', `/sdcard/Android/data/${app}/files/systemui-failures`, join(output, 'systemui-failures')], 10_000); }
-  catch { /* An ordinary successful run may have no UI failure artifacts. */ }
+export function collectNotificationUiArtifacts(output: string, run: Run = adb): boolean {
+  try { run(['pull', `/sdcard/Android/data/${app}/files/systemui-failures`, join(output, 'systemui-failures')], 10_000); return true; }
+  catch { return false; /* An ordinary successful run may have no UI failure artifacts. */ }
+}
+function hasUiArtifactPair(output: string): boolean {
+  const directory = join(output, 'systemui-failures');
+  return existsSync(directory) && readdirSync(directory, { recursive: true }).some(file => {
+    const xml = join(directory, file.toString()), png = xml.replace(/\.xml$/, '.png');
+    return xml.endsWith('.xml') && existsSync(png) && statSync(xml).size > 0 && statSync(png).size > 0;
+  });
 }
 
 export function qualifyNotificationUi(batch: number, output: string, run: Run = adb,
   summary: string | null = process.env.GITHUB_STEP_SUMMARY ?? null): void {
   assert.ok(Number.isInteger(batch) && batch >= 1 && batch <= 4, 'Expected batch 1–4');
   mkdirSync(output, { recursive: true });
+  rmSync(join(output, 'systemui-failures'), { recursive: true, force: true });
+  let completed = false;
   const rows: { run: number; className: string; elapsedMs: number; passed: boolean }[] = [];
   const instrument = (className: string, expected: number, id: number) => {
     const started = performance.now(); let passed = false, log = '';
@@ -63,11 +72,13 @@ export function qualifyNotificationUi(batch: number, output: string, run: Run = 
       const id = (batch - 1) * 5 + iteration;
       for (const [className, expected] of classes) instrument(className, expected, id);
     }
+    completed = true;
   } finally {
-    collectNotificationUiArtifacts(output, run);
+    const collected = collectNotificationUiArtifacts(output, run);
     if (summary) appendFileSync(summary,
       '| Run | Class | Milliseconds | Passed |\n| --- | --- | --- | --- |\n' + rows.map(row =>
         `| ${row.run} | ${row.className} | ${row.elapsedMs.toFixed(1)} | ${row.passed} |`).join('\n') + '\n');
+    if (completed) assert.ok(collected && hasUiArtifactPair(output), 'Missing transferred UI timeout XML/screenshot pair');
   }
 }
 
