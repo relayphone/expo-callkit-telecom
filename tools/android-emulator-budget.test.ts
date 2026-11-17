@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertEmulatorBudget, collectEmulatorBudget } from "./android-emulator-budget.ts";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { assertEmulatorBudget, collectEmulatorBudget, runEmulatorBudgetCLI } from "./android-emulator-budget.ts";
 
 test("accepts the observed bounded guest and the inclusive 2 GiB limit", () => {
   assert.deepEqual(assertEmulatorBudget("MemTotal:        2022316 kB\nMemFree: 1 kB\n", "0-1\n"),
@@ -40,4 +43,27 @@ test("collector targets the owned emulator and propagates observation failure", 
   assert.equal(result.cpus, 2);
   const failure = new Error("emulator unavailable");
   assert.throws(() => collectEmulatorBudget(() => { throw failure; }), (error) => error === failure);
+});
+
+test("the explicit four-core profile accepts observed memory through its inclusive 4 GiB limit", () => {
+  for (const memoryKiB of [4000000, 4194304])
+    assert.deepEqual(assertEmulatorBudget(`MemTotal: ${memoryKiB} kB\n`, "0-3\n", "4g-4cpu"), { memoryKiB, cpus: 4 });
+  assert.throws(() => assertEmulatorBudget("MemTotal: 4194305 kB\n", "0-3", "4g-4cpu"), /exceeds 4 GiB/);
+  for (const cpus of ["", "0-1", "0-2", "0-7"])
+    assert.throws(() => assertEmulatorBudget("MemTotal: 4000000 kB\n", cpus, "4g-4cpu"), /four CPUs/);
+});
+
+test("CLI requires an explicit larger profile and retains observed resources beside requested limits", () => {
+  const directory = mkdtempSync(join(tmpdir(), "emulator-budget-"));
+  const run = (args: readonly string[]) => args.at(-1) === "/proc/meminfo" ? "MemTotal: 4000000 kB\n" : "0-3\n";
+  try {
+    assert.throws(() => runEmulatorBudgetCLI([], run), /exceeds 2 GiB/);
+    const output = join(directory, "report", "budget.json");
+    assert.deepEqual(runEmulatorBudgetCLI(["--profile", "4g-4cpu", "--output", output], run), { memoryKiB: 4000000, cpus: 4 });
+    assert.deepEqual(JSON.parse(readFileSync(output, "utf8")), {
+      profile: "4g-4cpu", limits: { memoryKiB: 4194304, cpus: 4 }, observed: { memoryKiB: 4000000, cpus: 4 },
+    });
+    assert.throws(() => runEmulatorBudgetCLI(["--profile", "__proto__"], run), /Unknown emulator budget profile/);
+    assert.throws(() => runEmulatorBudgetCLI(["--unknown"], run), /Unknown option/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
