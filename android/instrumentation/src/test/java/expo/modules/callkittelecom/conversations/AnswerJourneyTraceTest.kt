@@ -5,6 +5,84 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AnswerJourneyTraceTest {
+    @Test fun endpointEmissionsRecordAvailableAndCurrentTypesFromAdmission() {
+        var now = 0L
+        val trace = AnswerJourneyTrace("test", { now })
+        trace.endpoint(AnswerEndpointPhase.CURRENT_ENDPOINT, listOf(99))
+        now = 10_000_000
+        trace.mark(AnswerJourneyPhase.CORE_ADMITTED)
+        now = 15_000_000
+        trace.endpoint(AnswerEndpointPhase.AVAILABLE_ENDPOINTS, listOf(1, 2))
+        now = 18_000_000
+        trace.endpoint(AnswerEndpointPhase.CURRENT_ENDPOINT, listOf(1))
+        val report = JSONObject(trace.json("example", false)).getJSONObject("endpointTrace")
+        assertEquals("SystemClock.elapsedRealtimeNanos", report.getString("clock"))
+        assertEquals(10.0, report.getDouble("admittedElapsedMs"), 0.0)
+        val emissions = report.getJSONArray("emissions")
+        assertEquals(2, emissions.length())
+        assertEquals("AVAILABLE_ENDPOINTS", emissions.getJSONObject(0).getString("phase"))
+        assertEquals(15.0, emissions.getJSONObject(0).getDouble("elapsedMs"), 0.0)
+        assertEquals(5.0, emissions.getJSONObject(0).getDouble("sinceAdmissionMs"), 0.0)
+        assertEquals("[1,2]", emissions.getJSONObject(0).getJSONArray("types").toString())
+        assertEquals("CURRENT_ENDPOINT", emissions.getJSONObject(1).getString("phase"))
+        assertEquals(8.0, emissions.getJSONObject(1).getDouble("sinceAdmissionMs"), 0.0)
+        assertEquals("[1]", emissions.getJSONObject(1).getJSONArray("types").toString())
+    }
+
+    @Test fun endpointHistoryRetainsTheFirstEntriesAndBoundsEachTypeList() {
+        var now = 0L
+        val trace = AnswerJourneyTrace("test", { now })
+        trace.mark(AnswerJourneyPhase.CORE_ADMITTED)
+        repeat(1000) { index ->
+            now += 1_000_000
+            trace.endpoint(AnswerEndpointPhase.AVAILABLE_ENDPOINTS, (index until index + 10).toList())
+        }
+        val report = JSONObject(trace.json("example", false)).getJSONObject("endpointTrace")
+        val emissions = report.getJSONArray("emissions")
+        assertEquals(32, report.getInt("limit"))
+        assertEquals(8, report.getInt("typeLimit"))
+        assertEquals(32, emissions.length())
+        assertEquals(968, report.getInt("droppedEvents"))
+        assertEquals(1.0, emissions.getJSONObject(0).getDouble("elapsedMs"), 0.0)
+        assertEquals(32.0, emissions.getJSONObject(31).getDouble("elapsedMs"), 0.0)
+        assertEquals(31, emissions.getJSONObject(31).getJSONArray("types").getInt(0))
+        assertEquals(8, emissions.getJSONObject(0).getJSONArray("types").length())
+        assertEquals(10, emissions.getJSONObject(0).getInt("endpointCount"))
+        assertEquals(2, emissions.getJSONObject(0).getInt("droppedTypes"))
+    }
+
+    @Test fun admissionAfterTimeoutCannotRewriteTheMissingAdmissionObservation() {
+        var now = 0L
+        val trace = AnswerJourneyTrace("test", { now })
+        now = 5_000_000_000
+        trace.mark(AnswerJourneyPhase.WAIT_TIMED_OUT, AnswerJourneyWait.AUDIO_ROUTE)
+        // A callback at the same clock tick still arrived after the cutoff.
+        trace.mark(AnswerJourneyPhase.CORE_ADMITTED)
+        trace.endpoint(AnswerEndpointPhase.CURRENT_ENDPOINT, listOf(1))
+        val report = JSONObject(trace.json("example", false)).getJSONObject("endpointTrace")
+        assertTrue(report.isNull("admittedElapsedMs"))
+        assertEquals(0, report.getJSONArray("emissions").length())
+        assertEquals(5000.0, report.getDouble("stoppedElapsedMs"), 0.0)
+    }
+
+    @Test fun routeTimeoutSealsEndpointObservationsBeforeCleanupEmissions() {
+        var now = 0L
+        val trace = AnswerJourneyTrace("test", { now })
+        trace.mark(AnswerJourneyPhase.CORE_ADMITTED)
+        trace.endpoint(AnswerEndpointPhase.AVAILABLE_ENDPOINTS, listOf(1))
+        now = 5_000_000_000
+        trace.mark(AnswerJourneyPhase.WAIT_TIMED_OUT, AnswerJourneyWait.AUDIO_ROUTE)
+        val before = JSONObject(trace.json("example", false)).getJSONObject("endpointTrace")
+        trace.mark(AnswerJourneyPhase.CLEANUP_STARTED)
+        trace.endpoint(AnswerEndpointPhase.CURRENT_ENDPOINT, listOf(2))
+        now += 5_000_000_000
+        trace.mark(AnswerJourneyPhase.WAIT_TIMED_OUT, AnswerJourneyWait.PLATFORM_REMOVED)
+        val after = JSONObject(trace.json("example", false)).getJSONObject("endpointTrace")
+        assertEquals(before.toString(), after.toString())
+        assertEquals(5000.0, after.getDouble("stoppedElapsedMs"), 0.0)
+        assertEquals(0, after.getInt("droppedEvents"))
+    }
+
     @Test fun shadeSettlementCannotCompleteTheForegroundWait() {
         var now = 0L
         val trace = AnswerJourneyTrace("test", { now })
