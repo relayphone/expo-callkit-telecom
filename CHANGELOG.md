@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.16 (2026-11-17)
+
+### Fixes
+
+* **android:** a second call while an earlier call's ending card is still
+  retained no longer throws when posting its notification. That secondary call
+  uses a standard notification with a localizable Hang Up action
+  (`expo_callkit_telecom_hang_up`) until it is promoted. Platform notification
+  refusals are logged instead of thrown
+  ([#168](https://github.com/relayphone/expo-callkit-telecom/pull/168)).
+
+### Tests
+
+* **android:** add Answer-journey phase tracing and the cold-push intake journey
+  ([#167](https://github.com/relayphone/expo-callkit-telecom/pull/167),
+  [#144](https://github.com/relayphone/expo-callkit-telecom/pull/144)).
+
 ## 2.0.0-alpha.15 (2026-11-16)
 
 ### Features
