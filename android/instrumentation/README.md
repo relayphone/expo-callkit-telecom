@@ -113,7 +113,7 @@ monotonic observation interval. Raw dumps, handles and notification content stay
 out of the output. The functional runner checks the parser controls and executes
 the query on its existing emulator; malformed or unsupported dumps fail the run.
 
-## Push faults on API 35
+## Push faults on API 34, 35 and 36
 
 Install the Debug instrumentation host, grant microphone/notification permissions,
 and use an explicit emulator serial. These controls inject at the app-owned
@@ -149,6 +149,47 @@ and decimal-string device monotonic nanoseconds. The live reader rejects a log
 from another process. Functional CI retains this file even on failure; parse a
 saved artifact with `node tools/android-push-faults.ts --file <path>`. The log
 contains delivery and token observations, with no media credentials or payloads.
+
+## Cold-process push journey
+
+`node tools/android-push-faults.ts emulator-5554 cold-start` force-stops the host,
+confirms no process remains, then explicitly launches the shell fixture carrying
+an invitation into `CallPushIntake`. A new PID must journal process start, intake,
+ringing, posted Answer/Decline actions, a performed notification Answer and cleanup
+under the same call, event and delivery IDs. The host also checks Telecom and
+notification cleanup. Each device wait keeps a five-second bound.
+
+Process start uses `Process.getStartElapsedRealtime()` (millisecond precision,
+serialized as nanoseconds); subsequent observations use `elapsedRealtimeNanos`.
+The CLI derives durations only within that device clock. Functional CI runs this
+after the standard journeys and retains the new journal under `coldStart` in
+`push-fault-events.json`, preserving the earlier process's fault events.
+
+CI runs the cold journey on API 35. Local qualification covers API 34, 35 and 36.
+After assembling the Debug host, run it on a disposable emulator with
+`bash tools/run-android-cold-push.sh emulator-5554`. It installs and precompiles
+the APK, then retains the journal, final state and logcat under
+`android/instrumentation/build/cold-push-results`.
+
+After the native cleanup stage, the host polls until Telecom has removed the
+call and the call notification is gone. This check has a five-second cap within
+the existing command deadline. Disconnected calls still count until removed.
+
+This is a cold-start intake/bootstrap qualification with media disabled and a
+native handler that proceeds. After the posted Answer settles as `Performed`,
+the host requires `connecting`, supplies the application's `connected` report,
+and requires the connected snapshot before cleanup. With native media disabled,
+Answer alone does not report a media connection.
+
+Cold intake starts after the shell Activity resumes. The sender stays open
+until cleanup, allowing it to send the posted Activity PendingIntent as a user
+interaction. The launch Activity
+consumes the native answer delivery before JavaScript. Answer and Decline must
+both be posted; Answer must target an Activity and Decline a broadcast.
+
+It does not deliver FCM: Android does not deliver
+ordinary FCM messages to force-stopped apps until an explicit launch clears the
+stopped state. The activity remains debug/emulator-only and shell protected.
 
 The exploratory DND study and its measurements are preserved on
 [`archive/android-telecom-research`](https://github.com/relayphone/expo-callkit-telecom/tree/archive/android-telecom-research).

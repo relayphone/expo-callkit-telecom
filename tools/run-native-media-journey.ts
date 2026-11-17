@@ -226,6 +226,7 @@ export function runNativeMediaJourney(
     run({ program: "node", args: ["tools/android-push-faults.ts", "--file", pushLog], timeout: 15_000 });
     run({ program: "node", args: ["--test", "tools/check-android-journey-state.test.ts"], timeout: 30_000 });
     run({ program: "node", args: ["tools/check-android-journey-state.ts"], timeout: 60_000 });
+    run({ program: "node", args: ["tools/android-push-faults.ts", "emulator-5554", "cold-start", pushLog], timeout: 60_000 });
     if (qualifyHooks) runNativeMediaFeasibility(output, run);
   } finally {
     if (!saved.has("push-fault-events")) {

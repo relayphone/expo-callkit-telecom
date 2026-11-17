@@ -229,7 +229,7 @@ test("runs the complete functional suite once and checks all four results", () =
   const f = fixture();
   try {
     runNativeMediaJourney(f.output, f.run);
-    assert.equal(f.calls.length, 18);
+    assert.equal(f.calls.length, 19);
     assert.deepEqual(f.calls[0], {
       program: "gradle",
       args: [
@@ -283,6 +283,7 @@ test("runs the complete functional suite once and checks all four results", () =
       { program: "node", args: ["tools/android-push-faults.ts", "--file", join(f.output, "push-fault-events.json")], timeout: 15_000 },
       { program: "node", args: ["--test", "tools/check-android-journey-state.test.ts"], timeout: 30_000 },
       { program: "node", args: ["tools/check-android-journey-state.ts"], timeout: 60_000 },
+      { program: "node", args: ["tools/android-push-faults.ts", "emulator-5554", "cold-start", join(f.output, "push-fault-events.json")], timeout: 60_000 },
       { program: "node", args: ["--test", "tools/native-media-marker.test.ts", "tools/compare-media-apm.test.ts"], timeout: 30_000 },
       { program: "gradle", args: [
         "-p", "android/instrumentation", ":connectedEmulatorTestAndroidTest", "-PmediaTestBuildType=emulatorTest",
@@ -321,6 +322,20 @@ for (const build of ["EmulatorTest", "Release"])
         build === "EmulatorTest" ? 2 : 3);
     } finally { f.close(); }
   });
+
+test("a failed cold-process push remains fatal with ordinary evidence retained", () => {
+  const f = fixture();
+  const failure = new Error("cold push failed");
+  try {
+    assert.throws(() => runNativeMediaJourney(f.output, command => {
+      const result = f.run(command);
+      if (command.program === "node" && command.args[2] === "cold-start") throw failure;
+      return result;
+    }), error => error === failure);
+    assert.ok(existsSync(join(f.output, "push-fault-events.json")));
+    assert.equal(f.calls.filter(command => command.program === "gradle").length, 1);
+  } finally { f.close(); }
+});
 
 test("functional-only execution does not start the isolated media qualification", () => {
   const f = fixture();

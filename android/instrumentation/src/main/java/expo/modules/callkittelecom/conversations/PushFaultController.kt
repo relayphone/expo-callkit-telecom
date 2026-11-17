@@ -20,6 +20,8 @@ internal enum class PushFaultPhase(val value: String) {
 }
 
 internal sealed interface PushFaultEvent {
+    data class ColdStart(val request: PushFaultDelivery, val stage: ColdPushStage,
+        val elapsedRealtimeNanos: Long) : PushFaultEvent
     data class Delivery(val request: PushFaultDelivery, val phase: PushFaultPhase,
         val elapsedRealtimeNanos: Long) : PushFaultEvent
     data class TokenRebind(val deliveryId: String, val absent: Boolean,
@@ -74,6 +76,10 @@ internal class PushFaultLog(private val processId: Int, private val write: (Stri
     }
     private fun flush() {
         val records = events.map { event -> when (event) {
+            is PushFaultEvent.ColdStart -> JSONObject().put("kind", "coldStart")
+                .put("deliveryId", event.request.deliveryId).put("callId", event.request.callId)
+                .put("eventId", event.request.eventId).put("delayMillis", event.request.delayMillis)
+                .put("stage", event.stage.value).put("elapsedRealtimeNanos", event.elapsedRealtimeNanos.toString())
             is PushFaultEvent.Delivery -> JSONObject().put("kind", "delivery")
                 .put("deliveryId", event.request.deliveryId).put("callId", event.request.callId)
                 .put("eventId", event.request.eventId).put("delayMillis", event.request.delayMillis)

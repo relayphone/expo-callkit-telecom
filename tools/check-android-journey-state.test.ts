@@ -88,13 +88,13 @@ test("malformed notification evidence fails rather than manufacturing absence", 
   assert.throws(() => parseNotificationPresence("private-content", app), error => !String(error).includes("private-content"));
 });
 
-test("the collector pins every read to one API35 emulator and exports only structured fields", () => {
+for (const api of ["34", "35", "36"]) test(`the collector pins every read to one API ${api} emulator and exports only structured fields`, () => {
   const commands: string[][] = [];
   let clock = 9007199254740993n;
   const state = collectAndroidEmulatorState("emulator-5570", app, args => {
     commands.push([...args]);
     if (args.at(-1) === "ro.kernel.qemu") return "1\n";
-    if (args.at(-1) === "ro.build.version.sdk") return "35\n";
+    if (args.at(-1) === "ro.build.version.sdk") return `${api}\n`;
     return args.at(-1) === "telecom" ? telecom([call()]) : notifications([notification(1)]);
   }, () => clock++);
   assert.deepEqual(commands, [
@@ -115,9 +115,11 @@ test("physical serials, non-emulator targets, unsupported APIs and failed comman
   let commands = 0;
   assert.throws(() => collectAndroidEmulatorState("emulator-5554", app, () => { commands++; return "0"; }));
   assert.equal(commands, 1);
-  commands = 0;
-  assert.throws(() => collectAndroidEmulatorState("emulator-5554", app, () => ++commands === 1 ? "1" : "34"));
-  assert.equal(commands, 2);
+  for (const api of ["33", "37", "", "unknown"]) {
+    commands = 0;
+    assert.throws(() => collectAndroidEmulatorState("emulator-5554", app, () => ++commands === 1 ? "1" : api));
+    assert.equal(commands, 2);
+  }
   const failure = new Error("adb failed with private-content");
   assert.throws(() => collectAndroidEmulatorState("emulator-5554", app, () => { throw failure; }), error => error === failure);
 });
