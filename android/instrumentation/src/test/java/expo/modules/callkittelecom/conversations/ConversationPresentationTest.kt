@@ -5,6 +5,7 @@ import org.junit.After
 import org.junit.Test
 
 class ConversationPresentationTest {
+    @get:org.junit.Rule val mainDispatcher = MainDispatcherRule()
     @Test fun reconnectingKeepsConnectedNotificationPriorityAndPresentation() {
         val roster = CallNotificationRoster()
         roster.put("first", mapOf("status" to "connected"))
