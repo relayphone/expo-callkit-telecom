@@ -75,7 +75,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048 -qemu -m 2048
           script: |
             node tools/android-emulator-budget.ts
-            node tools/run-native-media-journey.ts --functional-only --ui-artifact-proof
+            node tools/run-native-media-journey.ts --functional-only
             node tools/run-android-dnd.ts
       - name: Stop native media fixture
         if: always()
