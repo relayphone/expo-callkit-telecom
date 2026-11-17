@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.17 (2026-11-17)
+
+### Fixes
+
+* **android:** coalesce ongoing call notification refreshes: latest content wins,
+  with at most about one post per 1.1 seconds per card. This keeps bursts such as
+  route and avatar updates under Android's notification enqueue limit, so updates
+  are no longer shed. Ringing alerts, the first foreground post, promotion and
+  ending cards still post immediately
+  ([#171](https://github.com/relayphone/expo-callkit-telecom/pull/171)).
+
 ## 2.0.0-alpha.16 (2026-11-17)
 
 ### Fixes
