@@ -85,6 +85,23 @@ class SyntheticVideoTest {
         assertEquals(4096, sink.snapshot().size); assertTrue(sink.overflowed())
         assertEquals(VideoImageKind.CONTENT_FREE, sink.snapshot().first().image.kind)
     }
+    @Test fun encoderReferencesPreventPoolReuseAndSubmissionFailureReleases() {
+        val pool = VideoFramePool(); val retained = mutableListOf<VideoFrame>()
+        try {
+            repeat(4) { counter -> pool.push(golden().copy(counter = counter.toLong())) { it.retain(); retained += it } }
+            assertThrows(IllegalStateException::class.java) { pool.push(golden()) { fail("Pool must remain bounded") } }
+            retained.forEachIndexed { index, frame ->
+                val buffer = frame.buffer.toI420()
+                try {
+                    val pixels = ByteArray(19200); buffer.dataY.get(pixels)
+                    assertEquals(index.toLong(), SyntheticVideoMarker.decode(pixels, 160, 120).counter)
+                } finally { buffer.release() }
+            }
+            retained.removeAt(0).release()
+            repeat(6) { assertThrows(IllegalStateException::class.java) { pool.push(golden()) { error("Rejected") } } }
+            pool.push(golden()) { }
+        } finally { retained.forEach { it.release() } }
+    }
     @Test fun pacingSkipsMissedTicksAndStopFreezesTheOriginalReceipt() = runTest {
         val pushed = mutableListOf<SyntheticVideoMarker>()
         val source = EmulatorVideoSource(fixture, 0, 7, { testScheduler.currentTime * 1000 }, submit = { pushed += it })

@@ -21,10 +21,16 @@ const output = 'android/instrumentation/build/video-interop';
 const golden = (direction: 0 | 1): Marker => ({ fixture: '01234567-89ab-cdef-0123-456789abcdef',
   direction, epoch: 7, counter: 0xffffffff, sourceTimeUs: Number.MAX_SAFE_INTEGER });
 const identity = (marker: Marker) => JSON.stringify([marker.fixture.toLowerCase(), marker.direction, marker.epoch, marker.counter, marker.sourceTimeUs]);
-const json = (path: string) => JSON.parse(readFileSync(path, 'utf8'));
-async function markers(): Promise<MarkerAPI> { return import(pathToFileURL(join(tools, 'video-marker.ts')).href); }
+const json = (path: string): unknown => JSON.parse(readFileSync(path, 'utf8'));
+async function markers(): Promise<MarkerAPI> {
+  if (process.env.SDK_MEDIA_COMMIT) assert.equal(execFileSync('git', ['-C', sdk, 'rev-parse', 'HEAD'],
+    { encoding: 'utf8', timeout: 10_000 }).trim(), process.env.SDK_MEDIA_COMMIT, 'SDK tools revision mismatch');
+  return import(pathToFileURL(join(tools, 'video-marker.ts')).href);
+}
 function credentials(identity: string, room: string) {
   const settings = json(join(process.env.RUNNER_TEMP!, 'native-media-fixture/settings.json'));
+  assert.ok(settings && typeof settings === 'object' && 'key' in settings && typeof settings.key === 'string' &&
+    'secret' in settings && typeof settings.secret === 'string', 'Invalid fixture settings');
   const part = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
   const data = part({ alg: 'HS256', typ: 'JWT' }) + '.' + part({ iss: settings.key, sub: identity,
     exp: Math.floor(Date.now() / 1000) + 3600, video: { roomJoin: true, room, canPublish: true, canSubscribe: true } });
@@ -48,6 +54,7 @@ async function verify() {
   }
 }
 async function roundTrip() {
+  await markers();
   const localRequire = createRequire(join(tools, 'package.json'));
   const rtc = await import(pathToFileURL(localRequire.resolve('@livekit/rtc-node')).href) as {
     Room: new () => { connect(url: string, token: string): Promise<void>; disconnect(): Promise<void> }; dispose(): Promise<void> };
@@ -74,7 +81,7 @@ async function roundTrip() {
     assert.ok(received.length > 0); assert.ok(native.received.length > 0);
     assert.equal(native.ambiguous, 0); assert.equal(native.overflow, false); assert.equal(native.codec.toLowerCase(), 'video/vp8');
     const source = await peer.stop();
-    for (const [delivered, original] of [[received, native.source.generated], [native.received, source.generated]]) {
+    for (const [delivered, original] of [[received, native.source.generated], [native.received, source.generated]] as const) {
       const ledger = new Set(original.map(identity)); assert.ok(delivered.every(m => ledger.has(identity(m))));
     }
     for (const final of [native.source, source]) {
