@@ -22,9 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         batch: [1, 2, 3, 4]
-        resources:
-          - {profile: 2g-2cpu, cores: 2, memory: 2048}
-          - {profile: 4g-4cpu, cores: 4, memory: 4096}
+        warmup: [none, launcher-shade]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -55,17 +53,20 @@ jobs:
           arch: x86_64
           target: google_apis
           profile: pixel_6
-          cores: ${{ matrix.resources.cores }}
-          ram-size: ${{ matrix.resources.memory }}M
+          cores: 2
+          ram-size: 2048M
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory ${{ matrix.resources.memory }} -qemu -m ${{ matrix.resources.memory }}
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048 -qemu -m 2048
           script: |
-            node tools/android-emulator-budget.ts --profile ${{ matrix.resources.profile }} --output android/instrumentation/build/notification-ui-budget.json
+            node tools/android-emulator-budget.ts --output android/instrumentation/build/notification-ui-budget.json
+            if [ '${{ matrix.warmup }}' = 'launcher-shade' ]; then
+              node tools/native-media-notification-warmup.ts android/instrumentation/build/notification-ui-warmup
+            fi
             node tools/native-media-notification-ui.ts compare ${{ matrix.batch }}
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: notification-ui-${{ matrix.resources.profile }}-${{ matrix.batch }}
+          name: notification-ui-${{ matrix.warmup }}-${{ matrix.batch }}
           retention-days: 7
           path: android/instrumentation/build/notification-ui-*
           if-no-files-found: warn
