@@ -3,10 +3,10 @@ name: v2 example
 on:
   pull_request:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/android-journey*', 'tools/package.json', 'tsconfig.executor.json', 'tsconfig.journeys*.json', '.github/workflows/v2-example.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/gradle-dependencies*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/android-journey*', 'tools/package.json', 'tsconfig.executor.json', 'tsconfig.journeys*.json', '.github/workflows/v2-example.yml']
   push:
     branches: [v2]
-    paths: ['tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/android-journey*', 'tools/package.json', 'tsconfig.executor.json', 'tsconfig.journeys*.json', '.github/workflows/v2-example.yml']
+    paths: ['tools/gradle-wrapper-timeout*', 'tools/gradle-dependencies*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'src/**', 'android/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'tools/*example*', 'tools/android-emulator-executor*', 'tools/android-journey*', 'tools/package.json', 'tsconfig.executor.json', 'tsconfig.journeys*.json', '.github/workflows/v2-example.yml']
 
 permissions:
   contents: read
@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 30
     env:
       ANDROID_JOURNEY_PACKED: '1'
+      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-user-home
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -37,6 +38,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/v2' }}
+          cache-overwrite-existing: true
+      - run: node tools/gradle-dependencies.ts
       - uses: ./.github/actions/sdk-consumer
       - run: node_modules/.bin/tsc -p tsconfig.executor.json
       - run: bun run build
