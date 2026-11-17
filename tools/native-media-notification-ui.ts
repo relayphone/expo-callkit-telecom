@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 const app = 'expo.modules.callkittelecom.instrumentation';
 const suite = 'expo.modules.callkittelecom.conversations.';
+const additionalOutput = `/sdcard/Android/media/${app}/additional_test_output`;
 const classes = [['ConversationAnswerIntentTest', 9], ['NotificationActivityCleanupTest', 2]] as const;
 type Run = (args: string[], timeout: number) => string;
 const adb: Run = (args, timeout) => execFileSync('adb', ['-s', 'emulator-5554', ...args],
@@ -33,7 +34,7 @@ export function checkNotificationUiInstrumentation(log: string, className: strin
 
 /** Always collect before the emulator action shuts down; diagnostic failure cannot replace an assertion. */
 export function collectNotificationUiArtifacts(output: string, run: Run = adb): boolean {
-  try { run(['pull', `/sdcard/Android/data/${app}/files/systemui-failures`, join(output, 'systemui-failures')], 10_000); return true; }
+  try { run(['pull', `${additionalOutput}/systemui-failures`, join(output, 'systemui-failures')], 10_000); return true; }
   catch { return false; /* An ordinary successful run may have no UI failure artifacts. */ }
 }
 function hasUiArtifactPair(output: string): boolean {
@@ -55,6 +56,7 @@ export function qualifyNotificationUi(batch: number, output: string, run: Run = 
     const started = performance.now(); let passed = false, log = '';
     try {
       log = run(['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', suite + className,
+        '-e', 'additionalTestOutputDir', additionalOutput,
         `${app}.test/androidx.test.runner.AndroidJUnitRunner`], 180_000);
       checkNotificationUiInstrumentation(log, className, expected); passed = true;
     } catch (error) {

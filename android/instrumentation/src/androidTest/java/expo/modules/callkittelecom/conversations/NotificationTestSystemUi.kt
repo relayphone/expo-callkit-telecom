@@ -14,6 +14,9 @@ import androidx.test.uiautomator.Direction
 import android.os.SystemClock
 import java.util.regex.Pattern
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import org.junit.rules.TestWatcher
+import org.junit.runner.Description
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -39,9 +42,22 @@ private suspend fun <T> systemUi(body: suspend (UiDevice) -> T): T = try { withC
 }
 
 /** CI runs these fixtures with synthetic call identities; retain the actual failing UI before cleanup. */
+private val notificationUiCaptured = AtomicBoolean()
+internal class NotificationUiArtifactsRule : TestWatcher() {
+    override fun starting(description: Description) { notificationUiCaptured.set(false) }
+}
+
+internal fun notificationUiArtifactDirectory(): File {
+    val additional = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.takeIf { it.isNotBlank() }
+    val root = additional?.let(::File)
+        ?: InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null)
+    return File(root, "systemui-failures")
+}
+
 internal fun captureNotificationUiFailure() { runCatching {
+    if (!notificationUiCaptured.compareAndSet(false, true)) return
     val instrumentation = InstrumentationRegistry.getInstrumentation()
-    val directory = File(instrumentation.targetContext.getExternalFilesDir(null), "systemui-failures").apply { mkdirs() }
+    val directory = notificationUiArtifactDirectory().apply { mkdirs() }
     val prefix = "timeout-${SystemClock.uptimeMillis()}"
     val device = UiDevice.getInstance(instrumentation)
     val configuration = Configurator.getInstance(); val idle = configuration.waitForIdleTimeout
@@ -110,6 +126,7 @@ internal suspend fun tapNotificationTestCard(person: String, actionTitle: String
                 val (row, label) = match
                 val expand = row.findObject(By.res("android", "expand_button"))
                         ?: row.findObject(By.res("com.android.systemui", "expand_button"))
+                // Qualification uses en-US emulator images; their expand descriptions are English.
                 if (!expanded && expand != null &&
                         (expand.contentDescription?.startsWith("Expand", ignoreCase = true) == true ||
                             expand.contentDescription.isNullOrBlank() && actionTitle != null &&

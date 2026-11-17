@@ -24,6 +24,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ConversationAnswerIntentTest {
+    @get:Rule val uiArtifacts: org.junit.rules.TestRule = NotificationUiArtifactsRule()
     @get:Rule val permissions = GrantPermissionRule.grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
     @get:Rule val testName = TestName()
     private val trace get() = checkNotNull(AnswerJourneyObservation.trace)

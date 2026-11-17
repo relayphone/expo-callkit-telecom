@@ -37,6 +37,11 @@ test('each batch executes both complete classes five times with distinct timings
     assert.equal(rows.length, 11); assert.ok(rows.every(row => row.passed));
     assert.deepEqual(rows.slice(1).map(row => row.run), [6, 6, 7, 7, 8, 8, 9, 9, 10, 10]);
     assert.equal(calls.filter(args => args[0] === 'pull').length, 1);
+    assert.ok(calls.filter(args => args[0] === 'shell').every(args =>
+      args[8] === '-e' && args[9] === 'additionalTestOutputDir' &&
+      args[10] === '/sdcard/Android/media/expo.modules.callkittelecom.instrumentation/additional_test_output'));
+    assert.equal(calls.find(args => args[0] === 'pull')?.[1],
+      '/sdcard/Android/media/expo.modules.callkittelecom.instrumentation/additional_test_output/systemui-failures');
   } finally { rmSync(output, { recursive: true, force: true }); }
 });
 test('passing device tests cannot qualify when the mandatory timeout artifacts fail to transfer', () => {

@@ -1,8 +1,12 @@
 # Android instrumentation
 
 Notification UI waits retain hierarchy XML and screenshots under the test
-application's external `systemui-failures` directory before cleanup. CI collects
-them before emulator shutdown. These fixtures use synthetic call identities.
+application's `additionalTestOutputDir/systemui-failures` before cleanup. AGP
+collects this standard output under `build/outputs/connected_android_test_additional_output/`
+before uninstalling the test APKs. Direct instrumentation sets the same argument
+under `Android/media` and pulls it before shutdown. Only manual invocations
+without that argument fall back to external app files. Capture is deduplicated
+per test. These fixtures use synthetic call identities on en-US emulator images.
 The UI helper selects the unique call person, expands its notification and can
 scroll/re-open the shade once within the original five-second wait. Shade
 dismissal can fall back to Back; Home waits for the resolved launcher package
