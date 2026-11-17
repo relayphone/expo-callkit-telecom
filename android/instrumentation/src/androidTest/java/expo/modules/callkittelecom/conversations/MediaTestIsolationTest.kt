@@ -19,6 +19,11 @@ class MediaTestIsolationTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val implementation = runCatching { Class.forName(
             "expo.modules.callkittelecom.conversations.EmulatorMediaHooks", false, context.classLoader) }
+        for (name in listOf("SyntheticVideoMarker", "EmulatorVideoSource", "EmulatorVideoSink", "EmulatorVideoFixture")) {
+            val video = runCatching { Class.forName("expo.modules.callkittelecom.conversations.$name", false, context.classLoader) }
+            if (BuildConfig.MEDIA_TEST_BUILD) assertTrue("Missing $name", video.isSuccess)
+            else assertTrue("Unexpected $name", video.exceptionOrNull() is ClassNotFoundException)
+        }
         if (BuildConfig.MEDIA_TEST_BUILD) {
             assertTrue(implementation.isSuccess)
             MediaTestRuntime.activate(context)

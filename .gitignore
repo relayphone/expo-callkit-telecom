@@ -35,6 +35,9 @@ project.xcworkspace
 .project
 .settings
 local.properties
+android/instrumentation/.kotlin/
+android/instrumentation/src/androidTest/assets/video-*
+.sdk-media-tools/
 android.iml
 android/app/libs
 android/keystores/debug.keystore

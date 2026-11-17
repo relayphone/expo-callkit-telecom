@@ -11,10 +11,13 @@ internal class MediaHookUnavailable(val reason: MediaHookFailure) : IllegalState
 /** This guard belongs to the instrumentation host, never the published library. */
 internal object MediaTestRuntime {
     fun activate(context: Context) {
-        if (!BuildConfig.MEDIA_TEST_BUILD || !BuildConfig.DEBUG ||
-            context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0)
+        validate(BuildConfig.MEDIA_TEST_BUILD, BuildConfig.DEBUG,
+            context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0, Build.HARDWARE, Build.PRODUCT)
+    }
+    fun validate(testBuild: Boolean, debug: Boolean, debuggable: Boolean, hardware: String, product: String) {
+        if (!testBuild || !debug || !debuggable)
             throw MediaHookUnavailable(MediaHookFailure.UNSUPPORTED_BUILD)
-        if (Build.HARDWARE !in setOf("ranchu", "goldfish") || !Build.PRODUCT.startsWith("sdk"))
+        if (hardware !in setOf("ranchu", "goldfish") || !product.startsWith("sdk"))
             throw MediaHookUnavailable(MediaHookFailure.NOT_EMULATOR)
     }
 }

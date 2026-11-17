@@ -1,5 +1,21 @@
 # Android instrumentation
 
+Synthetic video exists only in `emulatorTest`. It uses LiveKit's manual I420
+capturer at 160×120/10 fps, VP8 without simulcast, and a remote decoded `VideoSink`.
+The shared Swift/TypeScript marker's golden pixels are checked in both stream
+directions, including Kotlin output decoded by the separately pinned SDK tools.
+Normal Debug and Release artifacts exclude the synthetic source and sink.
+
+`SyntheticVideoTest` covers cancellation, serialized stop, final producer
+receipts, reference lifetimes, stride/crop handling and the three-way decoded
+classifier. Only complete uniform Y/U/V planes of non-source geometry can be
+content-free; unreadable source-sized or nonuniform images remain ambiguous.
+`SyntheticVideoRoundTripTest` checks actual API 35 VP8 marker delivery both ways
+with camera permission denied and a fail-fast permission spy. This proves codec
+feasibility, without qualifying Android first-frame, gap, fps or drain limits.
+The host command is `node tools/native-media-video.ts round-trip`; `prepare`
+generates test inputs before compilation and `verify` checks the JVM outputs.
+
 Hold revokes the current capture generation and disables ADM recording before
 publication mute, unpublish, prewarm stop or disposal. A restarted pump reapplies
 that generation's recording state before its read loop. Capture diagnostics
