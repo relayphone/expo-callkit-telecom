@@ -434,6 +434,16 @@ same foreground notification ID. Ending the primary call promotes a remaining
 held call on that ID. The library never transfers foreground ownership between
 notification IDs.
 
+While a primary call retains its “Ending call…” card for pending Telecom removal,
+a new ongoing call uses a standard secondary notification with Hang Up until it
+becomes primary. That secondary card has no full-screen intent and cannot use
+CallStyle without foreground-service ownership. Platform notification refusals
+are recorded in Android logs instead of escaping into call control or refresh.
+Override or translate this secondary card's Hang Up label by defining
+`expo_callkit_telecom_hang_up` in your app's `res/values/strings.xml` or a localized
+directory such as `res/values-pl/strings.xml`; normal Android resource merging
+uses your app's value instead of the library default.
+
 ## Ends your app learns about
 
 ### Await native command outcomes
