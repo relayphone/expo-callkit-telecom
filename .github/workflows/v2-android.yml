@@ -21,8 +21,6 @@ jobs:
     needs: sdk-package
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-user-home
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -38,6 +36,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Set Gradle user home
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-user-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
@@ -104,8 +104,6 @@ jobs:
     needs: sdk-package
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-user-home
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -119,6 +117,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Set Gradle user home
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-user-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
@@ -192,8 +192,6 @@ jobs:
     needs: sdk-package
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-user-home
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -206,6 +204,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Set Gradle user home
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-user-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/v2' }}

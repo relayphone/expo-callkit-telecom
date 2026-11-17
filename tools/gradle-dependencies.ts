@@ -49,7 +49,13 @@ gradle.settingsEvaluated { settings ->
     gradle.beforeProject { project ->
         addMirrorFirst(project.buildscript.repositories)
         if (settings.dependencyResolutionManagement.repositoriesMode.get() == RepositoriesMode.PREFER_PROJECT) {
-            addMirrorFirst(project.repositories)
+            def repositories = project.repositories
+            if (!repositories.isEmpty()) addMirrorFirst(repositories)
+            repositories.whenObjectAdded { repository ->
+                if (!(repository instanceof MavenArtifactRepository && repository.url.toString() == mirrorUrl)) {
+                    addMirrorFirst(repositories)
+                }
+            }
         }
     }
 }

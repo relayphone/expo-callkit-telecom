@@ -23,7 +23,6 @@ jobs:
     timeout-minutes: 30
     env:
       ANDROID_JOURNEY_PACKED: '1'
-      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-user-home
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
@@ -37,6 +36,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Set Gradle user home
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-user-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/v2' }}

@@ -99,38 +99,53 @@ test(
       ["fixture", "classpath", ""],
       ["fixture", "payload", ""],
       ["fixture", "included-payload", ""],
+      ["fixture", "settings-only", ""],
     ];
     const requests: string[] = [];
+    const servedPoms: string[] = [];
     let deniedArtifact: string | undefined;
     const server = createServer((request, response) => {
       const path = request.url!;
       requests.push(path);
       if (
-        !path.startsWith("/mirror/") ||
+        (!path.startsWith("/mirror/") && !path.startsWith("/settings/")) ||
         (deniedArtifact && path.includes(`/fixture/${deniedArtifact}/`))
       ) {
         response.writeHead(429);
         response.end("Too Many Requests");
         return;
       }
+      const suffix = path.replace(/^\/(?:mirror|settings)\//, "");
       const module = modules.find(([group, artifact]) =>
-        path.startsWith(
-          `/mirror/${group!.replaceAll(
-            ".",
-            "/"
-          )}/${artifact}/1.0/${artifact}-1.0.`
+        suffix.startsWith(
+          group!.replaceAll(".", "/") +
+            "/" +
+            artifact +
+            "/1.0/" +
+            artifact +
+            "-1.0."
         )
       );
+      const fallback = module?.[1] === "settings-only";
+      if (
+        (path.startsWith("/mirror/") && fallback) ||
+        (path.startsWith("/settings/") && !fallback)
+      ) {
+        response.writeHead(404);
+        response.end();
+        return;
+      }
       if (!module) {
         response.writeHead(404);
         response.end();
         return;
       }
-      if (path.endsWith(".pom"))
+      if (path.endsWith(".pom")) {
+        servedPoms.push(module.slice(0, 2).join(":"));
         response.end(
           `<project><modelVersion>4.0.0</modelVersion><groupId>${module[0]}</groupId><artifactId>${module[1]}</artifactId><version>1.0</version>${module[2]}</project>`
         );
-      else if (path.endsWith(".jar")) response.end(bytes);
+      } else if (path.endsWith(".jar")) response.end(bytes);
       else {
         response.writeHead(404);
         response.end();
@@ -157,8 +172,8 @@ test(
 pluginManagement { repositories { ${repository} } }
 plugins { id 'fixture.settings' version '1.0' }
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories { ${repository} }
+    repositoriesMode.set(RepositoriesMode.valueOf(providers.gradleProperty('fixtureRepoMode').getOrElse('PREFER_PROJECT')))
+    repositories { maven { url '${origin}/settings/'; allowInsecureProtocol = true }; ${repository} }
 }
 rootProject.name = 'resolution-fixture'
 includeBuild('included')
@@ -178,7 +193,9 @@ includeBuild('included')
 buildscript { repositories { ${repository} }; dependencies { classpath 'fixture:classpath:1.0' } }
 ${target === project ? "" : `repositories { ${repository} }`}
 configurations { payload }
-dependencies { payload 'fixture:${artifact}:1.0' }
+dependencies { payload 'fixture:${artifact}:1.0'
+${target === project ? "payload 'fixture:settings-only:1.0'" : ""}
+}
 tasks.register('resolve') { doLast {
     println('RESOLVED=' + configurations.payload.files.size())
     if (project.findProperty('fixtureFailure')) throw new GradleException('test assertion 429 private-content')
@@ -194,7 +211,8 @@ ${
     async function run(
       name: string,
       mirrorPath?: string,
-      productFailure = false
+      productFailure = false,
+      repositoryMode?: string
     ) {
       const home = join(directory, name),
         summary = join(directory, `${name}.md`);
@@ -202,7 +220,8 @@ ${
         configureGradleDependencies(home, new URL(origin + mirrorPath));
         configureGradleDependencies(home, new URL(origin + mirrorPath));
       }
-      const start = requests.length;
+      const start = requests.length,
+        servedStart = servedPoms.length;
       const result = await new Promise<{ code: number | null; output: string }>(
         (resolve, reject) => {
           const child = spawn(
@@ -215,6 +234,9 @@ ${
               "--max-workers=2",
               "--console=plain",
               ...(productFailure ? ["-PfixtureFailure=true"] : []),
+              ...(repositoryMode
+                ? [`-PfixtureRepoMode=${repositoryMode}`]
+                : []),
             ],
             {
               env: {
@@ -239,6 +261,7 @@ ${
       return {
         ...result,
         requests: requests.slice(start),
+        resolved: new Set(servedPoms.slice(servedStart)),
         summary: existsSync(summary) ? readFileSync(summary, "utf8") : "",
       };
     }
@@ -255,12 +278,18 @@ ${
       after.requests.filter((path) => path.startsWith("/central/")).length,
       0
     );
-    assert.equal((after.output.match(/RESOLVED=1/g) ?? []).length, 2);
-    const resolved = new Set(
-      after.requests.filter((path) => path.endsWith(".pom"))
-    );
+    assert.match(after.output, /RESOLVED=1/);
+    assert.match(after.output, /RESOLVED=2/);
+    const resolved = after.resolved;
     assert.equal(resolved.size, modules.length);
     assert.equal(after.summary, "");
+    const restricted = await run(
+      "settings-mode",
+      "/mirror/",
+      false,
+      "FAIL_ON_PROJECT_REPOS"
+    );
+    assert.equal(restricted.code, 0, restricted.output);
     const product = await run("after", "/mirror/", true);
     assert.notEqual(product.code, 0);
     assert.equal(product.summary, "");
