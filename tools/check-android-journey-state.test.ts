@@ -40,6 +40,40 @@ test("current Telecom calls use platform IDs and preserve ringing, held and term
   ]);
 });
 
+// Synthetic UUIDs matching ClientTransactionalServiceWrapper.trackCall's randomUUID().toString().
+const transactionalId = "00000000-0000-4000-8000-000000000001";
+const otherTransactionalId = "00000000-0000-4000-8000-000000000002";
+
+test("transactional UUIDs preserve active and disconnected calls and match exact disconnect reasons", () => {
+  assert.deepEqual(parseTelecomCalls(telecom([
+    call(transactionalId, "ACTIVE"), call(otherTransactionalId, "DISCONNECTED"),
+  ], [ended(transactionalId, "unrelated"), ended(otherTransactionalId, "remoteEnded")])), [
+    { callId: transactionalId, state: "ACTIVE", endReason: null },
+    { callId: otherTransactionalId, state: "DISCONNECTED", endReason: "remoteEnded" },
+  ]);
+  assert.deepEqual(parseTelecomCalls(telecom([], [call(transactionalId, "DISCONNECTED")])), []);
+});
+
+test("empty, malformed and unknown call identities remain fatal", () => {
+  for (const id of ["", "TC@", "null", "opaque-unknown", " " + transactionalId, transactionalId + " ",
+    transactionalId.slice(1), transactionalId + "0", transactionalId.replace("4000", "3000"),
+    transactionalId.replace("8000", "7000"), transactionalId.replace("8000", "g000"),
+    transactionalId.replaceAll("-", ""), transactionalId + ",extra", transactionalId + "]"]) {
+    assert.throws(() => parseTelecomCalls(telecom([call(id)])), error =>
+      error instanceof VerifierFailure && error.failure.rule === "telecom.record");
+  }
+});
+
+test("duplicate transactional identities, unknown states and malformed reasons remain fatal", () => {
+  for (const [rule, dump] of [
+    ["telecom.unique", telecom([call(transactionalId), call(transactionalId, "ACTIVE")])],
+    ["telecom.state", telecom([call(transactionalId, "FUTURE_STATE")])],
+    ["telecom.reason", telecom([call(transactionalId, "DISCONNECTED")],
+      [ended(transactionalId, "local").replace("Reason:", "Unknown:")])],
+  ] as const) assert.throws(() => parseTelecomCalls(dump), error =>
+    error instanceof VerifierFailure && error.failure.rule === rule);
+});
+
 test("history cannot create calls or overwrite a live state, and disconnect reasons match exact IDs", () => {
   assert.deepEqual(parseTelecomCalls(telecom([], [call(), ended("TC@3", "remoteEnded")])), []);
   assert.deepEqual(parseTelecomCalls(telecom([call("TC@3", "ACTIVE")], [ended("TC@3", "old")])), [

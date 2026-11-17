@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { VerifierFailure, type VerifierDiagnostic } from "./android-push-faults-diagnostics.ts";
+import { capturedColdJournal, capturedRecordRejection } from "./android-push-faults.captured-fixture.ts";
 import { coldPushTimings, parsePushFaultCommand, parsePushFaultLog, readPushFaultLog, runColdPushJourney,
   triggerPushFault, type ColdPushReceipt } from "./android-push-faults.ts";
 
@@ -91,7 +92,7 @@ function coldJournal() {
     (["processStarted", "intake", "ringing", "presented", "answered", "cleaned"] as const).map((stage, index) =>
       ({ kind: "coldStart" as const, ...coldRequest, stage, elapsedRealtimeNanos: String(9_007_199_254_740_993n + BigInt(index) * 100n) })) };
 }
-function coldDevice(journal = coldJournal(), api = "35") {
+function coldDevice(journal: ColdPushReceipt["journal"] = coldJournal(), api = "35") {
   const commands: (readonly string[])[] = [];
   let pid = "123";
   let now = 0;
@@ -187,6 +188,61 @@ test("a disconnected Telecom record must disappear before cleanup can qualify", 
   assert.equal(reads, 3);
   assert.equal(f.commands.filter(args => args.includes("force-stop")).length, 1);
 });
+
+// Synthetic transactional identity; the captured CI diagnostic is a separate fixture.
+const transactionalId = "00000000-0000-4000-8000-000000000001";
+
+test("captured CI journal replays with a separately synthetic transactional platform row", async () => {
+  const f = coldDevice(capturedColdJournal);
+  let reads = 0;
+  const receipt = await runColdPushJourney("emulator-5554", coldRequest, args => {
+    const value = f.run(args);
+    if (args.at(-1) === "telecom" && ++reads === 1)
+      return `mCalls:\n  [Call id=${transactionalId}, state=${capturedRecordRejection.observed.state}, other]\nnext:\n`;
+    return value;
+  }, f.timing);
+  assert.equal(reads, 2);
+  assert.equal(receipt.journal.events.at(-1)?.elapsedRealtimeNanos, capturedRecordRejection.lastColdStage?.timestamp);
+  assert.deepEqual(coldPushTimings(receipt, coldRequest), {
+    clock: "android.elapsedRealtimeNanos", processToIntakeNanos: "281091520",
+    intakeToPresentationNanos: "441784182", processToPresentationNanos: "722875702",
+    processToAnswerNanos: "948661470",
+  });
+});
+
+for (const api of ["34", "35", "36"]) test(`API ${api} transactional disconnect waits for the second, empty observation`, async () => {
+  const f = coldDevice(coldJournal(), api);
+  let reads = 0;
+  const receipt = await runColdPushJourney("emulator-5554", coldRequest, args => {
+    const value = f.run(args);
+    if (args.at(-1) === "telecom" && ++reads === 1)
+      return `mCalls:\n  [Call id=${transactionalId}, state=DISCONNECTED, other]\nnext:\n`;
+    return value;
+  }, f.timing);
+  assert.equal(reads, 2);
+  assert.equal(f.commands.filter(args => args.includes("force-stop")).length, 1);
+  assert.deepEqual(receipt.journal, coldJournal());
+});
+
+for (const fault of ["ACTIVE", "DISCONNECTED", "CATEGORY_CALL"] as const)
+  test(`persistent transactional ${fault} residue stays fatal`, async () => {
+    const f = coldDevice();
+    let reads = 0;
+    await assert.rejects(runColdPushJourney("emulator-5554", coldRequest, args => {
+      const value = f.run(args);
+      if (args.at(-1) === "telecom") {
+        reads++;
+        if (fault !== "CATEGORY_CALL")
+          return `mCalls:\n  [Call id=${transactionalId}, state=${fault}, other]\nnext:\n`;
+      }
+      if (args.at(-1) === "notification" && fault === "CATEGORY_CALL")
+        return "Current Notification Manager state:\n  Notification List:\n    NotificationRecord(0x1234: pkg=expo.modules.callkittelecom.instrumentation user=UserHandle{0} id=7 tag=null key=test: Notification(category=call))\n  mMaxPackageEnqueueRate=5\n";
+      return value;
+    }, f.timing), error => error instanceof VerifierFailure &&
+      error.failure.rule === (fault === "CATEGORY_CALL" ? "cold.notifications-empty" : "cold.telecom-empty"));
+    assert.ok(reads > 1);
+    assert.equal(f.commands.filter(args => args.includes("force-stop")).length, 2);
+  });
 
 test("permanent disconnected calls and late empty evidence stay fatal", async () => {
   for (const fault of ["disconnected", "late"] as const) {

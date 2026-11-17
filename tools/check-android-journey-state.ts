@@ -8,8 +8,11 @@ const states = [
   "ON_HOLD", "DISCONNECTED", "ABORTED", "DISCONNECTING", "PULLING", "ANSWERED",
   "AUDIO_PROCESSING", "SIMULATED_RINGING", "UNKNOWN",
 ] as const;
+// Android 34+ ClientTransactionalServiceWrapper.trackCall uses UUID.randomUUID().toString();
+// CallsManager.generateNextCallId takes it from TRANSACTION_CALL_ID_KEY instead of a TC@ ID.
+const platformCallIdentity = /^(?:TC@[^,\]\s]+|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/;
 export interface TelecomCall {
-  /** Telecom's TC@ identity, not an application conversation ID. */
+  /** Telecom's platform identity, not an application conversation ID. */
   callId: string;
   state: (typeof states)[number];
   endReason: string | null;
@@ -45,12 +48,14 @@ export function parseTelecomCalls(dump: string): TelecomCall[] {
   const lines = section(dump, "mCalls:");
   requireRule("telecom.section", lines, { present: true }, { present: !!lines });
   const calls = lines.map(line => {
-    const match = /^\s*\[Call id=(TC@[^,\]\s]+), state=([A-Z_]+),/.exec(line);
+    const match = /^\s*\[Call id=([^,\]\s]+), state=([A-Z_]+),/.exec(line);
+    const identity = /\bid=([^,\]\s]+)(,?)/.exec(line);
+    const knownIdentity = platformCallIdentity.test(identity?.[1] ?? "");
     const stateToken = /\bstate=([A-Z_]+)/.exec(line)?.[1];
-    requireRule("telecom.record", match,
+    requireRule("telecom.record", match && knownIdentity,
       { callPrefix: true, platformIdentity: true, identityComma: true, stateComma: true },
-      { callPrefix: line.trimStart().startsWith("[Call id="), platformIdentity: /\bid=TC@/.test(line),
-        identityComma: /\bid=TC@[^,\]\s]+,/.test(line), stateComma: /\bstate=[A-Z_]+,/.test(line),
+      { callPrefix: line.trimStart().startsWith("[Call id="), platformIdentity: knownIdentity,
+        identityComma: knownIdentity && identity?.[2] === ",", stateComma: /\bstate=[A-Z_]+,/.test(line),
         state: states.find(value => value === stateToken) ?? "unsupported-or-missing",
         indentation: line.search(/\S/), length: line.length });
     const state = states.find(value => value === match[2]);
