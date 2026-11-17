@@ -13,18 +13,21 @@ const adb: Run = (args, timeout) => execFileSync('adb', ['-s', 'emulator-5554', 
 
 /** adb can exit zero for an instrumentation assertion or crash; require every named test to pass. */
 export function checkNotificationUiInstrumentation(log: string, className: string, expected: number): void {
-  let currentClass = '', currentTest = ''; const completed = new Set<string>(); let terminal = false;
+  let currentClass = '', currentTest = '', firstStackLine = ''; const completed = new Set<string>(); let terminal = false;
   for (const line of log.split(/\r?\n/)) {
     if (line.startsWith('INSTRUMENTATION_STATUS: class=')) currentClass = line.slice(line.indexOf('=') + 1);
     if (line.startsWith('INSTRUMENTATION_STATUS: test=')) currentTest = line.slice(line.indexOf('=') + 1);
+    if (line.startsWith('INSTRUMENTATION_STATUS: stack=')) firstStackLine = line.slice(line.indexOf('=') + 1).trim();
     const status = /^INSTRUMENTATION_STATUS_CODE: (-?\d+)$/.exec(line);
     if (status) {
-      const code = Number(status[1]); assert.ok(code === 0 || code === 1, 'Test failure, skip or runner error');
+      const code = Number(status[1]);
+      assert.ok(code === 0 || code === 1, 'Test failure, skip or runner error: ' +
+        `${currentClass || suite + className}#${currentTest || '<runner>'} status=${code}: ${firstStackLine || '<no stack reported>'}`);
       if (code === 0 && (currentClass || currentTest)) {
         assert.equal(currentClass, suite + className); assert.ok(currentTest && !completed.has(currentTest), 'Missing or repeated test');
         completed.add(currentTest);
       }
-      currentClass = ''; currentTest = '';
+      currentClass = ''; currentTest = ''; firstStackLine = '';
     }
     if (line === 'INSTRUMENTATION_CODE: -1') terminal = true;
   }

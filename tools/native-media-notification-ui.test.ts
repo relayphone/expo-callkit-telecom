@@ -20,6 +20,36 @@ test('instrumentation assertions, skips, crashes, missing tests and duplicates r
     result('ConversationAnswerIntentTest', 8), result('WrongClass', 9)])
     assert.throws(() => checkNotificationUiInstrumentation(bad, 'ConversationAnswerIntentTest', 9));
 });
+test('a failed instrumentation status names its class, test, code and first stack line', () => {
+  const className = 'expo.modules.callkittelecom.conversations.ConversationAnswerIntentTest';
+  const testName = 'notificationVideoAnswerRemainsVideo';
+  const firstStackLine = 'java.lang.AssertionError: Answer wait ACTIVITY_FOREGROUND timed out';
+  for (const code of [-1, -2, -3, -4]) {
+    const log = `INSTRUMENTATION_STATUS: class=${className}\nINSTRUMENTATION_STATUS: test=${testName}\n` +
+      `INSTRUMENTATION_STATUS: stack=${firstStackLine}\n\tat fixture.await(Fixture.kt:42)\n` +
+      `INSTRUMENTATION_STATUS_CODE: ${code}\nINSTRUMENTATION_CODE: -1\n`;
+    assert.throws(() => checkNotificationUiInstrumentation(log, 'ConversationAnswerIntentTest', 9), error => {
+      assert.ok(error instanceof assert.AssertionError);
+      assert.ok(error.message.includes(`${className}#${testName}`));
+      assert.ok(error.message.includes(`status=${code}`));
+      assert.ok(error.message.includes(firstStackLine));
+      assert.ok(!error.message.includes('Fixture.kt:42'));
+      return true;
+    });
+  }
+});
+test('a runner failure without test metadata reports explicit missing fields and clears earlier stacks', () => {
+  const log = 'INSTRUMENTATION_STATUS: stack=earlier status detail\nINSTRUMENTATION_STATUS_CODE: 0\n' +
+    'INSTRUMENTATION_STATUS_CODE: -1\n';
+  assert.throws(() => checkNotificationUiInstrumentation(log, 'ConversationAnswerIntentTest', 9), error => {
+    assert.ok(error instanceof assert.AssertionError);
+    assert.ok(error.message.includes('expo.modules.callkittelecom.conversations.ConversationAnswerIntentTest#<runner>'));
+    assert.ok(error.message.includes('status=-1'));
+    assert.ok(error.message.includes('<no stack reported>'));
+    assert.ok(!error.message.includes('earlier status detail'));
+    return true;
+  });
+});
 test('each batch executes both complete classes five times with distinct timings and no assertion retries', () => {
   const output = mkdtempSync(join(tmpdir(), 'notification-ui-')); const calls: string[][] = [];
   try {
