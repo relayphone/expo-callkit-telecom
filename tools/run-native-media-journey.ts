@@ -62,7 +62,25 @@ export function mediaFailureSummary(value: unknown): string | undefined {
       ? [`- ${safe(detail.type)}: ${safe(detail.message)}`] : [];
   });
   if (causes.length === 0) return;
-  return `### Android media failure\n\nStep: ${safe(result.step)}\n\n${causes.slice(0, 8).join("\n")}\n${muteTimingSummary(result.muteTimings)}${outputConsumerSummary(result)}`;
+  return `### Android media failure\n\nStep: ${safe(result.step)}\n\n${causes.slice(0, 8).join("\n")}\n${receiverWaitSummary(result.receiverWait)}${muteTimingSummary(result.muteTimings)}${outputConsumerSummary(result)}`;
+}
+
+function receiverWaitSummary(value: unknown): string {
+  if (!value || typeof value !== "object") return "";
+  const trace = value as Record<string, unknown>;
+  if (trace.clock !== "android.elapsedRealtimeNanos" || trace.budgetMs !== 10_000) return "";
+  const nanos = (value: unknown): value is string => typeof value === "string" && /^\d{1,19}$/.test(value);
+  const lines = ["\nReceiver readiness (android.elapsedRealtimeNanos; shared budget 10000 ms):"];
+  for (const name of ["startedNs", "prejoinedObservedNs", "lastReadStartedNs", "lastReadCompletedNs", "completedNs", "failureObservedNs"])
+    lines.push(`${name}: ${nanos(trace[name]) ? trace[name] : "unobserved"}`);
+  const allowed = new Set(["mediaConnectStarted", "mediaConnectCompleted", "microphonePublishStarted", "microphonePublished",
+    "prejoined", "subscriptionRequested", "remoteSubscribed"]);
+  if (Array.isArray(trace.signals)) for (const signal of trace.signals.slice(0, 64)) {
+    if (signal && typeof signal === "object" && allowed.has(signal.stage) && nanos(signal.atNs))
+      lines.push(`${signal.stage}: ${signal.atNs}`);
+  }
+  lines.push("Peer/server boundaries and independent host CPU/memory samples: media-evidence/receiver-*.json and receiver-host.jsonl.");
+  return `${lines.join("\n")}\n`;
 }
 
 /** Compare durations only within each named monotonic clock; retain no request or PCM fields. */

@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { startHostResourceMonitor } from "./native-media-receiver-diagnostics.ts";
 
 type Program = "openssl" | "ip" | "docker" | "curl";
 export type Execute = (program: Program, args: readonly string[]) => string;
@@ -38,6 +39,7 @@ const startServer: Start = (directory) => {
   child.once("error", () => {});
   child.unref();
   assert.ok(child.pid, "Could not start native media fixture");
+  startHostResourceMonitor(directory, child.pid);
   return child.pid;
 };
 
@@ -139,6 +141,9 @@ rtc:
   udp_port: 7882
 keys:
   ci-key: ${settings.secret}
+webhook:
+  api_key: ci-key
+  urls: [http://127.0.0.1:9444/events]
 logging:
   level: error
 `

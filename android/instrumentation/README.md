@@ -195,3 +195,34 @@ The exploratory DND study and its measurements are preserved on
 [`archive/android-telecom-research`](https://github.com/relayphone/expo-callkit-telecom/tree/archive/android-telecom-research).
 The active suite keeps `DndMatrixTest` for functional filtering and
 `DndWarmCleanupTest` for teardown of prewarmed media after a policy change.
+
+### Receiver readiness diagnostics
+
+The media qualification keeps the existing shared 10-second prejoin/subscription
+budget. `media-hook-results.json.receiverWait` records the device's prejoin,
+publication and polling boundaries in `android.elapsedRealtimeNanos`, including
+whether the first receiver read was ever reached. The failure summary names
+unobserved boundaries rather than treating every timeout as a peer failure.
+
+The existing media-evidence artifact also contains:
+
+| File | Observations |
+| --- | --- |
+| `receiver-hooks-*.json` | Automatic subscription requested at `room.connect`, connection completion, remote publication/subscription callbacks, authenticated server publication event and 250 ms event-loop lag samples |
+| `receiver-host.jsonl` | Independent one-second host CPU, memory/swap, peer process CPU/RSS and main-thread scheduler runtime/runqueue-wait counters |
+
+Peer callback times use `host.monotonic_ns`. Host resource samples use
+`host.hrtime.bigint`. Both include labelled host Unix milliseconds for wall-time
+correlation; never subtract device and host monotonic timestamps. Server webhook
+`created_at` is labelled Unix seconds with whole-second precision, including
+server telemetry scheduling before notification; its peer delivery time is
+recorded separately. Missing webhook evidence alone cannot establish late app
+publication.
+
+The peer retains automatic subscription, requested before the invitation is
+returned to the app. This path has no later per-track subscribe request. The
+loopback-only webhook receiver authenticates LiveKit signatures and retains only
+synthetic test identities, track IDs and timestamps. The independent resource
+sampler continues when the peer event loop or host Gradle command is blocked,
+and exits when the fixture wrapper exits or its existing 20-minute limit ends.
+No scheduling priorities, media gates or timing budgets change.

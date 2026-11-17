@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import ssl
@@ -37,6 +38,111 @@ uplink_tasks = set()
 room_receivers = {}
 negotiations = {}
 signaling_ice = {}
+
+receiver_traces = {}
+
+
+class ReceiverTrace:
+    """Separate server event time from peer callback delivery and event-loop scheduling."""
+    stages = {"autoSubscribeRequested", "peerConnected", "trackPublishedCallback", "trackSubscribedCallback",
+              "trackSubscriptionFailed", "serverTrackPublished", "receiverRead"}
+
+    def __init__(self, server_id, output=None):
+        self.server_id, self.output = server_id, output
+        self.events, self.loop_samples = [], []
+        self.dropped = 0
+        self.reads = 0
+        self.last_read = None
+        self.persistence_error = None
+
+    def event(self, stage, track_sid=None, server_seconds=None):
+        if stage not in self.stages:
+            raise ValueError("Invalid receiver stage")
+        event = {"stage": stage, "atNs": str(time.monotonic_ns()), "unixMs": time.time_ns() // 1_000_000}
+        if track_sid and re.fullmatch(r"TR_[A-Za-z0-9]+", track_sid):
+            event["trackSid"] = track_sid
+        if type(server_seconds) is int and server_seconds > 0:
+            event["serverCreatedAtSeconds"] = str(server_seconds)
+        if len(self.events) < 64:
+            self.events.append(event)
+        else:
+            self.dropped += 1
+        self.flush()
+
+    def sample_loop(self, expected_ns, observed_ns):
+        self.loop_samples.append({"expectedNs": str(expected_ns), "observedNs": str(observed_ns),
+                                  "lagNs": str(max(0, observed_ns - expected_ns)),
+                                  "unixMs": time.time_ns() // 1_000_000})
+        self.loop_samples = self.loop_samples[-240:]
+        self.flush()
+
+    def snapshot(self):
+        return {"schemaVersion": 1, "serverId": self.server_id, "peerPid": os.getpid(),
+                "clock": "host.monotonic_ns", "wallClock": "host.unix_ms",
+                "serverClock": "livekit.webhook.created_at.unix_seconds",
+                "subscriptionMode": "auto; requested by room.connect before invitation delivery, no per-track request",
+                "events": self.events, "loopSamples": self.loop_samples, "droppedEvents": self.dropped,
+                "receiverReads": self.reads, "lastReceiverRead": self.last_read,
+                "persistenceError": self.persistence_error}
+
+    def flush(self):
+        if self.output is not None:
+            try:
+                self.output.parent.mkdir(parents=True, exist_ok=True)
+                temporary = self.output.with_suffix(".tmp")
+                temporary.write_text(json.dumps(self.snapshot()))
+                temporary.replace(self.output)
+            except OSError as error:
+                if self.persistence_error is None:
+                    print("Receiver diagnostics persistence failed", file=sys.stderr, flush=True)
+                self.persistence_error = type(error).__name__
+
+
+def receiver_trace(room_name):
+    server_id = room_name.removeprefix("native-ci-")
+    if not re.fullmatch(r"hooks-[0-9]+", server_id):
+        return None
+    if server_id not in receiver_traces:
+        output = directory / "media-evidence" / ("receiver-" + server_id + ".json") if directory else None
+        receiver_traces[server_id] = ReceiverTrace(server_id, output)
+    return receiver_traces[server_id]
+
+
+async def receiver_webhook(request):
+    try:
+        event = api.WebhookReceiver(api.TokenVerifier(settings["key"], settings["secret"])).receive(
+            await request.text(), request.headers.get("Authorization", ""))
+    except Exception:
+        return web.Response(status=401)
+    if event.event == "track_published" and event.participant.identity == "device-" + event.room.name.removeprefix("native-ci-"):
+        trace = receiver_trace(event.room.name)
+        if trace is not None:
+            trace.event("serverTrackPublished", event.track.sid, event.created_at)
+    return web.Response(status=200)
+
+
+async def receiver_diagnostics(app):
+    (directory / "receiver-peer-pid").write_text(str(os.getpid()))
+    events = web.Application()
+    events.router.add_post("/events", receiver_webhook)
+    runner = web.AppRunner(events, access_log=None)
+    await runner.setup()
+    await web.TCPSite(runner, "127.0.0.1", 9444).start()
+
+    async def sample_loop():
+        while True:
+            expected = time.monotonic_ns() + 250_000_000
+            await asyncio.sleep(.25)
+            observed = time.monotonic_ns()
+            for trace in receiver_traces.values():
+                trace.sample_loop(expected, observed)
+    sampler = asyncio.create_task(sample_loop())
+    try:
+        yield
+    finally:
+        sampler.cancel()
+        await asyncio.gather(sampler, return_exceptions=True)
+        await runner.cleanup()
 
 
 class TonesV2Signal:
@@ -531,10 +637,23 @@ def token(room, identity, can_publish=True):
 
 async def publish(room_name):
     room = rtc.Room()
+    trace = receiver_trace(room_name)
+
+    @room.on("track_published")
+    def published(publication, participant):
+        if trace is not None and publication.kind == rtc.TrackKind.KIND_AUDIO and participant.identity.startswith("device-"):
+            trace.event("trackPublishedCallback", publication.sid)
+
+    @room.on("track_subscription_failed")
+    def subscription_failed(participant, track_sid, error):
+        if trace is not None and participant.identity.startswith("device-"):
+            trace.event("trackSubscriptionFailed", track_sid)
 
     @room.on("track_subscribed")
     def received(track, publication, participant):
         if track.kind == rtc.TrackKind.KIND_AUDIO and participant.identity.startswith("device-"):
+            if trace is not None:
+                trace.event("trackSubscribedCallback", publication.sid)
             observation = MarkerObservation(room_name.removeprefix("native-ci-") + ":fromDevice")
             uplinks[room_name] = observation
             task = asyncio.create_task(observation.receive(track))
@@ -545,7 +664,11 @@ async def publish(room_name):
             # Consume receiver failures without logging private SDK exception details.
             task.add_done_callback(lambda finished: None if finished.cancelled() else finished.exception())
 
+    if trace is not None:
+        trace.event("autoSubscribeRequested")
     await room.connect("ws://127.0.0.1:7880", token(room_name, "fixture-publisher"))
+    if trace is not None:
+        trace.event("peerConnected")
     source = rtc.AudioSource(48000, 1)
     track = rtc.LocalAudioTrack.create_audio_track("fixture-tone", source)
     await room.local_participant.publish_track(track,
@@ -819,6 +942,14 @@ async def markers(request):
     if not authenticated(request):
         return web.Response(status=401)
     room_name = "native-ci-" + request.match_info["server_id"]
+    trace = receiver_trace(room_name)
+    if trace is not None:
+        trace.reads += 1
+        trace.last_read = {"atNs": str(time.monotonic_ns()), "unixMs": time.time_ns() // 1_000_000}
+        if trace.reads == 1:
+            trace.event("receiverRead")
+        else:
+            trace.flush()
     observation = uplinks.get(room_name)
     if observation is None:
         return web.json_response({"running": False, "frames": 0, "markers": 0})
@@ -1009,6 +1140,7 @@ if __name__ == "__main__":
         analyze_stdin()
         sys.exit(0)
     app = web.Application(middlewares=[sanitized_errors])
+    app.cleanup_ctx.append(receiver_diagnostics)
     app.on_cleanup.append(close_output_measurements)
     app.on_cleanup.append(analysis_worker.close)
     app.router.add_get("/health", lambda _: web.json_response({"ready": True}))

@@ -157,7 +157,7 @@ test("preserves TLS commands, credentials, single-interface config, server start
   const config = readFileSync(join(f.directory, "livekit.yaml"), "utf8");
   assert.equal(
     config.replace(settings.secret, "<secret>"),
-    "port: 7880\nrtc:\n  node_ip: 192.0.2.42\n  use_external_ip: false\n  interfaces:\n    includes: [eth0]\n  tcp_port: 7881\n  udp_port: 7882\nkeys:\n  ci-key: <secret>\nlogging:\n  level: error\n"
+    "port: 7880\nrtc:\n  node_ip: 192.0.2.42\n  use_external_ip: false\n  interfaces:\n    includes: [eth0]\n  tcp_port: 7881\n  udp_port: 7882\nkeys:\n  ci-key: <secret>\nwebhook:\n  api_key: ci-key\n  urls: [http://127.0.0.1:9444/events]\nlogging:\n  level: error\n"
   );
   const assets = JSON.parse(
     readFileSync(
