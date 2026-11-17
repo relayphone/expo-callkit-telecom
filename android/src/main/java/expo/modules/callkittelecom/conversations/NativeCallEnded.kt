@@ -4,13 +4,19 @@ import android.os.Build
 import android.os.SystemClock
 import android.telecom.DisconnectCause
 
+/** REMOTE includes outgoing no-answer; MISSED describes unanswered incoming calls.
+ * https://developer.android.com/reference/android/telecom/DisconnectCause#REMOTE
+ */
+internal fun unansweredDisconnectCode(direction: NativeCallDirection): Int =
+    if (direction == NativeCallDirection.INCOMING) DisconnectCause.MISSED else DisconnectCause.REMOTE
+
 /** Strong host input; wire compatibility defaults are applied before this boundary. */
 internal data class NativeCallEnded(val eventId: String, val serverCallId: String, val reason: String) {
     fun disconnectCause(sdkInt: Int = Build.VERSION.SDK_INT): DisconnectCause {
         val code = when (reason) {
             // API34+ CallControl validates four codes before IPC. Legacy Connection does not.
             "answeredElsewhere" -> if (sdkInt >= 34) DisconnectCause.REMOTE else DisconnectCause.ANSWERED_ELSEWHERE
-            "unanswered" -> DisconnectCause.MISSED
+            "unanswered" -> unansweredDisconnectCode(NativeCallDirection.INCOMING)
             else -> DisconnectCause.REMOTE
         }
         return DisconnectCause(code, reason)

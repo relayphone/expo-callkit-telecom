@@ -8,6 +8,15 @@ The JavaScript handler decides outgoing **start placement** on Android. Native a
 
 App placement finishes before Android Telecom admission. The default SDK placement deadline is 10 seconds; the handler receives an effective deadline one second earlier, **9 seconds** by default, matching iOS. Settlement at or after that effective deadline is rejected. Connection reports during placement are applied only after acceptance. Rejecting, cancelling or timing out placement leaves no Telecom call.
 
+For a dialing notification from the tap, start the call immediately and accept
+local placement promptly; perform the server dial afterward and provide media
+when it returns. Keeping the placement handler pending on that network operation
+delays Telecom admission. Android outgoing calls stay `DIALING` until the app's
+`connected` report; native media readiness alone leaves the SDK `connecting`.
+There is no separate start-to-media-provision deadline. The outgoing unanswered
+timeout defaults to 60 seconds from admission and remains in effect until the
+connected report. See [start at placement](android-quick-start.md#show-an-outgoing-call-while-the-server-dials).
+
 [Core-Telecom's `CallsManager.addCall`](https://developer.android.com/reference/kotlin/androidx/core/telecom/CallsManager#addCall(androidx.core.telecom.CallAttributesCompat,kotlin.coroutines.SuspendFunction1,kotlin.coroutines.SuspendFunction1,kotlin.coroutines.SuspendFunction0,kotlin.coroutines.SuspendFunction0,kotlin.Function1)) permits delaying outgoing admission until the remote side is ready. Its five-second admission and native-callback bounds begin after app placement; they do not limit the app's network operation. The implementation uses [Core-Telecom 1.1.0](https://dl.google.com/dl/android/maven2/androidx/core/core-telecom/1.1.0/core-telecom-1.1.0-sources.jar); see the [video compatibility notes](./contracts/android-video.md). The SDK [handler deadline](https://github.com/relayphone/ios-voip-sdk/blob/597c39137b51b2537ce60e15e6ecf86d281f5d86/expo/ios/HandlerActions.swift) reserves the same second for completion.
 
 Configure the composed plugin with canonical SDK options and `androidNativeMedia: "livekit" | "none"` (default `"none"`). This option alone selects the Android native engine and creates its controller. `mediaAdapter` remains `"webrtc" | "none"` for SDK audio integration. The former `joinPolicy` option is rejected. Regenerate native projects after changing selection.
