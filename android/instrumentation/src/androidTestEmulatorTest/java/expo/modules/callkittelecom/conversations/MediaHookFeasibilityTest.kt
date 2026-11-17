@@ -759,6 +759,7 @@ class MediaHookFeasibilityTest {
                     }
                     publications.write(MediaEvidencePublications.File.CAPTURE) {
                         writeMediaCaptureEvidence(context.filesDir.resolve("capture-trace.json"), hooks.trace.snapshot()
+                            .put("sourceStart", hooks.sourceReadiness.snapshot())
                             .put("postApm", hooks.postApm.finish()))
                     }
                     InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {

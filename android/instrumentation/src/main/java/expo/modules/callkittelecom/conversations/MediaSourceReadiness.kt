@@ -34,7 +34,7 @@ internal class MediaSourceReadiness(private val nowNanos: () -> Long) {
 
     suspend fun awaitReady(pause: suspend () -> Unit = { delay(10) }) {
         val published = synchronized(lock) { checkNotNull(publication) }
-        val deadline = published + 1_500_000_000L
+        val deadline = published + START_BUDGET_NANOS
         while (true) {
             val ready = synchronized(lock) { firstBuffer?.let { it <= deadline && pump != null } == true }
             if (ready) return
@@ -48,12 +48,22 @@ internal class MediaSourceReadiness(private val nowNanos: () -> Long) {
 
     fun snapshot(): JSONObject = synchronized(lock) {
         val latency = firstBuffer?.let { buffer -> publication?.let { buffer - it } }
-        JSONObject().put("clock", "android.elapsedRealtimeNanos").put("budgetMs", 1500)
+        val publicationToPump = pump?.let { started -> publication?.let { started - it } }
+        val pumpToFirstBuffer = firstBuffer?.let { buffer -> pump?.let { buffer - it } }
+        JSONObject().put("clock", "android.elapsedRealtimeNanos").put("budgetMs", START_BUDGET_NANOS / 1_000_000)
             .put("publicationNs", publication?.toString() ?: JSONObject.NULL)
             .put("pumpStartedNs", pump?.toString() ?: JSONObject.NULL)
             .put("firstBufferNs", firstBuffer?.toString() ?: JSONObject.NULL)
             .put("startLatencyNs", latency?.toString() ?: JSONObject.NULL)
             .put("startLatencyMs", latency?.div(1_000_000.0) ?: JSONObject.NULL)
+            .put("publicationToPumpNs", publicationToPump?.toString() ?: JSONObject.NULL)
+            .put("publicationToPumpMs", publicationToPump?.div(1_000_000.0) ?: JSONObject.NULL)
+            .put("pumpToFirstBufferNs", pumpToFirstBuffer?.toString() ?: JSONObject.NULL)
+            .put("pumpToFirstBufferMs", pumpToFirstBuffer?.div(1_000_000.0) ?: JSONObject.NULL)
             .put("timedOut", timedOut)
+    }
+
+    private companion object {
+        const val START_BUDGET_NANOS = 3_300_000_000L
     }
 }

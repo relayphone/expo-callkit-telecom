@@ -74,9 +74,12 @@ with a dropped count; later journey writes preserve those entries. Claim capture
 does not perform the separate post-APM qualification.
 
 The muted-source journey first requires a valid 480-frame recordingless buffer
-within 1500 ms of microphone publication, then runs its existing 100 ms progress
+within 3300 ms of microphone publication, then runs its existing 100 ms progress
 and pacing assertions. Evidence records publication, pump-start and first-buffer
-times and startup latency. A readiness failure reports `source-start-timeout`.
+times, publication-to-pump and pump-to-first-buffer intervals, and startup latency
+on success and failure in the result and capture traces. The three ordinary emulator
+startup samples (208, 694 and 1628.8 ms) give 3300 ms using
+`round_up_100ms(max(2 × P95, 1.25 × max))`. A readiness failure reports `source-start-timeout`.
 Output qualification drains while at most one HTTP acknowledgement is pending,
 batching contiguous PCM and every RTC counter sample for the next request.
 Both the tap backlog and pending batch retain the 24,000-frame / 500 ms limit;
