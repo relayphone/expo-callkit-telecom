@@ -39,11 +39,14 @@ internal suspend fun openNotificationTestShade() = systemUi { device ->
                 it.packageName == own && !it.isDestroyed && it.hasWindowFocus()
             } }
         }
-        if (!focused && device.currentPackageName == "com.android.systemui") break
+        if (!focused && device.notificationShadeIsVisible()) break
         delay(10)
     }
     withContext(Dispatchers.Main) { AnswerJourneyObservation.trace?.mark(AnswerJourneyPhase.NOTIFICATION_SHADE_OPEN_COMPLETED) }
 }
+
+private fun UiDevice.notificationShadeIsVisible(): Boolean =
+    hasObject(By.res("com.android.systemui", "notification_stack_scroller"))
 
 /** Select the posted person before selecting an action, so another call cannot satisfy this tap. */
 internal suspend fun tapNotificationTestCard(person: String, actionTitle: String? = null) {
@@ -63,8 +66,8 @@ internal suspend fun tapNotificationTestCard(person: String, actionTitle: String
                         target.click()
                         withContext(Dispatchers.Main) { AnswerJourneyObservation.trace?.mark(
                             AnswerJourneyPhase.SYSTEMUI_ACTION_TAPPED, atNanos = tapped) }
-                        if (device.currentPackageName == "com.android.systemui") device.executeShellCommand("cmd statusbar collapse")
-                        while (device.currentPackageName.let { it == null || it == "com.android.systemui" }) delay(10)
+                        if (device.notificationShadeIsVisible()) device.executeShellCommand("cmd statusbar collapse")
+                        while (device.notificationShadeIsVisible()) delay(10)
                         withContext(Dispatchers.Main) { AnswerJourneyObservation.trace?.mark(AnswerJourneyPhase.SHADE_COLLAPSED) }
                         return@systemUi
                     }
