@@ -239,12 +239,12 @@ class ConversationOptionsTest {
             CallPushIntake.configure()
             val message = RemoteMessage.Builder("test-sender").addData("messageType", "incomingCall")
                 .addData("incomingCall", JSONObject(push.payload()).toString()).build()
-            assertTrue(CallPushIntake.handle(context, message))
+            assertTrue("Decoded incoming push must be handled", CallPushIntake.handle(context, message))
             withTimeout(10_000) { while (ended[push.serverCallId] == null) delay(10) }
             removed(push.serverCallId)
-            assertTrue(ringing.contains(push.serverCallId))
-            assertEquals("unanswered", ended[push.serverCallId]?.get("reason"))
-            assertTrue(endedAt[push.serverCallId]!! >= push.expiresAtMillis!!)
+            assertTrue("Decoded incoming push must reach the ringing surface before expiry", ringing.contains(push.serverCallId))
+            assertEquals("Decoded incoming push must end as unanswered", "unanswered", ended[push.serverCallId]?.get("reason"))
+            assertTrue("Decoded incoming push must not end before its expiry", endedAt[push.serverCallId]!! >= push.expiresAtMillis!!)
         }
     }
 
