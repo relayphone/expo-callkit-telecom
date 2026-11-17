@@ -215,6 +215,20 @@ class ConversationAnswerIntentTest {
         assertEquals("Answer must preserve receiver routing", beforeRoute, (engine.audioRoutes()["current"] as Map<*, *>)["type"])
         assertEquals(1, answers.size)
     }
+    @Test fun collapsingTheShadeDoesNotLaunchOrAnswerTheCall() = runBlocking {
+        fixture { id, answers ->
+            notification(id, true)
+            await(AnswerJourneyWait.SYSTEMUI_ACTION) {
+                openNotificationTestShade()
+                collapseNotificationTestShade()
+            }
+            assertEquals(0, NotificationLaunchActivity.creations)
+            assertTrue(answers.isEmpty())
+            assertEquals("ringing", state(id)?.get("status"))
+            notification(id, true)
+        }
+    }
+
     @Test fun appAudioAnswerStaysAudioOnly() = runBlocking { audioAnswer(false) }
     @Test fun notificationAudioAnswerStaysAudioOnly() = runBlocking { audioAnswer(true) }
 

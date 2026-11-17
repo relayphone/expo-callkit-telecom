@@ -1,5 +1,6 @@
 package expo.modules.callkittelecom.conversations
 
+import android.accessibilityservice.AccessibilityService
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
@@ -45,6 +46,16 @@ internal suspend fun openNotificationTestShade() = systemUi { device ->
     withContext(Dispatchers.Main) { AnswerJourneyObservation.trace?.mark(AnswerJourneyPhase.NOTIFICATION_SHADE_OPEN_COMPLETED) }
 }
 
+private fun UiDevice.notificationShadeIsExpanded(): Boolean =
+    hasObject(By.res("com.android.systemui", "quick_qs_panel"))
+
+internal suspend fun collapseNotificationTestShade() = systemUi { device ->
+    InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(
+        AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+    while (device.notificationShadeIsExpanded()) delay(10)
+    withContext(Dispatchers.Main) { AnswerJourneyObservation.trace?.mark(AnswerJourneyPhase.SHADE_COLLAPSED) }
+}
+
 /** Select the posted person before selecting an action, so another call cannot satisfy this tap. */
 internal suspend fun tapNotificationTestCard(person: String, actionTitle: String? = null) {
     openNotificationTestShade()
@@ -73,6 +84,7 @@ internal suspend fun tapNotificationTestCard(person: String, actionTitle: String
             delay(10)
         }
     }
+    collapseNotificationTestShade()
 }
 
 /** Real Home navigation for scenarios which require another app in the foreground. */

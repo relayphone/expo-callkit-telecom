@@ -5,6 +5,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AnswerJourneyTraceTest {
+    @Test fun shadeSettlementCannotCompleteTheForegroundWait() {
+        var now = 0L
+        val trace = AnswerJourneyTrace("test", { now })
+        trace.mark(AnswerJourneyPhase.SYSTEMUI_ACTION_TAPPED)
+        now += 10_000_000
+        trace.mark(AnswerJourneyPhase.SHADE_COLLAPSED)
+        trace.mark(AnswerJourneyPhase.WAIT_STARTED, AnswerJourneyWait.ACTIVITY_FOREGROUND)
+        now += 5_000_000_000L
+        trace.mark(AnswerJourneyPhase.WAIT_TIMED_OUT, AnswerJourneyWait.ACTIVITY_FOREGROUND)
+        val report = JSONObject(trace.json("example", false))
+        assertEquals(5010.0, report.getDouble("elapsedMs"), 0.0)
+        assertEquals("ACTIVITY_FOREGROUND", report.getString("timedOutWait"))
+        assertEquals("SHADE_COLLAPSED", report.getString("lastReachedPhase"))
+        assertEquals(10.0, report.getJSONObject("firstElapsedMs").getDouble("SHADE_COLLAPSED"), 0.0)
+        assertEquals("SYSTEMUI_ACTION_TAPPED", report.getJSONArray("phases").getJSONObject(0).getString("phase"))
+    }
+
     @Test fun timeoutRetainsNamedWaitAndElapsedPhaseTimes() {
         var now = 1_000_000L
         val trace = AnswerJourneyTrace("test", { now })
