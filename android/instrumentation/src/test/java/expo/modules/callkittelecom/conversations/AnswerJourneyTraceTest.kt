@@ -8,7 +8,7 @@ class AnswerJourneyTraceTest {
     @Test fun timeoutRetainsNamedWaitAndElapsedPhaseTimes() {
         var now = 1_000_000L
         val trace = AnswerJourneyTrace("test", { now })
-        trace.mark(AnswerJourneyPhase.PENDING_INTENT_SENT)
+        trace.mark(AnswerJourneyPhase.SYSTEMUI_ACTION_TAPPED)
         now += 3_000_000
         trace.mark(AnswerJourneyPhase.ACTIVITY_NEW_INTENT, token = 1, tokenPresent = true)
         now += 5_000_000_000L
@@ -18,6 +18,7 @@ class AnswerJourneyTraceTest {
         assertEquals("WAIT_TIMED_OUT", report.getString("lastPhase"))
         assertEquals(5003.0, report.getDouble("elapsedMs"), 0.0)
         val phases = report.getJSONArray("phases")
+        assertEquals("SYSTEMUI_ACTION_TAPPED", phases.getJSONObject(0).getString("phase"))
         assertEquals(3.0, phases.getJSONObject(1).getDouble("sincePreviousMs"), 0.0)
         assertEquals(1, phases.getJSONObject(1).getInt("tokenOrdinal"))
         assertTrue(phases.getJSONObject(1).getBoolean("tokenPresent"))

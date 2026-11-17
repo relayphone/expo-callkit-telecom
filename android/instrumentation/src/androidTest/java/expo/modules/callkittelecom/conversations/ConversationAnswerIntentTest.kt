@@ -3,11 +3,9 @@ package expo.modules.callkittelecom.conversations
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationManager
-import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.app.Person
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import androidx.core.telecom.CallControlScope
@@ -37,11 +35,11 @@ class ConversationAnswerIntentTest {
             reader.lineSequence().count { "VIDEO_STATE_CHANGED (CallAttributes.VIDEO_CALL)" in it }
         }
     }
-    private suspend fun notification(id: String, ringing: Boolean): Notification = await(
+    private suspend fun notification(id: String, ringing: Boolean, person: String = id): Notification = await(
         if (ringing) AnswerJourneyWait.INCOMING_NOTIFICATION else AnswerJourneyWait.ONGOING_NOTIFICATION) {
         while (true) {
             val card = context.getSystemService(NotificationManager::class.java).activeNotifications.firstOrNull {
-                it.notification.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name == id &&
+                it.notification.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name == person &&
                     it.notification.extras.getInt("android.callType") == if (ringing) 1 else 2
             }
             if (card != null) return@await card.notification
@@ -74,6 +72,7 @@ class ConversationAnswerIntentTest {
         var succeeded = false
         try {
             withPresentationCleanup(body = {
+                await(AnswerJourneyWait.DISPLAY_READY) { prepareNotificationTestDisplay() }
                 ConversationPresentation.configure(null)
                 NotificationLaunchActivity.reset()
                 engine.nativeMedia = AndroidNativeMedia.NONE
@@ -177,28 +176,15 @@ class ConversationAnswerIntentTest {
             if (calls.any { "state=ACTIVE" in it }) trace.mark(AnswerJourneyPhase.TELECOM_ACTIVE)
         }
     }
-    private suspend fun send(intent: PendingIntent) {
-        // Model SystemUI's privileged notification tap while this test app is on Home.
-        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        automation.adoptShellPermissionIdentity("android.permission.START_ACTIVITIES_FROM_BACKGROUND")
-        try {
-            val options = if (Build.VERSION.SDK_INT >= 34) ActivityOptions.makeBasic()
-                .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED).toBundle() else null
-            trace.mark(AnswerJourneyPhase.PENDING_INTENT_SENT)
-            intent.send(context, 0, null, null, null, null, options)
-            trace.mark(AnswerJourneyPhase.PENDING_INTENT_RETURNED)
-        } finally { automation.dropShellPermissionIdentity() }
+    private suspend fun tap(card: Notification, answer: Boolean) = await(AnswerJourneyWait.SYSTEMUI_ACTION) {
+        val title = if (answer) card.actions.single { it.actionIntent == answerIntent(card) }.title.toString() else null
+        val person = checkNotNull(card.extras.getParcelable(Notification.EXTRA_CALL_PERSON, Person::class.java)?.name).toString()
+        tapNotificationTestCard(person, title)
     }
-    private suspend fun home() {
-        trace.mark(AnswerJourneyPhase.HOME_SENT)
-        withContext(Dispatchers.IO) {
-            val command = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("input keyevent KEYCODE_HOME")
-            ParcelFileDescriptor.AutoCloseInputStream(command).use { it.readBytes() }
-        }
-        await(AnswerJourneyWait.HOME_FOCUS_LOST) { while (NotificationLaunchActivity.active?.hasWindowFocus() == true) delay(10) }
-    }
-    private suspend fun foreground(id: String) = await(AnswerJourneyWait.ACTIVITY_FOREGROUND) {
-        while (NotificationLaunchActivity.active?.hasWindowFocus() != true ||
+    private fun existingActivity(intent: Intent, oneShot: Boolean = false): PendingIntent? = PendingIntent.getActivity(context, 0,
+        intent, PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE or if (oneShot) PendingIntent.FLAG_ONE_SHOT else 0)
+    private suspend fun foreground(id: String, expected: Class<out NotificationLaunchActivity> = NotificationLaunchActivity::class.java) = await(AnswerJourneyWait.ACTIVITY_FOREGROUND) {
+        while (NotificationLaunchActivity.active?.javaClass != expected || NotificationLaunchActivity.active?.hasWindowFocus() != true ||
             NotificationLaunchActivity.lastIntent?.getStringExtra(ConversationNotificationIntents.EXTRA_CONVERSATION_ID) != id) delay(10)
     }
     private suspend fun audioAnswer(notification: Boolean) = fixture { id, answers ->
@@ -217,7 +203,7 @@ class ConversationAnswerIntentTest {
             val card = notification(id, true)
             val answer = answerIntent(card)
             assertTrue("Answer must target an Activity directly", answer.isActivity)
-            home(); send(answer); foreground(id)
+            tap(card, true); foreground(id)
         } else engine.join(id)
         await(AnswerJourneyWait.SNAPSHOT_ANSWERED) { while (state(id)?.get("status") == "ringing") delay(10) }
         await(AnswerJourneyWait.TELECOM_ACTIVE) { while (platformCalls().singleOrNull()?.contains("state=ACTIVE") != true) delay(10) }
@@ -236,7 +222,7 @@ class ConversationAnswerIntentTest {
         if (fromNotification) {
             val card = notification(id, true)
             println("videoAnswer actionTitles=${card.actions.map { it.title }}")
-            home(); send(answerIntent(card))
+            tap(card, true)
             foreground(id)
         } else engine.join(id)
         await(AnswerJourneyWait.SNAPSHOT_ANSWERED) { while (state(id)?.get("status") == "ringing") delay(10) }
@@ -256,7 +242,15 @@ class ConversationAnswerIntentTest {
             val answer = answerIntent(card)
             assertTrue(answer.isActivity)
             assertTrue(card.actions.single { it.title.toString().equals("Decline", true) }.actionIntent.isBroadcast)
-            home(); send(answer); foreground(id)
+            assertTrue(answer.isImmutable)
+            tap(card, false); foreground(id)
+            val opened = Intent(checkNotNull(NotificationLaunchActivity.lastIntent))
+            val uri = checkNotNull(opened.data)
+            val expectedAnswer = Intent(opened).setData(uri.buildUpon().path(null).appendPath(id)
+                .appendPath("answer").appendPath(checkNotNull(uri.lastPathSegment)).build())
+            assertEquals("Static one-shot lookup must find the posted Answer", answer, existingActivity(expectedAnswer, true))
+            assertTrue(answers.isEmpty())
+            tap(card, true); foreground(id)
             await(AnswerJourneyWait.ANSWER_PERFORMED) { while (answers.isEmpty()) delay(10) }
             assertEquals(1, answers.size)
             assertEquals(1, NotificationLaunchActivity.answers)
@@ -268,7 +262,7 @@ class ConversationAnswerIntentTest {
             foreground(id)
             assertEquals(1, NotificationLaunchActivity.answers)
             assertEquals(1, answers.size)
-            assertTrue(runCatching { send(answer) }.exceptionOrNull() is PendingIntent.CanceledException)
+            assertNull("The one-shot Answer must be canceled after the SystemUI tap", existingActivity(expectedAnswer, true))
         }
     }
 
@@ -277,7 +271,7 @@ class ConversationAnswerIntentTest {
             val incoming = notification(id, true)
             val openIncoming = checkNotNull(incoming.contentIntent)
             assertTrue(openIncoming.isActivity)
-            home(); send(openIncoming); foreground(id)
+            tap(incoming, false); foreground(id)
             assertFalse(checkNotNull(NotificationLaunchActivity.lastIntent).hasExtra(ConversationNotificationIntents.EXTRA_ACTION))
             assertEquals("ringing", state(id)?.get("status"))
             assertTrue(answers.isEmpty())
@@ -286,7 +280,7 @@ class ConversationAnswerIntentTest {
             assertTrue(ongoing.actions.single { it.title.toString().equals("Hang Up", true) }.actionIntent.isBroadcast)
             val openOngoing = checkNotNull(ongoing.contentIntent)
             assertTrue(openOngoing.isActivity)
-            home(); send(openOngoing); foreground(id)
+            tap(ongoing, false); foreground(id)
             assertFalse(checkNotNull(NotificationLaunchActivity.lastIntent).hasExtra(ConversationNotificationIntents.EXTRA_ACTION))
             assertEquals(1, answers.size)
             assertEquals(NotificationLaunchActivity::class.java.name, NotificationLaunchActivity.lastClass)
@@ -295,23 +289,34 @@ class ConversationAnswerIntentTest {
 
     @Test fun appContentIntentTakesPrecedenceAndAConfiguredActivityCanAnswerNatively() = runBlocking {
         fixture { id, answers ->
-            notification(id, true)
+            val ringing = notification(id, true)
+            tap(ringing, false); foreground(id)
+            val opened = Intent(checkNotNull(NotificationLaunchActivity.lastIntent))
             for (name in listOf("CallActivity", ".CallActivity", "${context.packageName}.CallActivity")) {
-                home(); send(ConversationNotificationIntents.activity(context, id, activityClass = name)); foreground(id)
-                assertEquals(NotificationAlternateActivity::class.java.name, NotificationLaunchActivity.lastClass)
+                val candidate = ConversationNotificationIntents.activity(context, id, activityClass = name)
+                val component = android.content.ComponentName(context.packageName,
+                    if (name.startsWith('.')) context.packageName + name else if ('.' !in name) context.packageName + "." + name else name)
+                val expected = Intent(opened).setComponent(component)
+                assertTrue(candidate.isActivity)
+                assertTrue(candidate.isImmutable)
+                assertEquals("The factory must target the requested Activity without launching it", candidate, existingActivity(expected))
+                val activity = context.packageManager.getActivityInfo(component, 0)
+                assertEquals(NotificationAlternateActivity::class.java.name, activity.targetActivity ?: activity.name)
                 assertTrue(answers.isEmpty())
             }
-            val custom = PendingIntent.getActivity(context, 17, Intent(context, NotificationAlternateActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-            ConversationPresentation.configure { _, _ -> CallNotificationContent(contentIntent = custom) }
-            ConversationPresentation.refresh(context)
-            await(AnswerJourneyWait.CONTENT_OVERRIDE) { while (notification(id, true).contentIntent != custom) delay(10) }
-            val answer = ConversationNotificationIntents.activity(context, id, answer = true,
+            val custom = ConversationNotificationIntents.activity(context, id, answer = true,
                 activityClass = NotificationAlternateActivity::class.java.name)
-            home(); send(answer); foreground(id)
+            assertTrue(custom.isActivity)
+            assertTrue(custom.isImmutable)
+            val customPerson = "$id-configured"
+            ConversationPresentation.configure { _, _ -> CallNotificationContent(title = customPerson, contentIntent = custom) }
+            ConversationPresentation.refresh(context)
+            await(AnswerJourneyWait.CONTENT_OVERRIDE) { while (notification(id, true, customPerson).contentIntent != custom) delay(10) }
+            tap(notification(id, true, customPerson), false); foreground(id, NotificationAlternateActivity::class.java)
             assertEquals(NotificationAlternateActivity::class.java.name, NotificationLaunchActivity.lastClass)
             await(AnswerJourneyWait.ANSWER_PERFORMED) { while (answers.isEmpty()) delay(10) }
             assertEquals(1, answers.size)
-            assertEquals(custom, notification(id, false).contentIntent)
+            assertEquals(custom, notification(id, false, customPerson).contentIntent)
         }
     }
 
