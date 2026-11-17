@@ -3,28 +3,29 @@
 Notification UI waits retain hierarchy XML and screenshots under the test
 application's `additionalTestOutputDir/systemui-failures` before cleanup. AGP
 collects this standard output under `build/outputs/connected_android_test_additional_output/`
-before uninstalling the test APKs. Direct instrumentation sets the same argument
-under `Android/media` and pulls it before shutdown. Only manual invocations
-without that argument fall back to external app files. Capture is deduplicated
+before uninstalling the test APKs. Manual invocations without that argument
+fall back to external app files. Capture is deduplicated
 per test. These fixtures use synthetic call identities on en-US emulator images.
-The checked-in helper currently uses the original v2 navigation as a temporary
-comparison baseline. The workflow also builds the proposed navigation from its
-pinned revision, changing only `NotificationTestSystemUi.kt`. Both versions keep
-the original five-second waits and product assertions. This comparison must
-finish before selecting the final navigation behavior.
+The helper keeps the original v2 navigation and five-second waits. The additional
+navigation retries are removed after the measured comparison; the Home fallback
+is omitted because an isolated benefit has not been established.
 
 The notification UI workflow runs both complete Answer and Activity-cleanup
-classes 20 times per navigation version on API 35, in four batches of five.
+classes 20 times per resource configuration on API 35, in four batches of five.
 Each repetition uses Gradle's `connectedDebugAndroidTest` with both classes in
 one instrumentation process, the ordinary AGP install/permission handling and
 the same disabled animations as the functional suite. No extra warm-up or
-notification clearing is added. Each run retains the original Gradle output,
+notification clearing is added. Each run retains Gradle stdout and stderr,
 JUnit reports, AGP additional output, suite wall time and per-class test time.
 Incomplete, skipped and failed tests remain fatal, including a nonzero Gradle
-exit after passing reports. Each batch stops at its first failed connected run.
+exit after passing reports. `compare BATCH` completes all five planned rounds
+and reports any failures after the batch, giving equal comparison samples.
+`run BATCH` is final qualification and stops at its first failed connected run.
 The missing-card artifact control runs after all five measured repetitions,
-so its deliberate timeout cannot affect their starting UI state. A delayed
-notification control still checks actual content-intent delivery.
+so its deliberate timeout cannot affect their starting UI state. The resource
+comparison measures two-core/2 GiB and four-core/4 GiB guests with identical test
+code, and retains the budget guard's requested limits and observed memory/CPU
+report beside the run artifacts.
 
 Hold revokes the current capture generation and disables ADM recording before
 publication mute, unpublish, prewarm stop or disposal. A restarted pump reapplies

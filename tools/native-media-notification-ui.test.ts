@@ -115,3 +115,52 @@ test('a nonzero connected exit stays fatal even with passing reports', () => fix
 test('missing reports cannot replace the original connected command failure', () => fixture((_root, output) => {
   assert.throws(() => qualifyNotificationUi(1, output, () => { throw Error('original runner error'); }, null), /original runner error/);
 }));
+test('comparison mode completes every planned round once and stays fatal after named failures', () => fixture((root, output) => {
+  let calls = 0;
+  assert.throws(() => qualifyNotificationUi(3, output, (_program, args) => {
+    calls++; results(root, selection(args), calls === 1 || calls === 3); return '';
+  }, null, 'comparison'), error => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 2);
+    assert.ok(error.errors.every(failure => failure.message.includes('ConversationAnswerIntentTest#test0 status=failure')));
+    return true;
+  });
+  assert.equal(calls, 6);
+  const rows = JSON.parse(readFileSync(join(output, 'timings.json'), 'utf8'));
+  assert.deepEqual(rows.map((row: {run:number}) => row.run), [11, 12, 13, 14, 15, 0]);
+  assert.deepEqual(rows.map((row: {passed:boolean}) => row.passed), [false, true, false, true, true, true]);
+}));
+test('comparison mode also continues after runner errors without reusing prior reports', () => fixture((root, output) => {
+  let calls = 0;
+  assert.throws(() => qualifyNotificationUi(1, output, (_program, args) => {
+    calls++; if (calls === 1) throw Error('first runner failed');
+    results(root, selection(args)); return '';
+  }, null, 'comparison'), error => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 1);
+    assert.equal(error.errors[0].message, 'first runner failed'); return true;
+  });
+  assert.equal(calls, 6);
+  const rows = JSON.parse(readFileSync(join(output, 'timings.json'), 'utf8'));
+  assert.equal(rows.length, 6); assert.deepEqual(rows[0].classes, []);
+  assert.ok(rows.slice(1).every((row: {passed:boolean}) => row.passed));
+}));
+test('comparison mode still rejects a missing mandatory artifact pair after all rounds pass', () => fixture((root, output) => {
+  let calls = 0;
+  assert.throws(() => qualifyNotificationUi(1, output, (_program, args) => {
+    calls++; results(root, selection(args), false, false); return '';
+  }, null, 'comparison'), error => {
+    assert.ok(error instanceof AggregateError); assert.equal(error.errors.length, 1);
+    assert.match(error.errors[0].message, /Missing transferred UI timeout XML\/screenshot pair/); return true;
+  });
+  assert.equal(calls, 6);
+}));
+test('Gradle stderr is retained on successful runs and remains available for a stderr-only runner failure', () => {
+  for (const exitCode of [0, 1]) fixture((root, output) => {
+    const run = (_program: 'gradle', args: string[]) => {
+      results(root, selection(args)); return { stdout: '', stderr: 'original stderr diagnostic', exitCode };
+    };
+    if (exitCode === 0) qualifyNotificationUi(1, output, run, null);
+    else assert.throws(() => qualifyNotificationUi(1, output, run, null), /Gradle connected run failed.*exit 1/);
+    assert.equal(readFileSync(join(output, '1', 'gradle-stderr.txt'), 'utf8'), 'original stderr diagnostic');
+    assert.equal(readFileSync(join(output, '1', 'gradle.txt'), 'utf8'), '');
+  });
+});

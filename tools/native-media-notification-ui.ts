@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { captureMediaCommand, type CapturedOutput } from './native-media-evidence.ts';
 
 const suite = 'expo.modules.callkittelecom.conversations.';
 const classes = [['ConversationAnswerIntentTest', 9], ['NotificationActivityCleanupTest', 2]] as const;
 const certificate = 'android/instrumentation/src/main/res/raw/media_ci_ca.pem';
-type Run = (program: 'gradle', args: string[], timeout: number) => string;
-const execute: Run = (program, args, timeout) => execFileSync(program, args,
-  { encoding: 'utf8', timeout, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024 });
+type Run = (program: 'gradle', args: string[], timeout: number) => string | CapturedOutput;
+const execute: Run = captureMediaCommand;
 interface ClassResult { className: string; executed: number; elapsedMs: number; passed: boolean; failures: string[] }
 function decode(value: string): string {
   return value.replace(/&#(x[0-9a-f]+|\d+);/gi, (_, code: string) =>
@@ -63,7 +63,7 @@ function hasUiArtifactPair(directory: string): boolean {
 }
 /** Use the ordinary connected runner: AGP installs/grants permissions and both classes share one instrumentation. */
 export function qualifyNotificationUi(batch: number, output: string, run: Run = execute,
-  summary: string | null = process.env.GITHUB_STEP_SUMMARY ?? null): void {
+  summary: string | null = process.env.GITHUB_STEP_SUMMARY ?? null, mode: 'qualification' | 'comparison' = 'qualification'): void {
   assert.ok(Number.isInteger(batch) && batch >= 1 && batch <= 4, 'Expected batch 1–4');
   rmSync(output, { recursive: true, force: true }); mkdirSync(output, { recursive: true });
   const build = dirname(output), reports = join(build, 'outputs/androidTest-results/connected/debug');
@@ -72,16 +72,24 @@ export function qualifyNotificationUi(batch: number, output: string, run: Run = 
   const instrument = (expected: readonly (readonly [string, number])[], id: number) => {
     const destination = join(output, String(id)); mkdirSync(destination);
     rmSync(reports, { recursive: true, force: true }); rmSync(additional, { recursive: true, force: true });
-    const started = performance.now(); let log = '', failure: unknown, failed = false, results: ClassResult[] = [];
+    const started = performance.now(); let log = '', stderr = '', failure: unknown, failed = false, results: ClassResult[] = [];
     try {
       try {
-        log = run('gradle', ['-p', 'android/instrumentation', ':connectedDebugAndroidTest', '--rerun',
+        const captured = run('gradle', ['-p', 'android/instrumentation', ':connectedDebugAndroidTest', '--rerun',
           '-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true',
           `-Pandroid.testInstrumentationRunnerArguments.class=${expected.map(([name]) => suite + name).join(',')}`,
           '--no-daemon', '--max-workers=2', '--stacktrace'], 180_000);
+        if (typeof captured === 'string') log = captured;
+        else {
+          log = captured.stdout; stderr = captured.stderr;
+          if (captured.exitCode !== 0) {
+            failed = true; failure = new Error(`Gradle connected run failed (exit ${captured.exitCode ?? 'unavailable'})`);
+          }
+        }
       } catch (error) {
         failed = true; failure = error;
         if (error && typeof error === 'object' && 'stdout' in error && typeof error.stdout === 'string') log = error.stdout;
+        if (error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string') stderr = error.stderr;
       }
       try {
         if (existsSync(reports)) cpSync(reports, join(destination, 'reports'), { recursive: true });
@@ -92,15 +100,23 @@ export function qualifyNotificationUi(batch: number, output: string, run: Run = 
       if (failed) throw failure;
     } finally {
       writeFileSync(join(destination, 'gradle.txt'), log);
+      writeFileSync(join(destination, 'gradle-stderr.txt'), stderr);
       rows.push({ run: id, elapsedMs: performance.now() - started, passed: !failed && results.length > 0 && results.every(row => row.passed), classes: results });
       writeFileSync(join(output, 'timings.json'), JSON.stringify(rows));
     }
   };
+  const failures: unknown[] = [];
+  const failed = (error: unknown) => { if (mode === 'qualification') throw error; failures.push(error); };
   try {
-    for (let iteration = 1; iteration <= 5; iteration++) instrument(classes, (batch - 1) * 5 + iteration);
+    for (let iteration = 1; iteration <= 5; iteration++) {
+      try { instrument(classes, (batch - 1) * 5 + iteration); } catch (error) { failed(error); }
+    }
     // The deliberate timeout must not leave UI state ahead of the measured classes.
-    instrument([['NotificationUiArtifactsTest', 1]], 0);
-    assert.ok(hasUiArtifactPair(join(output, '0', 'additional-output')), 'Missing transferred UI timeout XML/screenshot pair');
+    try {
+      instrument([['NotificationUiArtifactsTest', 1]], 0);
+      assert.ok(hasUiArtifactPair(join(output, '0', 'additional-output')), 'Missing transferred UI timeout XML/screenshot pair');
+    } catch (error) { failed(error); }
+    if (failures.length) throw new AggregateError(failures, 'Notification comparison contains failed runs');
   } finally {
     if (summary) appendFileSync(summary,
       '| Run | Class | Test milliseconds | Class passed | Connected run passed |\n| --- | --- | --- | --- | --- |\n' + rows.flatMap(row => row.classes.map(result =>
@@ -119,8 +135,9 @@ function build() {
 }
 if (import.meta.main) {
   if (process.argv[2] === 'build') build();
-  else if (process.argv[2] === 'run') {
-    try { qualifyNotificationUi(Number(process.argv[3]), `android/instrumentation/build/notification-ui-${process.argv[3]}`); }
+  else if (process.argv[2] === 'run' || process.argv[2] === 'compare') {
+    try { qualifyNotificationUi(Number(process.argv[3]), `android/instrumentation/build/notification-ui-${process.argv[3]}`,
+      undefined, undefined, process.argv[2] === 'compare' ? 'comparison' : 'qualification'); }
     finally { rmSync(certificate, { force: true }); }
-  } else throw Error('Expected build or run BATCH');
+  } else throw Error('Expected build, compare BATCH or run BATCH');
 }
