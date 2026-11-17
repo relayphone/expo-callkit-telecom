@@ -63,6 +63,9 @@ internal suspend fun tapNotificationTestCard(person: String, actionTitle: String
                         target.click()
                         withContext(Dispatchers.Main) { AnswerJourneyObservation.trace?.mark(
                             AnswerJourneyPhase.SYSTEMUI_ACTION_TAPPED, atNanos = tapped) }
+                        if (device.currentPackageName == "com.android.systemui") device.executeShellCommand("cmd statusbar collapse")
+                        while (device.currentPackageName.let { it == null || it == "com.android.systemui" }) delay(10)
+                        withContext(Dispatchers.Main) { AnswerJourneyObservation.trace?.mark(AnswerJourneyPhase.SHADE_COLLAPSED) }
                         return@systemUi
                     }
                     if (!expanded) {
