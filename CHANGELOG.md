@@ -7,16 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 2.0.0-alpha.18 (2026-11-17)
+
 ### Breaking (android)
 
-* Outgoing calls now become active only when the app reports `connected`.
-  Providing media or connecting to the media server leaves Telecom dialing and
-  the SDK connecting until that report.
+* Outgoing calls now stay in Telecom `DIALING` and SDK `connecting` until the app
+  reports `connected`. Only that report sets Telecom `ACTIVE` and `connectedAt`;
+  media readiness alone no longer connects an outgoing call. Hold and resume are
+  available after the connected report. See
+  [Show an outgoing call while the server dials](https://github.com/relayphone/expo-callkit-telecom/blob/v2/docs/android-quick-start.md#show-an-outgoing-call-while-the-server-dials)
+  ([#179](https://github.com/relayphone/expo-callkit-telecom/pull/179)).
 
 ### Fixes
 
 * **android:** map unanswered outgoing calls to `DisconnectCause.REMOTE`,
-  preserving the `unanswered` reason. Unanswered incoming calls remain `MISSED`.
+  preserving the `unanswered` reason. Unanswered incoming calls remain `MISSED`
+  ([#179](https://github.com/relayphone/expo-callkit-telecom/pull/179)).
+* **android:** keep prejoin preparation alive when only the optional receiver
+  warm-up runs out
+  ([#169](https://github.com/relayphone/expo-callkit-telecom/pull/169)).
+
+### Tests
+
+* **android:** real SystemUI notification taps and shade settling ([#172](https://github.com/relayphone/expo-callkit-telecom/pull/172), [#178](https://github.com/relayphone/expo-callkit-telecom/pull/178)); cold-push intake and transactional Telecom identities ([#144](https://github.com/relayphone/expo-callkit-telecom/pull/144), [#176](https://github.com/relayphone/expo-callkit-telecom/pull/176)); named cold-push verifier failures ([#174](https://github.com/relayphone/expo-callkit-telecom/pull/174)); receiver and contention tracing ([#146](https://github.com/relayphone/expo-callkit-telecom/pull/146)); the emulator source budget ([#177](https://github.com/relayphone/expo-callkit-telecom/pull/177)); and CI dependency caching and mirroring ([#175](https://github.com/relayphone/expo-callkit-telecom/pull/175)).
 
 ## 2.0.0-alpha.17 (2026-11-17)
 
