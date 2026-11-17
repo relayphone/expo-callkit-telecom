@@ -63,6 +63,7 @@ class NotificationActivityCleanupTest {
                     shadePhases)
             }
         } catch (error: TimeoutCancellationException) {
+            withContext(NonCancellable + Dispatchers.IO) { captureNotificationUiFailure() }
             throw AssertionError("Notification shade fixture wait ${wait.name} timed out", error)
         } finally {
             withContext(Dispatchers.Main) {

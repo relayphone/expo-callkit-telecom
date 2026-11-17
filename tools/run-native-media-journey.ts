@@ -5,6 +5,7 @@ import { captureMediaCommand, collectNativeMediaEvidence, mediaEvidenceNames, ty
 import { withMediaCrashEvidence } from "./native-media-crash-evidence.ts";
 import { collectEmulatorBudget } from "./android-emulator-budget.ts";
 import { mediaSuiteThenFailureControl, runNativeMediaFailureControl } from "./run-native-media-failure-control.ts";
+import { collectNotificationUiArtifacts } from "./native-media-notification-ui.ts";
 
 export interface Command {
   program: "gradle" | "adb" | "node";
@@ -247,6 +248,10 @@ export function runNativeMediaJourney(
     run({ program: "node", args: ["tools/android-push-faults.ts", "emulator-5554", "cold-start", pushLog], timeout: 60_000 });
     if (qualifyHooks) runNativeMediaFeasibility(output, run);
   } finally {
+    collectNotificationUiArtifacts(output, (args, timeout) => {
+      const result = run({ program: "adb", args: ["-s", "emulator-5554", ...args], timeout, capture: true });
+      return typeof result === "string" ? result : result.stdout;
+    });
     if (!saved.has("push-fault-events")) {
       try { pull("push-fault-events"); } catch { /* Preserve the original suite failure. */ }
     }

@@ -1,5 +1,19 @@
 # Android instrumentation
 
+Notification UI waits retain hierarchy XML and screenshots under the test
+application's external `systemui-failures` directory before cleanup. CI collects
+them before emulator shutdown. These fixtures use synthetic call identities.
+The UI helper selects the unique call person, expands its notification and can
+scroll/re-open the shade once within the original five-second wait. Shade
+dismissal can fall back to Back; Home waits for the resolved launcher package
+and can fall back to the HOME intent. Product assertions are never retried.
+
+The notification UI workflow runs both complete Answer and Activity-cleanup
+classes 20 times on API 35, in four batches of five. Each batch records class
+timings and original instrumentation output, rejects incomplete/skipped/failed
+tests, and stops at its first failure. A missing-card timeout control also checks
+that both UI artifacts were written.
+
 Hold revokes the current capture generation and disables ADM recording before
 publication mute, unpublish, prewarm stop or disposal. A restarted pump reapplies
 that generation's recording state before its read loop. Capture diagnostics

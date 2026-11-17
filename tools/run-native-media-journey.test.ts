@@ -229,7 +229,10 @@ test("runs the complete functional suite once and checks all four results", () =
   const f = fixture();
   try {
     runNativeMediaJourney(f.output, f.run);
-    assert.equal(f.calls.length, 19);
+    assert.equal(f.calls.length, 20);
+    assert.deepEqual(f.calls.at(-1), { program: "adb", args: ["-s", "emulator-5554", "pull",
+      "/sdcard/Android/data/expo.modules.callkittelecom.instrumentation/files/systemui-failures", join(f.output, "systemui-failures")],
+      timeout: 10_000, capture: true });
     assert.deepEqual(f.calls[0], {
       program: "gradle",
       args: [
@@ -277,7 +280,7 @@ test("runs the complete functional suite once and checks all four results", () =
       });
     }
     assert.equal(readdirSync(f.output).length, 8);
-    assert.deepEqual(f.calls.slice(9), [
+    assert.deepEqual(f.calls.slice(9, -1), [
       { program: "adb", args: ["exec-out", "run-as", "expo.modules.callkittelecom.instrumentation",
         "cat", "files/push-fault-events.json"], timeout: 15_000, capture: true },
       { program: "node", args: ["tools/android-push-faults.ts", "--file", join(f.output, "push-fault-events.json")], timeout: 15_000 },
