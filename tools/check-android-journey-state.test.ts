@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+
+import { VerifierFailure } from "./android-push-faults-diagnostics.ts";
 import { collectAndroidEmulatorState, parseNotificationPresence, parseTelecomCalls } from "./check-android-journey-state.ts";
 
 const app = "expo.modules.callkittelecom.instrumentation";
@@ -121,7 +123,7 @@ test("physical serials, non-emulator targets, unsupported APIs and failed comman
     assert.equal(commands, 2);
   }
   const failure = new Error("adb failed with private-content");
-  assert.throws(() => collectAndroidEmulatorState("emulator-5554", app, () => { throw failure; }), error => error === failure);
+  assert.throws(() => collectAndroidEmulatorState("emulator-5554", app, () => { throw failure; }), error => error instanceof VerifierFailure && error.failure.rule === "adb.emulator");
 });
 
 test("CLI returns JSON on success and keeps raw dumps and command stderr out of failures", t => {
@@ -132,7 +134,8 @@ test("CLI returns JSON on success and keeps raw dumps and command stderr out of 
   writeFileSync(adb, `#!${process.execPath}\nif (process.env.STATE_QUERY_FAIL) { console.error('private-content'); process.exit(3); }\nconst arg = process.argv.at(-1);\nprocess.stdout.write(arg === 'ro.kernel.qemu' ? '1' : arg === 'ro.build.version.sdk' ? '35' : arg === 'telecom' ? ${JSON.stringify(telecom([call()]))} : ${JSON.stringify(notifications([notification(1)]))});\n`);
   chmodSync(adb, 0o755);
   const script = fileURLToPath(new URL("./check-android-journey-state.ts", import.meta.url));
-  const run = (failure: string) => spawnSync(process.execPath, [script], {
+  const receipt = join(directory, "failure.json");
+  const run = (failure: string) => spawnSync(process.execPath, [script, "emulator-5554", app, receipt], {
     encoding: "utf8", timeout: 10_000,
     env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STATE_QUERY_FAIL: failure },
   });
@@ -142,5 +145,67 @@ test("CLI returns JSON on success and keeps raw dumps and command stderr out of 
   assert.equal(success.stderr, ""); assert.ok(!success.stdout.includes("private-content"));
   const failure = run("1");
   assert.ifError(failure.error); assert.equal(failure.status, 1);
-  assert.equal(failure.stdout, ""); assert.equal(failure.stderr, "Android emulator state query failed.\n");
+  assert.equal(failure.stdout, "");
+  assert.equal(JSON.parse(failure.stderr).rule, "adb.emulator");
+  assert.equal(JSON.parse(failure.stderr).observed.exitStatus, 3);
+  assert.deepEqual(JSON.parse(readFileSync(receipt, "utf8")), JSON.parse(failure.stderr));
+  assert.ok(!failure.stderr.includes("private-content"));
 });
+
+const rejectedDumps = [
+  ["dump.unique", () => parseTelecomCalls(telecom() + "\n  mCalls:\n  next:")],
+  ["dump.complete", () => parseTelecomCalls("mCalls:\n  private-content")],
+  ["telecom.section", () => parseTelecomCalls("private-content")],
+  ["telecom.record", () => parseTelecomCalls(telecom(["private-content"]))],
+  ["telecom.state", () => parseTelecomCalls(telecom([call("TC@private-content", "FUTURE")]))],
+  ["telecom.reason", () => parseTelecomCalls(telecom([call("TC@private-content", "DISCONNECTED")],
+    [ended("TC@private-content", "private-content").replace("Reason:", "Unknown:")]))],
+  ["telecom.unique", () => parseTelecomCalls(telecom([call(), call()]))],
+  ["notification.package", () => parseNotificationPresence(notifications(), "private-content")],
+  ["notification.header", () => parseNotificationPresence("private-content", app)],
+  ["notification.complete", () => parseNotificationPresence("Current Notification Manager state:", app)],
+  ["notification.section", () => parseNotificationPresence(notifications([notification(1)]).replace("Notification List:", "Unknown List:"), app)],
+  ["notification.record", () => parseNotificationPresence(notifications(["private-content"]), app)],
+  ["notification.identity", () => parseNotificationPresence(notifications([notification(2147483648)]), app)],
+] as const;
+for (const [rule, run] of rejectedDumps) test(`${rule} names its rejected platform evidence without raw content`, () => {
+  assert.throws(run, error => {
+    assert.ok(error instanceof VerifierFailure);
+    assert.equal(error.failure.rule, rule);
+    assert.ok(Object.keys(error.failure.expected).length && Object.keys(error.failure.observed).length);
+    assert.ok(!JSON.stringify(error.failure).includes("private-content"));
+    return true;
+  });
+});
+
+test("rejected Telecom and notification records retain only observed structural fields", () => {
+  const row = "    [Call id=TC@private-content, state=ACTIVE]";
+  assert.throws(() => parseTelecomCalls("mCalls:\n" + row + "\nnext:\n"), error => {
+    assert.ok(error instanceof VerifierFailure);
+    assert.equal(error.failure.rule, "telecom.record");
+    assert.deepEqual(error.failure.observed, { callPrefix: true, platformIdentity: true, identityComma: true,
+      stateComma: false, state: "ACTIVE", indentation: 4, length: row.length });
+    assert.ok(!JSON.stringify(error.failure).includes("private-content"));
+    return true;
+  });
+  const malformed = notification(17).slice(0, -1);
+  assert.throws(() => parseNotificationPresence(notifications([malformed]), app), error => {
+    assert.ok(error instanceof VerifierFailure);
+    assert.equal(error.failure.rule, "notification.record");
+    assert.equal(error.failure.observed.integerIdentity, true);
+    assert.equal(error.failure.observed.closingRecord, false);
+    assert.ok(!JSON.stringify(error.failure).includes(app));
+    return true;
+  });
+});
+
+for (const [field, rule] of [["ro.kernel.qemu", "adb.emulator"], ["ro.build.version.sdk", "adb.api"],
+  ["telecom", "adb.telecom"], ["notification", "adb.notifications"]] as const)
+  test(`${rule} distinguishes a failed command from a rejected dump and retains earlier probes`, () => {
+    const observations: unknown[] = [];
+    assert.throws(() => collectAndroidEmulatorState("emulator-5554", app, args => {
+      if (args.at(-1) === field) throw new Error("private-content");
+      return args.at(-1) === "ro.kernel.qemu" ? "1" : args.at(-1) === "ro.build.version.sdk" ? "35" : telecom([call()]);
+    }, undefined, state => observations.push(state)), error => error instanceof VerifierFailure && error.failure.rule === rule);
+    assert.equal(observations.length, field === "notification" ? 1 : 0);
+  });
