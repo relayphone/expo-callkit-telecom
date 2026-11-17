@@ -225,6 +225,18 @@ test("an unavailable push journal cannot retain a previous run's diagnostic file
   } finally { f.close(); }
 });
 
+test("explicit UI artifact proof reaches only the connected Gradle invocation", () => {
+  const f = fixture();
+  try {
+    runNativeMediaJourney(f.output, f.run, false, true);
+    const proof = f.calls.filter(command => command.args.includes(
+      "-Pandroid.testInstrumentationRunnerArguments.notificationUiForceMissingCard=true"));
+    assert.equal(proof.length, 1);
+    assert.equal(proof[0]?.program, "gradle");
+    assert.ok(proof[0]?.args.includes(":connectedDebugAndroidTest"));
+  } finally { f.close(); }
+});
+
 test("runs the complete functional suite once and checks all four results", () => {
   const f = fixture();
   try {

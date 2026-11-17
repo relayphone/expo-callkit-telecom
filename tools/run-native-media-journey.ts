@@ -195,7 +195,8 @@ const checks = [
 export function runNativeMediaJourney(
   output = "android/instrumentation/build",
   run: Execute = execute,
-  qualifyHooks = true
+  qualifyHooks = true,
+  artifactProof = false
 ): void {
   mkdirSync(output, { recursive: true });
   const saved = new Set<string>();
@@ -228,6 +229,7 @@ export function runNativeMediaJourney(
         "android/instrumentation",
         ":connectedDebugAndroidTest",
         "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
+        ...(artifactProof ? ["-Pandroid.testInstrumentationRunnerArguments.notificationUiForceMissingCard=true"] : []),
         "--stacktrace",
       ],
       timeout: 25 * 60_000,
@@ -324,5 +326,6 @@ if (import.meta.main) {
         "android/instrumentation/build/media-failure-control/crash-evidence")));
     else suite();
   }
-  else runNativeMediaJourney(undefined, undefined, !process.argv.includes("--functional-only"));
+  else runNativeMediaJourney(undefined, undefined, !process.argv.includes("--functional-only"),
+    process.argv.includes("--ui-artifact-proof"));
 }

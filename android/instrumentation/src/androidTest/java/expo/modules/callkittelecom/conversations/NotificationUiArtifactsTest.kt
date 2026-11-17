@@ -22,6 +22,8 @@ class NotificationUiArtifactsTest {
             val added = directory.listFiles().orEmpty().filter { it.name !in before }
             assertEquals("Expected one hierarchy despite duplicate timeout capture", 1, added.count { it.extension == "xml" && it.length() > 0 })
             assertEquals("Expected one screenshot despite duplicate timeout capture", 1, added.count { it.extension == "png" && it.length() > 0 })
+            if (InstrumentationRegistry.getArguments().getString("notificationUiForceMissingCard") == "true")
+                throw AssertionError("Intentional missing-card timeout artifact transfer control", failure)
         } finally { withTimeout(5000) { collapseNotificationTestShade() } }
     }
 }
