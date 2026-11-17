@@ -194,9 +194,7 @@ class ConversationPresentationJourneyTest {
         }
         suspend fun wakeScreen() { shell("input keyevent 224"); shell("input keyevent 82") }
         suspend fun backgroundApp() {
-            shell("input keyevent KEYCODE_HOME")
-            withTimeout(5000) { while (InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow
-                ?.packageName?.toString().let { it == null || it == context.packageName }) delay(10) }
+            withTimeout(5000) { backgroundNotificationTestApp() }
         }
         suspend fun withFullScreenPermission(body: suspend () -> Unit) {
             val alreadyAllowed = manager.canUseFullScreenIntent()
@@ -321,6 +319,7 @@ class ConversationPresentationJourneyTest {
 
     private fun fixture(body: suspend Fixture.() -> Unit) = runBlocking {
         withContext(Dispatchers.Main) {
+            withTimeout(5000) { prepareNotificationTestDisplay() }
             // NotificationService's package enqueue quota survives individual test cases.
             // Start each scenario after a quiet interval; measured body deadlines are unchanged.
             delay(2 * RINGING_ALERT_INTERVAL_MILLIS)
@@ -890,7 +889,7 @@ class ConversationPresentationJourneyTest {
                 shell("wm dismiss-keyguard")
                 shell("cmd statusbar collapse")
                 backgroundApp()
-                stage = "home screen before denied full-screen incoming call"
+                stage = "app backgrounded before denied full-screen incoming call"
                 withTimeout(5000) {
                     while (automation.rootInActiveWindow?.packageName?.toString().let {
                         it == null || it == context.packageName || it == "com.android.systemui"
