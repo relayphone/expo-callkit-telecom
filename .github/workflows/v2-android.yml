@@ -3,10 +3,10 @@ name: v2 Android
 on:
   pull_request:
     branches: [v2]
-    paths: ['tools/android-push-faults*', 'tools/android-emulator-budget*', 'tsconfig.executor.json', 'tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
+    paths: ['tools/android-push-faults*', 'tools/android-emulator-budget*', 'tsconfig.executor.json', 'tools/gradle-wrapper-timeout*', 'tools/gradle-dependencies*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
   push:
     branches: [v2]
-    paths: ['tools/android-push-faults*', 'tools/android-emulator-budget*', 'tsconfig.executor.json', 'tools/gradle-wrapper-timeout*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
+    paths: ['tools/android-push-faults*', 'tools/android-emulator-budget*', 'tsconfig.executor.json', 'tools/gradle-wrapper-timeout*', 'tools/gradle-dependencies*', 'tools/sdk-evaluation*', '.github/actions/sdk-consumer/**', '.github/workflows/sdk-package.yml', 'android/**', 'src/**', 'plugin/**', 'example/client/**', 'package.json', 'bun.lock', 'test/**', 'tools/**native-media*', 'tools/*android-dnd*', 'tools/check-android-journey*', 'tools/check-answered-elsewhere*', '.github/workflows/v2-android.yml']
 
 permissions:
   contents: read
@@ -36,9 +36,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Set Gradle user home
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-user-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+          cache-read-only: ${{ github.ref != 'refs/heads/v2' }}
+          cache-overwrite-existing: true
+      - run: node tools/gradle-dependencies.ts
+      - run: node --test tools/gradle-dependencies.test.ts
+        env:
+          GRADLE_DEPENDENCY_INTEGRATION: '1'
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -109,9 +117,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Set Gradle user home
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-user-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+          cache-read-only: ${{ github.ref != 'refs/heads/v2' }}
+          cache-overwrite-existing: true
+      - run: node tools/gradle-dependencies.ts
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -191,7 +204,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Set Gradle user home
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-user-home" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/v2' }}
+          cache-overwrite-existing: true
+      - run: node tools/gradle-dependencies.ts
       - uses: ./.github/actions/sdk-consumer
       - run: bun run build
       - uses: ./.github/actions/sdk-consumer
