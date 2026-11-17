@@ -11,6 +11,7 @@ internal enum class AnswerJourneyPhase {
     ACTIVITY_CREATED, ACTIVITY_NEW_INTENT,
     ACTIVITY_RESUMED, ACTIVITY_DESTROYED, TOKEN_CONSUMED_AT_RECEIVE_RETURN, NATIVE_ANSWER_STARTED,
     CORE_ANSWER_STARTED, CORE_ANSWER_RETURNED, CORE_SET_ACTIVE_STARTED, CORE_SET_ACTIVE_RETURNED,
+    CORE_ADMITTED,
     TELECOM_READ_STARTED, TELECOM_READ_RETURNED, TELECOM_ACTIVE, SDK_SNAPSHOT,
     SDK_SNAPSHOT_CONNECTING, SDK_SNAPSHOT_CONNECTED,
     ANSWER_PERFORMED, BODY_COMPLETED, CLEANUP_STARTED,
@@ -25,6 +26,10 @@ internal enum class AnswerJourneyWait {
 internal data class AnswerLaunchDiagnostics(val linesRead: Int, val packageBlockedLines: Int,
     val conversationBlockedLines: Int, val balBlockMentions: Int, val fixtureActivities: Int)
 
+internal enum class AnswerEndpointPhase { AVAILABLE_ENDPOINTS, CURRENT_ENDPOINT }
+internal const val ANSWER_ENDPOINT_LIMIT = 32
+internal const val ANSWER_ENDPOINT_TYPE_LIMIT = 8
+
 /** Bounded test observations only. Tokens receive local ordinals and are never serialized. */
 internal class AnswerJourneyTrace(val conversationId: String, private val now: () -> Long) {
     private data class Event(val phase: AnswerJourneyPhase, val nanos: Long, val wait: AnswerJourneyWait?,
@@ -33,6 +38,12 @@ internal class AnswerJourneyTrace(val conversationId: String, private val now: (
     private val events = mutableListOf<Event>()
     private val tokens = mutableMapOf<String, Int>()
     private val first = linkedMapOf<AnswerJourneyPhase, Event>()
+    private data class EndpointEvent(val phase: AnswerEndpointPhase, val nanos: Long,
+        val types: List<Int>, val count: Int)
+    private val endpoints = mutableListOf<EndpointEvent>()
+    private var droppedEndpoints = 0
+    private var endpointAdmissionNanos: Long? = null
+    private var endpointStopNanos: Long? = null
     private var dropped = 0
     private var currentToken: Int? = null
     var lastTimeout: AnswerJourneyWait? = null
@@ -47,10 +58,19 @@ internal class AnswerJourneyTrace(val conversationId: String, private val now: (
         val event = Event(phase, atNanos, wait, token, tokenPresent, state, conversationMatches)
         events += event
         first.putIfAbsent(phase, event)
+        if (phase == AnswerJourneyPhase.CORE_ADMITTED && endpointAdmissionNanos == null && endpointStopNanos == null)
+            endpointAdmissionNanos = atNanos
         if (phase == AnswerJourneyPhase.WAIT_TIMED_OUT) {
+            if (endpointStopNanos == null) endpointStopNanos = atNanos
             if (firstTimeout == null) firstTimeout = wait
             lastTimeout = wait
         }
+    }
+
+    fun endpoint(phase: AnswerEndpointPhase, types: List<Int>) {
+        if (endpointAdmissionNanos == null || endpointStopNanos != null) return
+        if (endpoints.size == ANSWER_ENDPOINT_LIMIT) { droppedEndpoints++; return }
+        endpoints += EndpointEvent(phase, now(), types.take(ANSWER_ENDPOINT_TYPE_LIMIT), types.size)
     }
 
     fun intent(phase: AnswerJourneyPhase, intent: Intent): Int? {
@@ -99,6 +119,23 @@ internal class AnswerJourneyTrace(val conversationId: String, private val now: (
                 first.forEach { (phase, event) -> put(phase.name, (event.nanos - started) / 1_000_000.0) }
             })
             put("droppedEvents", dropped); put("phases", phases)
+            put("endpointTrace", JSONObject().apply {
+                put("clock", "SystemClock.elapsedRealtimeNanos")
+                put("typeEncoding", "CallEndpointCompat.type")
+                put("limit", ANSWER_ENDPOINT_LIMIT); put("typeLimit", ANSWER_ENDPOINT_TYPE_LIMIT)
+                put("droppedEvents", droppedEndpoints)
+                val admitted = endpointAdmissionNanos
+                put("admittedElapsedMs", admitted?.let { (it - started) / 1_000_000.0 } ?: JSONObject.NULL)
+                put("stoppedElapsedMs", endpointStopNanos?.let { (it - started) / 1_000_000.0 } ?: JSONObject.NULL)
+                put("emissions", JSONArray().apply {
+                    for (event in endpoints) put(JSONObject()
+                        .put("phase", event.phase.name)
+                        .put("elapsedMs", (event.nanos - started) / 1_000_000.0)
+                        .put("sinceAdmissionMs", (event.nanos - checkNotNull(admitted)) / 1_000_000.0)
+                        .put("types", JSONArray(event.types)).put("endpointCount", event.count)
+                        .put("droppedTypes", event.count - event.types.size))
+                })
+            })
         }.toString()
     }
 }

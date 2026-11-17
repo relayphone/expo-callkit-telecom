@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationManager
+import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
@@ -55,6 +56,7 @@ class ConversationOptionsTest {
         private val ids = mutableListOf<String>()
         val ended = mutableMapOf<String, Map<*, *>>()
         val endedAt = mutableMapOf<String, Long>()
+        var endObservation: ((String, Long) -> Unit)? = null
         val ringing = mutableSetOf<String>()
         val signals = mutableListOf<NativeMediaSignal>()
         private val observer = NativeMediaObserver { signals += it }
@@ -70,6 +72,7 @@ class ConversationOptionsTest {
                     if (state["status"] == "ended") {
                         ended[id] = state["ended"] as Map<*, *>
                         endedAt[id] = System.currentTimeMillis()
+                        endObservation?.invoke(id, endedAt.getValue(id))
                     }
                 }
             } }
@@ -239,12 +242,19 @@ class ConversationOptionsTest {
             CallPushIntake.configure()
             val message = RemoteMessage.Builder("test-sender").addData("messageType", "incomingCall")
                 .addData("incomingCall", JSONObject(push.payload()).toString()).build()
-            assertTrue(CallPushIntake.handle(context, message))
+            var endSample: ExpiryClockSample? = null
+            endObservation = { id, wall -> if (id == push.serverCallId) {
+                endSample = ExpiryClockSample(wall, SystemClock.elapsedRealtime())
+            } }
+            val intakeSample = ExpiryClockSample(System.currentTimeMillis(), SystemClock.elapsedRealtime())
+            fun expiryMessage(check: String) = "$check: ${expiryClockDiagnostics(endedAt[push.serverCallId],
+                push.expiresAtMillis!!, intakeSample, endSample)}"
+            assertTrue(expiryMessage("Decoded incoming push must be handled"), CallPushIntake.handle(context, message))
             withTimeout(10_000) { while (ended[push.serverCallId] == null) delay(10) }
             removed(push.serverCallId)
-            assertTrue(ringing.contains(push.serverCallId))
-            assertEquals("unanswered", ended[push.serverCallId]?.get("reason"))
-            assertTrue(endedAt[push.serverCallId]!! >= push.expiresAtMillis!!)
+            assertTrue(expiryMessage("Decoded incoming push must reach the ringing surface before expiry"), ringing.contains(push.serverCallId))
+            assertEquals(expiryMessage("Decoded incoming push must end as unanswered"), "unanswered", ended[push.serverCallId]?.get("reason"))
+            assertTrue(expiryMessage("Decoded incoming push must not end before its expiry"), endedAt[push.serverCallId]!! >= push.expiresAtMillis!!)
         }
     }
 

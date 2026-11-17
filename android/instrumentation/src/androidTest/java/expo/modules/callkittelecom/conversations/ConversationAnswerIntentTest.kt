@@ -14,6 +14,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.onEach
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
@@ -81,7 +82,14 @@ class ConversationAnswerIntentTest {
                 engine.coreAdmission = CoreCallAdmission { attributes, callbacks, admitted ->
                     previousAdmission.add(attributes, callbacks) {
                         val real = this
+                        observation.mark(AnswerJourneyPhase.CORE_ADMITTED)
                         admitted(object : CallControlScope by real {
+                            override val availableEndpoints get() = real.availableEndpoints.onEach { endpoints ->
+                                observation.endpoint(AnswerEndpointPhase.AVAILABLE_ENDPOINTS, endpoints.map { it.type })
+                            }
+                            override val currentCallEndpoint get() = real.currentCallEndpoint.onEach { endpoint ->
+                                observation.endpoint(AnswerEndpointPhase.CURRENT_ENDPOINT, listOf(endpoint.type))
+                            }
                             override suspend fun setActive(): androidx.core.telecom.CallControlResult {
                                 observation.mark(AnswerJourneyPhase.CORE_SET_ACTIVE_STARTED)
                                 return real.setActive().also { observation.mark(AnswerJourneyPhase.CORE_SET_ACTIVE_RETURNED) }

@@ -28,6 +28,13 @@ shared incoming ownership, direction collisions and safe reuse after release.
 The installed package consumer separately checks raw IDs through the shared SDK
 API. Public call IDs are never derived UUIDs.
 
+Decoded-push expiry assertion messages retain the actual expiry/end wall times,
+their signed difference and paired wall/elapsed samples at intake and end.
+Answer traces retain the first 32 available/current endpoint emissions from
+admission through the first timeout, with elapsed times and up to eight numeric
+endpoint types per emission. Truncation counts are explicit; endpoint names and
+identifiers are omitted. Existing assertions and waits are unchanged.
+
 CI runs `gradle -p android/instrumentation connectedDebugAndroidTest` on an API 35
 Google APIs x86_64 emulator with KVM, and retains machine-checked JUnit results.
 The Expo bridge/example integration is a separate gate from this native seam.
