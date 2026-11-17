@@ -22,6 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         batch: [1, 2, 3, 4]
+        navigation: [baseline, proposed]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -39,6 +40,12 @@ jobs:
           gradle-version: '8.13'
           cache-read-only: true
       - run: node tools/gradle-dependencies.ts
+      - name: Select measured navigation
+        env:
+          NAVIGATION_REVISION: ${{ matrix.navigation == 'baseline' && 'e0228ac4f1b847d08bc7a6a461414e146ab5f44b' || '51b9b9e3be767854d029638f59605370df9134ca' }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$NAVIGATION_REVISION"
+          git restore --source=FETCH_HEAD -- android/instrumentation/src/androidTest/java/expo/modules/callkittelecom/conversations/NotificationTestSystemUi.kt
       - name: Build qualification APKs before boot
         run: node tools/native-media-notification-ui.ts build
       - name: Enable KVM
@@ -62,7 +69,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: notification-ui-${{ matrix.batch }}
+          name: notification-ui-${{ matrix.navigation }}-${{ matrix.batch }}
           retention-days: 7
           path: android/instrumentation/build/notification-ui-*
           if-no-files-found: warn
