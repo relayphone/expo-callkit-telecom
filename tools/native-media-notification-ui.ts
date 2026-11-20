@@ -63,7 +63,7 @@ function hasUiArtifactPair(directory: string): boolean {
 }
 /** Use the ordinary connected runner: AGP installs/grants permissions and both classes share one instrumentation. */
 export function qualifyNotificationUi(batch: number, output: string, run: Run = execute,
-  summary: string | null = process.env.GITHUB_STEP_SUMMARY ?? null, mode: 'qualification' | 'comparison' = 'qualification'): void {
+  summary: string | null = process.env.GITHUB_STEP_SUMMARY ?? null): void {
   assert.ok(Number.isInteger(batch) && batch >= 1 && batch <= 4, 'Expected batch 1–4');
   rmSync(output, { recursive: true, force: true }); mkdirSync(output, { recursive: true });
   const build = dirname(output), reports = join(build, 'outputs/androidTest-results/connected/debug');
@@ -105,18 +105,13 @@ export function qualifyNotificationUi(batch: number, output: string, run: Run = 
       writeFileSync(join(output, 'timings.json'), JSON.stringify(rows));
     }
   };
-  const failures: unknown[] = [];
-  const failed = (error: unknown) => { if (mode === 'qualification') throw error; failures.push(error); };
   try {
     for (let iteration = 1; iteration <= 5; iteration++) {
-      try { instrument(classes, (batch - 1) * 5 + iteration); } catch (error) { failed(error); }
+      instrument(classes, (batch - 1) * 5 + iteration);
     }
     // The deliberate timeout must not leave UI state ahead of the measured classes.
-    try {
-      instrument([['NotificationUiArtifactsTest', 1]], 0);
-      assert.ok(hasUiArtifactPair(join(output, '0', 'additional-output')), 'Missing transferred UI timeout XML/screenshot pair');
-    } catch (error) { failed(error); }
-    if (failures.length) throw new AggregateError(failures, 'Notification comparison contains failed runs');
+    instrument([['NotificationUiArtifactsTest', 1]], 0);
+    assert.ok(hasUiArtifactPair(join(output, '0', 'additional-output')), 'Missing transferred UI timeout XML/screenshot pair');
   } finally {
     if (summary) appendFileSync(summary,
       '| Run | Class | Test milliseconds | Class passed | Connected run passed |\n| --- | --- | --- | --- | --- |\n' + rows.flatMap(row => row.classes.map(result =>
@@ -135,9 +130,8 @@ function build() {
 }
 if (import.meta.main) {
   if (process.argv[2] === 'build') build();
-  else if (process.argv[2] === 'run' || process.argv[2] === 'compare') {
-    try { qualifyNotificationUi(Number(process.argv[3]), `android/instrumentation/build/notification-ui-${process.argv[3]}`,
-      undefined, undefined, process.argv[2] === 'compare' ? 'comparison' : 'qualification'); }
+  else if (process.argv[2] === 'run') {
+    try { qualifyNotificationUi(Number(process.argv[3]), `android/instrumentation/build/notification-ui-${process.argv[3]}`); }
     finally { rmSync(certificate, { force: true }); }
-  } else throw Error('Expected build, compare BATCH or run BATCH');
+  } else throw Error('Expected build or run BATCH');
 }

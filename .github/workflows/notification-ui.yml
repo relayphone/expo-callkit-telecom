@@ -22,7 +22,6 @@ jobs:
       fail-fast: false
       matrix:
         batch: [1, 2, 3, 4]
-        warmup: [none, launcher-shade]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -59,12 +58,11 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048 -qemu -m 2048
           script: |
             node tools/android-emulator-budget.ts --output android/instrumentation/build/notification-ui-budget.json
-            if [ '${{ matrix.warmup }}' = 'launcher-shade' ]; then node tools/native-media-notification-warmup.ts android/instrumentation/build/notification-ui-warmup; fi
-            node tools/native-media-notification-ui.ts compare ${{ matrix.batch }}
+            node tools/native-media-notification-ui.ts run ${{ matrix.batch }}
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: notification-ui-${{ matrix.warmup }}-${{ matrix.batch }}
+          name: notification-ui-${{ matrix.batch }}
           retention-days: 7
           path: android/instrumentation/build/notification-ui-*
           if-no-files-found: warn
