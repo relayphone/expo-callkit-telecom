@@ -24,6 +24,7 @@
     "tools/native-media-crash-evidence*.ts",
     "tools/native-media-marker*.ts",
     "tools/native-media-notification-ui*.ts",
+    "tools/native-media-notification-warmup*.ts",
     "tools/compare-media-apm*.ts",
     "tools/prepare-native-media-fixture*.ts",
     "tools/run-android-dnd*.ts",
