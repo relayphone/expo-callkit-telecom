@@ -1,6 +1,13 @@
 package expo.modules.callkittelecom.conversations
 
 import android.accessibilityservice.AccessibilityService
+import android.os.Bundle
+import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import org.junit.rules.TestWatcher
+import org.junit.runner.Description
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
@@ -15,7 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /** Each caller owns the existing 5000 ms wait; UiAutomator adds no nested idle/selector wait. */
-private suspend fun <T> systemUi(body: suspend (UiDevice) -> T): T = withContext(Dispatchers.IO) {
+private suspend fun <T> systemUi(body: suspend (UiDevice) -> T): T = try { withContext(Dispatchers.IO) {
     val configuration = Configurator.getInstance()
     val idle = configuration.waitForIdleTimeout
     val selector = configuration.waitForSelectorTimeout
@@ -27,7 +34,38 @@ private suspend fun <T> systemUi(body: suspend (UiDevice) -> T): T = withContext
         configuration.waitForIdleTimeout = idle
         configuration.waitForSelectorTimeout = selector
     }
+} } catch (error: TimeoutCancellationException) {
+    withContext(NonCancellable + Dispatchers.IO) { captureNotificationUiFailure() }
+    throw error
 }
+
+/** CI runs these fixtures with synthetic call identities; retain the actual failing UI before cleanup. */
+private val notificationUiCaptured = AtomicBoolean()
+internal class NotificationUiArtifactsRule : TestWatcher() {
+    override fun starting(description: Description) { notificationUiCaptured.set(false) }
+}
+
+internal fun notificationUiArtifactDirectory(): File {
+    val additional = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.takeIf { it.isNotBlank() }
+    val root = additional?.let(::File)
+        ?: InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null)
+    return File(root, "systemui-failures")
+}
+
+internal fun captureNotificationUiFailure() { runCatching {
+    if (!notificationUiCaptured.compareAndSet(false, true)) return
+    val instrumentation = InstrumentationRegistry.getInstrumentation()
+    val directory = notificationUiArtifactDirectory().apply { mkdirs() }
+    val prefix = "timeout-${SystemClock.uptimeMillis()}"
+    val device = UiDevice.getInstance(instrumentation)
+    val configuration = Configurator.getInstance(); val idle = configuration.waitForIdleTimeout
+    try {
+        configuration.waitForIdleTimeout = 0
+        runCatching { device.dumpWindowHierarchy(File(directory, "$prefix.xml")) }
+        runCatching { check(device.takeScreenshot(File(directory, "$prefix.png"))) }
+        instrumentation.sendStatus(0, Bundle().apply { putString("systemUiFailureArtifacts", prefix) })
+    } finally { configuration.waitForIdleTimeout = idle }
+} }
 
 internal suspend fun openNotificationTestShade() = systemUi { device ->
     withContext(Dispatchers.Main) { AnswerJourneyObservation.trace?.mark(AnswerJourneyPhase.NOTIFICATION_SHADE_OPEN_STARTED) }

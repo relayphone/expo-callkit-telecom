@@ -46,6 +46,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ConversationPresentationJourneyTest {
+    @get:Rule val uiArtifacts: org.junit.rules.TestRule = NotificationUiArtifactsRule()
     @get:Rule val permissions = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.RECORD_AUDIO)
 
     private data class Attention(val sound: Boolean, val vibration: Boolean)

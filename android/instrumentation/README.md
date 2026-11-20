@@ -1,5 +1,31 @@
 # Android instrumentation
 
+Notification UI waits retain hierarchy XML and screenshots under the test
+application's `additionalTestOutputDir/systemui-failures` before cleanup. AGP
+collects this standard output under `build/outputs/connected_android_test_additional_output/`
+before uninstalling the test APKs. Manual invocations without that argument
+fall back to external app files. Capture is deduplicated
+per test. These fixtures use synthetic call identities on en-US emulator images.
+The helper keeps the original v2 navigation and five-second waits. The additional
+navigation retries are removed after the measured comparison; the Home fallback
+is omitted because an isolated benefit has not been established.
+
+The API 35 notification UI workflow qualifies the complete Answer and
+Activity-cleanup classes in four batches of five rounds on the default
+two-core, 2 GiB guest. Each round uses Gradle's connected runner, with both
+classes in one instrumentation process and the same disabled animations as
+the functional suite. Each batch runs `run BATCH`, stops at its first failed
+round, and retains Gradle stdout and stderr, JUnit reports, AGP additional
+output and timings. Incomplete or skipped tests and a nonzero Gradle exit are
+failures. After five passing rounds, a deliberate missing-card timeout
+checks that AGP transfers its XML and screenshot.
+
+The [warm-up comparison](https://github.com/relayphone/expo-callkit-telecom/actions/runs/44775544221)
+at `0668993` recorded 15/20 complete Answer rounds, 20/20 cleanup
+rounds and 4/4 artifact controls without warm-up. The warm-up arm
+stopped before the test classes in all four batches. Qualification starts
+without warm-up.
+
 Hold revokes the current capture generation and disables ADM recording before
 publication mute, unpublish, prewarm stop or disposal. A restarted pump reapplies
 that generation's recording state before its read loop. Capture diagnostics

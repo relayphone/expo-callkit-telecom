@@ -24,6 +24,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ConversationAnswerIntentTest {
+    @get:Rule val uiArtifacts: org.junit.rules.TestRule = NotificationUiArtifactsRule()
     @get:Rule val permissions = GrantPermissionRule.grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
     @get:Rule val testName = TestName()
     private val trace get() = checkNotNull(AnswerJourneyObservation.trace)
@@ -154,6 +155,10 @@ class ConversationAnswerIntentTest {
         try {
             return withTimeout(5000) { body() }.also { trace.mark(AnswerJourneyPhase.WAIT_COMPLETED, wait) }
         } catch (error: TimeoutCancellationException) {
+            if (wait in setOf(AnswerJourneyWait.DISPLAY_READY, AnswerJourneyWait.SYSTEMUI_ACTION,
+                AnswerJourneyWait.APP_BACKGROUND, AnswerJourneyWait.ACTIVITY_FOREGROUND,
+                AnswerJourneyWait.ACTIVITY_RECREATED, AnswerJourneyWait.ACTIVITY_DESTROYED))
+                withContext(NonCancellable + Dispatchers.IO) { captureNotificationUiFailure() }
             if (!currentCoroutineContext().isActive) {
                 trace.mark(AnswerJourneyPhase.WAIT_CANCELLED, wait)
                 throw error

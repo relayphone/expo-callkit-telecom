@@ -12,10 +12,12 @@ import kotlinx.coroutines.*
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Rule
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NotificationActivityCleanupTest {
+    @get:Rule val uiArtifacts: org.junit.rules.TestRule = NotificationUiArtifactsRule()
     @Test fun notificationShadeKeepsActivitiesAliveAndCanBeRepeated() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val activities = mutableListOf<Activity>()
@@ -63,6 +65,7 @@ class NotificationActivityCleanupTest {
                     shadePhases)
             }
         } catch (error: TimeoutCancellationException) {
+            withContext(NonCancellable + Dispatchers.IO) { captureNotificationUiFailure() }
             throw AssertionError("Notification shade fixture wait ${wait.name} timed out", error)
         } finally {
             withContext(Dispatchers.Main) {

@@ -1,0 +1,68 @@
+name: Android notification UI
+on:
+  pull_request:
+    branches: [v2]
+    paths:
+      - '.github/workflows/notification-ui.yml'
+      - 'tools/native-media-notification-ui*'
+      - 'android/instrumentation/src/**/NotificationUi*'
+      - 'android/instrumentation/src/**/NotificationTestSystemUi.kt'
+      - 'android/instrumentation/src/**/ConversationAnswerIntentTest.kt'
+      - 'android/instrumentation/src/**/NotificationActivityCleanupTest.kt'
+permissions:
+  contents: read
+concurrency:
+  group: notification-ui-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  notification-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        batch: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+      - run: node --test tools/native-media-notification-ui.test.ts
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set Gradle user home
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-user-home" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          cache-read-only: true
+      - run: node tools/gradle-dependencies.ts
+      - name: Build qualification APKs before boot
+        run: node tools/native-media-notification-ui.ts build
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          cores: 2
+          ram-size: 2048M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048 -qemu -m 2048
+          script: |
+            node tools/android-emulator-budget.ts --output android/instrumentation/build/notification-ui-budget.json
+            node tools/native-media-notification-ui.ts run ${{ matrix.batch }}
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: notification-ui-${{ matrix.batch }}
+          retention-days: 7
+          path: android/instrumentation/build/notification-ui-*
+          if-no-files-found: warn
