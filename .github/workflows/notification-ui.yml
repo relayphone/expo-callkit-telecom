@@ -59,9 +59,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -memory 2048 -qemu -m 2048
           script: |
             node tools/android-emulator-budget.ts --output android/instrumentation/build/notification-ui-budget.json
-            if [ '${{ matrix.warmup }}' = 'launcher-shade' ]; then
-              node tools/native-media-notification-warmup.ts android/instrumentation/build/notification-ui-warmup
-            fi
+            if [ '${{ matrix.warmup }}' = 'launcher-shade' ]; then node tools/native-media-notification-warmup.ts android/instrumentation/build/notification-ui-warmup; fi
             node tools/native-media-notification-ui.ts compare ${{ matrix.batch }}
       - uses: actions/upload-artifact@v6
         if: always()
