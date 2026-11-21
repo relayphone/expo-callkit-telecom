@@ -201,6 +201,19 @@ The module also handles `callEnded` pushes for ending a call from the server (se
 
 `example/` contains a runnable Expo app (`example/client/`) and a zero-dep push-sender script (`example/server/`). See their READMEs for setup and how to validate VoIP push end-to-end.
 
+## Developing the module
+
+Use Node.js 24 and the Bun version pinned in `package.json`. From the repository root, run the same checks as pull request CI:
+
+```sh
+bun install --frozen-lockfile
+bun run build
+bun run typecheck
+bun run test --runInBand
+```
+
+These checks run on Linux. For native QA, follow the [example app setup](example/client/README.md).
+
 ## 🔑 Registering for VoIP push
 
 ```ts
